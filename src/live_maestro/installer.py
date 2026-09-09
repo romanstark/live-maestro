@@ -165,8 +165,8 @@ class LiveInstall:
 
     @property
     def preferences(self) -> Path:
-        """The ``Preferences`` folder, where ``Log.txt`` lives too."""
-        return self.folder / "Preferences"
+        """The folder holding this version's ``Library.cfg`` and ``Log.txt``."""
+        return preferences_dir(self.folder)
 
     @property
     def sort_key(self) -> tuple[tuple[int, ...], int]:
@@ -219,9 +219,12 @@ class LibraryCandidate:
 def preferences_roots() -> list[Path]:
     """Where Live keeps its per-version preferences folders on this platform.
 
-    Windows is *measured*. macOS is written from the documented layout and is
-    unverified. Linux returns nothing, because Live does not run there, and an
-    invented path would only produce a confusing error later.
+    Both platforms are *measured*. Linux returns nothing, because Live does not
+    run there, and an invented path would only produce a confusing error later.
+
+    What differs between them is not this root but what sits *inside* a version
+    folder, which is why :func:`preferences_dir` exists rather than a second
+    hard-coded segment at every call site.
     """
     if sys.platform.startswith("win"):
         appdata = os.environ.get("APPDATA")
@@ -230,6 +233,75 @@ def preferences_roots() -> list[Path]:
     if sys.platform == "darwin":
         return [Path.home() / "Library" / "Preferences" / "Ableton"]
     return []
+
+
+def preferences_dir(version_folder: Path) -> Path:
+    """The folder holding ``Library.cfg`` and ``Log.txt`` for one Live version.
+
+    Windows nests both files under a ``Preferences`` subfolder of the version
+    folder: ``%APPDATA%/Ableton/Live 12.1.10/Preferences/Library.cfg``
+    (measured 2026-08-29).
+
+    macOS does not. There the version folder already sits inside
+    ``~/Library/Preferences``, and the files lie directly in it:
+    ``~/Library/Preferences/Ableton/Live 12.4.5/Library.cfg`` (measured
+    2026-09-09, Live 12.4.5 on macOS 15). A nested ``Preferences`` never
+    exists, so appending the segment there pointed one level too deep and the
+    installer reported the User Library as missing on every Mac.
+
+    Kept as a function beside :func:`preferences_roots` so that the platform
+    layout is described in exactly one place. Two callers depend on it -
+    ``Library.cfg`` for discovery here, and ``Log.txt`` for the Control Surface
+    readout in ``scripts/inventory.py`` - and they were wrong together.
+    """
+    if sys.platform.startswith("win"):
+        return version_folder / "Preferences"
+    return version_folder
+
+
+def invocation() -> str:
+    """How this program was started, so that hints can be copied back verbatim.
+
+    ``live-maestro-install`` for the console script the wheel installs,
+    ``python scripts/install_script.py`` from a checkout. Not cosmetic: a user
+    who ran ``uv tool install`` has no ``scripts/`` directory, and a hint
+    naming one sends them looking for a file that is not on their disk. That is
+    the exact case this entry point exists for.
+    """
+    if Path(sys.argv[0]).name.startswith("live-maestro-install"):
+        return "live-maestro-install"
+    return "python scripts/install_script.py"
+
+
+def example_library() -> str:
+    """A ``--user-library`` value shaped like this platform's real one.
+
+    An example in the wrong notation reads as a different product's
+    documentation, and on macOS a ``D:`` drive letter is simply noise.
+    """
+    if sys.platform.startswith("win"):
+        return r"D:\path\to\User Library"
+    return "~/Music/Ableton/User Library"
+
+
+def library_cfg_hint() -> str:
+    """Where ``Library.cfg`` sits inside a version folder, spelled for this platform.
+
+    ``Live <version>\\Preferences\\Library.cfg`` on Windows and
+    ``Live <version>/Library.cfg`` on macOS, separator included, because the Path
+    is rendered by the platform that is actually running. Naming the layout and
+    not just the filename is the difference between a reader who can go and look
+    and one who has to guess, and spelling it wrong for the platform is how this
+    message misled every Mac user before.
+    """
+    return str(preferences_dir(Path("Live <version>")) / "Library.cfg")
+
+
+def delete_folder_hint(folder: Path) -> str:
+    """The shell command that removes ``folder``, in this platform's shell."""
+    if sys.platform.startswith("win"):
+        return f'Remove-Item -Recurse -Force "{folder}"'
+    return f'rm -rf "{folder}"'
 
 
 def find_live_installs(roots: Sequence[Path] | None = None) -> list[LiveInstall]:
@@ -250,7 +322,7 @@ def find_live_installs(roots: Sequence[Path] | None = None) -> list[LiveInstall]
             if match is None:
                 continue
             version = tuple(int(part) for part in match.group(1).split("."))
-            cfg = folder / "Preferences" / "Library.cfg"
+            cfg = preferences_dir(folder) / "Library.cfg"
             project_path, project_name, error = read_library_cfg(cfg)
             installs.append(
                 LiveInstall(
@@ -290,7 +362,7 @@ def read_library_cfg(path: Path) -> tuple[Path | None, str | None, str | None]:
     try:
         tree = ET.parse(path)
     except FileNotFoundError:
-        return None, None, "no Library.cfg (this version was never fully started?)"
+        return None, None, f"no Library.cfg at {path}"
     except ET.ParseError as exc:
         return None, None, f"Library.cfg did not parse: {exc}"
     except OSError as exc:
@@ -604,10 +676,10 @@ def _choose_user_library(
     if not candidates:
         raise SetupError(
             "No User Library found.\n"
-            "  Live records it in Preferences\\Library.cfg under <ProjectPath>, and no\n"
+            f"  Live records it in {library_cfg_hint()} under <ProjectPath>, and no\n"
             f"  readable Library.cfg was found under {roots}.\n"
             "  Start Live once so it writes its preferences, or pass the folder yourself:\n"
-            '    python scripts/install_script.py --user-library "D:\\path\\to\\User Library"'
+            f'    {invocation()} --user-library "{example_library()}"'
         )
 
     # A folder Live names but that is not on disk is a stale entry from an old
@@ -622,7 +694,7 @@ def _choose_user_library(
             f"{listed}\n"
             f"  Read from Library.cfg under {roots}.\n"
             "  Start Live once so it recreates its library, or pass the real folder:\n"
-            '    python scripts/install_script.py --user-library "D:\\path\\to\\User Library"'
+            f'    {invocation()} --user-library "{example_library()}"'
         )
     candidates = present
 
@@ -645,7 +717,7 @@ def _choose_user_library(
         raise SetupError(
             "Several User Library candidates and no terminal to ask in.\n"
             "  Re-run with the folder named explicitly:\n"
-            f'    python scripts/install_script.py --user-library "{candidates[0].path}"\n'
+            f'    {invocation()} --user-library "{candidates[0].path}"\n'
             "  or accept the best-evidence one with --yes."
         )
 
@@ -770,7 +842,7 @@ def _clear_pycache(folder: Path, *, dry_run: bool) -> list[str]:
             f"  {exc.__class__.__name__}: {exc}\n"
             "  This is not cosmetic: Live prefers the compiled version and would keep\n"
             "  running the old script without saying so. Close Live and delete it by hand:\n"
-            f'    Remove-Item -Recurse -Force "{pycache}"'
+            f"    {delete_folder_hint(pycache)}"
         ) from exc
     return names
 
@@ -1054,7 +1126,7 @@ def do_uninstall(args: argparse.Namespace) -> int:
     if remaining:
         _say(f"The folder is kept because it still holds: {', '.join(remaining)}")
         _say("To remove it entirely, once you are sure you want the backups gone:")
-        _say(f'  Remove-Item -Recurse -Force "{target_folder}"')
+        _say(f"  {delete_folder_hint(target_folder)}")
     else:
         target_folder.rmdir()
         _say(f"removed the now-empty folder {target_folder}")
@@ -1079,7 +1151,7 @@ def do_diff(args: argparse.Namespace) -> int:
 
     if not target.is_file():
         _say("Nothing is installed at that path.")
-        _say("  python scripts/install_script.py")
+        _say(f"  {invocation()}")
         return 1
 
     source_text = source.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
@@ -1094,9 +1166,10 @@ def do_diff(args: argparse.Namespace) -> int:
         )
     )
     if not diff:
-        _say("Identical. Live is running this checkout's script -")
-        _say("assuming Live was restarted since it was copied; check __pycache__ with")
-        _say("  python scripts/inventory.py")
+        _say("Identical. Live is running the script this command installs -")
+        _say("assuming Live was restarted since it was copied. Nothing here can tell")
+        _say("whether it was: quit Live completely and start it again if in doubt.")
+        _say("From a checkout, python scripts/inventory.py surveys the whole installation.")
         return 0
 
     sys.stdout.writelines(diff)
@@ -1104,7 +1177,7 @@ def do_diff(args: argparse.Namespace) -> int:
     dropped = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
     _say()
     _say(f"Different: {added} line(s) in the repo that are not installed, {dropped} the other way.")
-    _say("Install the repo version with:  python scripts/install_script.py")
+    _say(f"Install the repo version with:  {invocation()}")
     return 1
 
 
@@ -1157,12 +1230,12 @@ def do_list(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python scripts/install_script.py",
+        prog=invocation(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Install the Live Maestro Remote Script into Live's User Library.\n"
             "\n"
-            "The User Library is read from Live's own Preferences\\Library.cfg, never\n"
+            "The User Library is read from Live's own Library.cfg, never\n"
             "guessed. The folder name under Remote Scripts becomes the entry in Live's\n"
             "Control Surface dropdown, and from the wrong folder Live loads nothing and\n"
             "says nothing at all."

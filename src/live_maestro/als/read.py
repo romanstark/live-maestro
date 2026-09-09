@@ -790,6 +790,8 @@ def _drum_pads_of(dev: Element) -> list[DrumPad]:
         for path_el in branch.iter("Path"):
             value = path_el.get("Value", "")
             if value.lower().endswith(SAMPLE_SUFFIXES):
+                # Normalize separators so sets saved on Windows or macOS both
+                # resolve the sample filename correctly via os.path.basename.
                 sample = os.path.basename(value.replace("\\", "/"))
                 break
         note = 128 - receiving

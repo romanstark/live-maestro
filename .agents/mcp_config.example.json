@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "live-maestro": {
-      "command": "<absolute path to the entry point in your venv -- Windows: C:\\path\\to\\clone\\.venv\\Scripts\\live-maestro.exe -- macOS/Linux: /path/to/clone/.venv/bin/live-maestro>"
-    }
-  }
-}

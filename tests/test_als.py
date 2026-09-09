@@ -40,10 +40,11 @@ import subprocess
 import time
 import types
 from pathlib import Path
+from xml.etree.ElementTree import Element, fromstring
 
 import pytest
 
-from live_maestro.als import write
+from live_maestro.als import read, write
 from live_maestro.als.read import (
     Envelope,
     Project,
@@ -575,6 +576,39 @@ def live_running(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+# ================================================== the process table per platform
+
+#: What ``ps -A -o comm=`` prints on macOS with Live open: full executable paths,
+#: not process names. Copied from a real listing rather than invented, because the
+#: shape is the whole point of the tests below.
+MACOS_WITH_LIVE = (
+    "/usr/sbin/syslogd\n"
+    "/Applications/Ableton Live 12 Suite.app/Contents/MacOS/Live\n"
+    "/Applications/Ableton Live 12 Suite.app/Contents/App-Resources"
+    "/Extensions/Index/Ableton Index\n"
+)
+
+MACOS_WITHOUT_LIVE = "/usr/sbin/syslogd\n/Applications/Safari.app/Contents/MacOS/Safari\n"
+
+
+def _any_file(tmp_path: Path) -> Path:
+    """A file to stat and open. Its contents never reach the process check."""
+    target = tmp_path / "Fixture.als"
+    target.write_bytes(b"\x1f\x8b")
+    return target
+
+
+def test_macos_process_table_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify Ableton Live bundle is recognized in macOS process listings."""
+    _fake_process_table(monkeypatch, MACOS_WITH_LIVE)
+    assert write._inspect_environment(_any_file(tmp_path)).live_running is True
+
+    _fake_process_table(monkeypatch, MACOS_WITHOUT_LIVE)
+    assert write._inspect_environment(_any_file(tmp_path)).live_running is False
+
+
 # ================================================================ gzip and XML
 
 
@@ -816,6 +850,40 @@ def test_drum_pad_notes_are_stored_mirrored(project: Project) -> None:
     assert [pad.name for pad in rack.pads] == ["Kick", "Snare"]
     # Pads come back sorted by the decoded note, not by the mirrored file value.
     assert [pad.note for pad in rack.pads] == sorted(pad.note for pad in rack.pads)
+
+
+def _drum_rack_with_sample(path_value: str) -> Element:
+    """The smallest drum rack that carries one sample path."""
+    return fromstring(
+        "<DrumGroupDevice><Branches><DrumBranch>"
+        "<Name><EffectiveName Value=\"Kick\" /></Name>"
+        "<ZoneSettings><ReceivingNote Value=\"92\" /></ZoneSettings>"
+        "<DeviceChain><Devices><OriginalSimpler>"
+        f"<Player><SampleRef><FileRef><Path Value=\"{path_value}\" />"
+        "</FileRef></SampleRef></Player>"
+        "</OriginalSimpler></Devices></DeviceChain>"
+        "</DrumBranch></Branches></DrumGroupDevice>"
+    )
+
+
+def test_a_windows_authored_sample_path_yields_its_basename() -> None:
+    """The shape the fixture above already carries, stated on its own."""
+    pads = read._drum_pads_of(_drum_rack_with_sample("C:\\Samples\\Kick Analog 4.aif"))
+
+    assert pads[0].sample == "Kick Analog 4.aif"
+
+
+def test_a_macos_authored_sample_path_yields_its_basename() -> None:
+    """The other half, which no test covered.
+
+    A set saved by Live on macOS stores a POSIX path. Nothing in the reader may
+    depend on the separator the authoring machine happened to use.
+    """
+    pads = read._drum_pads_of(
+        _drum_rack_with_sample("/Users/username/Music/Samples/Kick Analog 4.aif")
+    )
+
+    assert pads[0].sample == "Kick Analog 4.aif"
 
 
 def test_a_drum_pads_sample_name_is_recovered(project: Project) -> None:

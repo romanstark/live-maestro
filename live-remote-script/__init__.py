@@ -55,7 +55,7 @@ SCRIPT_NAME = "live-maestro"
 #: only: Live has not been restarted since the script was copied in. Comparing the
 #: file against the repo with ``python scripts/install_script.py --diff`` settles it
 #: outright, and a number is the glance rather than the proof.
-SCRIPT_VERSION = "0.1.0"
+SCRIPT_VERSION = "0.1.1"
 
 #: What protocol 1 means for a caller, the shapes it may rely on:
 #:

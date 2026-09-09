@@ -1,9 +1,14 @@
 name: CI
 
-# The test suite must never require Live. Neither runner below has a
+# The test suite must never require Live. None of the runners below has a
 # DAW, and that is the point: anything that can only be proven against running
 # Live is proven in a catalog `status`, not in a test that would skip itself
 # everywhere. See CONTRIBUTING.md.
+#
+# macOS is in the matrix because Live runs there and its on-disk layout differs:
+# Library.cfg and Log.txt sit directly in the version folder rather than in a
+# Preferences subfolder. Without a macOS runner that difference is invisible to
+# CI, which is how it stayed broken while every check reported green.
 
 on:
   push:
@@ -16,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4

@@ -964,7 +964,7 @@ def collect_findings(
                     "The installed __pycache__ was compiled from a different __init__.py.",
                     "Live prefers the compiled version and says nothing about it, so the change "
                     "appears not to have happened. Delete it and restart Live completely:\n"
-                    f'  Remove-Item -Recurse -Force "{ours["pycache"]}"',
+                    f"  {installer.delete_folder_hint(ours['pycache'])}",
                 )
             )
         if ours["matches_this_checkout"] is False:
@@ -1121,8 +1121,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
                 "The live_maestro package is not importable by this interpreter "
                 f"({sys.executable}).",
                 'From the checkout:  pip install -e ".[dev]"\n'
-                "Or run this with the checkout's own interpreter: "
-                ".venv\\Scripts\\python.exe scripts/inventory.py",
+                "Or run with uv:     uv run scripts/inventory.py",
             ),
         )
     return report

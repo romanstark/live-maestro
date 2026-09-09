@@ -344,6 +344,9 @@ def _inspect_environment(path: Path) -> LiveCheck:
         holds the file) succeeds on the very set Live has open. Live reads the .als
         into memory and closes the handle. Any claim that the file is locked while
         Live has it open is therefore wrong on Windows.
+
+        On macOS: ``ps -A -o comm=`` prints executable paths matching the
+        Live application bundle. The caller can override via ``allow_live_running``.
     """
     running: bool | None
     windows = sys.platform == "win32"

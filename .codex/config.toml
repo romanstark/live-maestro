@@ -1,0 +1,3 @@
+[mcp_servers.live-maestro]
+command = "uv"
+args = ["run", "live-maestro"]

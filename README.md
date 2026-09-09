@@ -121,13 +121,13 @@ You need Ableton Live 12 and [uv](https://docs.astral.sh/uv/). No repository, no
 
 ### 1. Install it
 
-```powershell
+```bash
 uv tool install git+https://github.com/romanstark/live-maestro.git
 ```
 
 ### 2. Set up Live
 
-```powershell
+```bash
 live-maestro-install
 ```
 
@@ -141,7 +141,7 @@ Then **quit Live completely and start it again**. Remote Scripts load only at st
 
 Check that it answers:
 
-```powershell
+```bash
 python -m live_maestro.client ping
 ```
 

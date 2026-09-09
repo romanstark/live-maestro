@@ -20,13 +20,13 @@ Then in Live: **Preferences → Link, Tempo & MIDI → Control Surface** and pic
 
 ### 1. The User Library path is written down, so never guess it
 
-Read `Preferences\Library.cfg`. It is frequently **not** `Documents`, and there is no fallback worth trying.
+Read `Library.cfg` (under `Preferences\` on Windows, directly in the version folder on macOS). It is frequently **not** `Documents`, and there is no fallback worth trying.
 
-`<ProjectPath>` in that file is where to start, but on its own it is **not reliably the User Library**. Measured 2026-08-29: `Library.cfg` gave `<ProjectPath Value="<Documents>/Ableton"/>` alongside `<ProjectName Value="User Library"/>`, and Live was loading its Remote Scripts one level deeper, from `<ProjectPath>\<ProjectName>`. A second `Remote Scripts` folder sat directly under `<ProjectPath>` and Live never read it. So check both, and take the one holding Live's own `Ableton Folder Info` marker folder, which is exactly what `scripts/install_script.py` does rather than picking one by a rule.
+`<ProjectPath>` in that file is where to start, but on its own it is **not reliably the User Library**. Measured 2026-08-29: `Library.cfg` gave `<ProjectPath Value="<Documents>/Ableton"/>` alongside `<ProjectName Value="User Library"/>`, and Live was loading its Remote Scripts one level deeper, from `<ProjectPath>/<ProjectName>`. A second `Remote Scripts` folder sat directly under `<ProjectPath>` and Live never read it. So check both, and take the one holding Live's own `Ableton Folder Info` marker folder, which is exactly what `scripts/install_script.py` does rather than picking one by a rule.
 
 From the wrong folder Live loads **nothing and says nothing**: no entry in the Control Surface dropdown, no error in the log, no clue. If the entry is missing after a restart, the path is wrong, not the script.
 
-Not `%APPDATA%\Ableton\Live x.x.x\Preferences\User Remote Scripts\`. That is the location for Live 10 and older.
+Not the `User Remote Scripts` folder inside Live's own preferences folder (`%APPDATA%\Ableton\Live x.x.x\Preferences\` on Windows, `~/Library/Preferences/Ableton/Live x.x.x/` on macOS). That is the location for Live 10 and older.
 
 The User Library is also version-independent, which matters: Live updates itself and its preferences folder moves with it (`Live 12.4.2` → `Live 12.4.3`, measured). A script in the User Library survives that; one in the preferences folder does not.
 

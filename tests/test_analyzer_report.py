@@ -77,7 +77,11 @@ def test_nothing_answering_is_reported_as_the_device_missing() -> None:
     # The first thing to do is run the installer, which puts the device where
     # Live's browser looks. Naming a path to copy by hand sends the reader to do
     # the installer's job.
-    assert any("install_script.py" in line for line in result.recommendations)
+    #
+    # Assert the installed command, not the checkout script: this reply reaches
+    # every caller, and most of them installed a wheel and have no scripts/
+    # directory. Pinning "install_script.py" alone is what let that slip.
+    assert any("live-maestro-install" in line for line in result.recommendations)
     assert any("last in the chain" in line for line in result.recommendations)
     # The other 36 tools do not need this device, and a caller reading this
     # should not conclude the server is broken.

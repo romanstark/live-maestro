@@ -44,35 +44,57 @@ pyrefly check
 ```
 CI runs all four. `pyright` reads its paths and its interpreter from `[tool.pyright]` in `pyproject.toml`, so it checks the same thing here as in CI. `pyrefly` enforces the strict rules configured in `[tool.pyrefly.errors]`, among them `unnecessary-type-conversion`, which `pyright` does not flag - so a branch that is clean under `pyright` alone can still be rejected by CI.
 
-The test suite does not require an active Live instance. Continuous Integration (CI) runs tests on Linux and Windows without access to a DAW.
+The test suite does not require an active Live instance. Continuous Integration (CI) runs tests on Linux, Windows, and macOS without access to a DAW.
 
 ### Pointing your MCP client at your working copy
 
-The `command: "live-maestro"` from the README resolves to whatever is installed on your `PATH`, which is not your clone. To exercise the code you are editing, point the client at the entry point inside your virtual environment instead. Copy `.agents/mcp_config.example.json` to `mcp_config.json` beside it (or into your client's own config) and fill in one absolute path.
+The global `command: "live-maestro"` from the README resolves to whatever is installed on your `PATH`, which is not your local clone.
 
-Windows:
+To exercise the code you are editing, this repository provides pre-configured, project-level MCP configurations using `uv run live-maestro`. When an AI agent launches a project-scoped MCP server, it sets the working directory to the repository root. `uv run` automatically discovers the local `pyproject.toml` and links directly to `src/live_maestro`. Every edit takes effect the next time the server starts—cross-platform across Windows, macOS, and Linux without needing any machine-specific absolute paths.
+
+Pre-configured project files included in the repository:
+- **Antigravity / Gemini:** `.agents/mcp_config.json`
+- **Cursor:** `.cursor/mcp.json`
+- **VS Code / GitHub Copilot:** `.vscode/mcp.json`
+- **Claude Code:** `.claude/mcp.json`
+- **OpenAI Codex:** `.codex/config.toml`
+
+The configuration uses the standard runner format (JSON):
+
 ```json
 {
   "mcpServers": {
     "live-maestro": {
-      "command": "C:\\path\\to\\clone\\.venv\\Scripts\\live-maestro.exe"
+      "command": "uv",
+      "args": ["run", "live-maestro"]
     }
   }
 }
 ```
 
-macOS / Linux:
+And in TOML (`.codex/config.toml`):
+
+```toml
+[mcp_servers.live-maestro]
+command = "uv"
+args = ["run", "live-maestro"]
+```
+
+#### Manual Fallback (without uv)
+
+If you develop without `uv` and use a standard `python -m venv`, point your client at Python running the server module directly:
+
 ```json
 {
   "mcpServers": {
     "live-maestro": {
-      "command": "/path/to/clone/.venv/bin/live-maestro"
+      "command": "python",
+      "args": ["-m", "live_maestro.server"]
     }
   }
 }
 ```
-
-The path must be absolute, as MCP clients do not expand `~`, environment variables, or paths relative to the repository. Because `pip install -e` links the venv back to `src/`, every edit takes effect the next time the server starts; no reinstall.
+*(On systems where `python` on `PATH` does not point to your virtual environment, replace `"python"` with the path to your virtual environment's Python interpreter, e.g. `.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on macOS/Linux).*
 
 ---
 

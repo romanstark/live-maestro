@@ -129,9 +129,10 @@ def _no_reply(target: str) -> AudioMeasurementResult:
         ),
         recommendations=[
             (
-                "Install the device with 'python scripts/install_script.py', which "
-                "copies it into the User Library where Live's browser finds it, "
-                "under Presets > Audio Effects > Max Audio Effect."
+                "Install the device with 'live-maestro-install' (or "
+                "'python scripts/install_script.py' from a clone), which copies it "
+                "into the User Library where Live's browser finds it, under "
+                "Presets > Audio Effects > Max Audio Effect."
             ),
             (
                 "Drop it on the track to measure, last in the chain: it reads the "
@@ -159,8 +160,9 @@ def _wrong_schema(replies: list[Reply], target: str) -> AudioMeasurementResult:
         ),
         recommendations=[
             (
-                "Regenerate the device with python "
-                "scripts/build_analyzer_device.py and reload it in Live."
+                "Reinstall the shipped device with 'live-maestro-install' and "
+                "reload it in Live, or regenerate it with "
+                "'python scripts/build_analyzer_device.py' from a clone."
             )
         ],
     )

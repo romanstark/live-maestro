@@ -36,7 +36,8 @@ Backup/
 probe_results.json
 
 # IDE / OS
-.vscode/
+.vscode/*
+!.vscode/mcp.json
 .idea/
 .DS_Store
 Thumbs.db
@@ -53,7 +54,3 @@ sync-run*.json
 # song.tracks[10], song.tracks[15].clip_slots[0] -- so it is right for the machine
 # that wrote it and wrong for everyone else. Write your own against your own set.
 specimens.json
-
-# The real MCP client config names local absolute paths; only the example ships.
-.agents/*
-!.agents/mcp_config.example.json

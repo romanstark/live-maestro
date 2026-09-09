@@ -23,7 +23,7 @@ All invocations go through the repository's virtual environment, written here in
 
 ## 1. Prerequisites
 
-- The new Live version installed and started at least once, so that it has written its own `Preferences/Library.cfg`. Discovery reads that file, and a version that has never fully started has none.
+- The new Live version installed and started at least once, so that it has written its own `Library.cfg` (under `Preferences/` on Windows, directly in the version folder on macOS). Discovery reads that file, and a version that has never fully started has none.
 - A test project you are willing to have written to. Every property write is read back and restored, and a crash mid-probe is not. Use a copy.
 - The repository's virtual environment, with `pytest`, `ruff` and `pyright` available.
 

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "live-maestro": {
+      "command": "uv",
+      "args": ["run", "live-maestro"]
+    }
+  }
+}
