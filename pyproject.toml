@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "live-maestro"
+version = "0.1.0"
+description = "MCP server connecting AI assistants to Ableton Live through the Live Object Model."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Roman Stark", email = "mail@romanstark.de" }]
+keywords = ["live", "ableton-live", "mcp", "lom", "music", "daw", "production"]
+
+dependencies = [
+    "mcp>=1.2,<2",      # FastMCP server framework
+    "pyyaml>=6",        # Loads catalog definitions (src/live_maestro/catalog/*.yaml)
+    # Declared even though mcp already pulls it in: src/live_maestro/toolargs.py
+    # imports it directly, and a direct import on a transitive dependency breaks
+    # the day the intermediary drops it. Only documented pydantic API is used, with
+    # no reach into the MCP SDK's internals, so this bound stays as wide as the
+    # SDK's own.
+    "pydantic>=2.7,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/romanstark/live-maestro"
+Repository = "https://github.com/romanstark/live-maestro"
+Issues = "https://github.com/romanstark/live-maestro/issues"
+
+# Architectural dependency choices:
+# - No websocket dependencies: Transport to Live is a direct TCP loopback socket (docs/protocol.md §1).
+# - Pure standard library for music theory: The music/ package is self-contained without external audio/theory libs.
+# - Zero telemetry: No HTTP clients, databases, or analytics packages.
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    # Pinned to a minor range on purpose. An unbounded linter turns every new
+    # ruff release into a possible CI failure on code nobody touched: a rule
+    # moving into the default set is enough. Raise this deliberately, and run
+    # the suite when you do.
+    "ruff>=0.16,<0.17",
+    # Same reasoning as ruff above: a type checker that moves a rule into its
+    # default set would otherwise fail CI on code nobody touched.
+    "pyright>=1.1,<2",
+    # Enforces strict typing rules including unnecessary-type-conversion
+    "pyrefly>=1.2,<2",
+]
+
+[project.scripts]
+live-maestro = "live_maestro.server:main"
+# Live needs two files in its User Library before any of this works, and a user who
+# installed the wheel has no checkout to run a script from. This is that step.
+live-maestro-install = "live_maestro.installer:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/live_maestro"]
+# Explicitly include YAML catalog files so the runtime registry is complete in built wheels
+artifacts = ["src/live_maestro/catalog/*.yaml", "src/live_maestro/**/*.yaml"]
+# The two files Live itself needs, carried inside the package so that
+# live-maestro-install can find them from site-packages. Both live outside the
+# package in the repository: the device is generated and reviewed as a patcher, and
+# the Remote Script runs in Live's own interpreter and is never imported from here.
+# Neither can be resolved from a checkout at install time, because a user installing
+# with uv tool install has no checkout.
+force-include = { "devices" = "live_maestro/devices", "live-remote-script" = "live_maestro/live-remote-script" }
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src",
+    "live-remote-script",
+    "scripts",
+    "docs",
+    "devices",
+    "tests",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY.md",
+    "CLA.md",
+    "CONTRIBUTING.md",
+]
+
+[tool.pytest.ini_options]
+# src is a testpath because the docstring examples in it are tests. Without
+# --doctest-modules they are decorative: 59 of them sat in automation, introspect,
+# als and music and nothing ran them, so a reworded docstring could break one
+# silently. The one example that opens a real socket carries # doctest: +SKIP.
+testpaths = ["tests", "src"]
+addopts = ["--doctest-modules"]
+
+[tool.pyright]
+include = ["src", "tests", "scripts"]
+# live-remote-script/ runs inside Live's own Python under different rules and is
+# excluded from ruff for the same reason.
+exclude = ["live-remote-script", ".venv"]
+# tests/ bootstraps both of these onto sys.path at import time, so a checker that
+# does not know about them reports a missing import for a module pytest resolves.
+extraPaths = ["scripts", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+# Named explicitly: once this section exists the checker stops guessing at the
+# interpreter, and without it every import of this package reads as missing.
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Exclude live-remote-script from Python 3.11 linting rules since it runs inside Live's internal interpreter
+extend-exclude = ["live-remote-script"]
+
+[tool.ruff.lint]
+# E501 is not in ruff's default rule set (E4, E7, E9, F), so the line-length declared
+# above is only enforced because this line selects the rule that reads it.
+extend-select = ["E501"]
+
+[tool.pyrefly]
+project-includes = ["src", "tests", "scripts"]
+project-excludes = ["live-remote-script", ".venv"]
+search-path = ["scripts", "tests"]
+
+[tool.pyrefly.errors]
+untyped-import = "ignore"
+unnecessary-type-conversion = "error"
+unnecessary-comparison = "error"
+bad-return = "error"

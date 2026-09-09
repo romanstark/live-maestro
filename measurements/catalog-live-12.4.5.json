@@ -1,0 +1,7040 @@
+{
+ "live_version": "12.4.5",
+ "rows": {
+  "app.available_main_views": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.average_process_usage": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.browse_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.browser": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.bugfix_version": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.control_surfaces": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.current_dialog_button_count": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.current_dialog_message": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.focus_view": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "app.focused_document_view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.get_document": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.hide_view": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "app.is_view_visible": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "app.major_version": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.minor_version": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.number_of_push_apps_running": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.open_dialog_count": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.peak_process_usage": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.press_current_dialog_button": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "app.scroll_view": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "app.show_view": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "app.toggle_browse": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.unavailable_features": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.version_string": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "app.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "app.zoom_view": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.add_new_notes": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.apply_note_modifications": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.automation_envelope": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.automation_envelopes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.available_warp_modes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.beat_to_sample_time": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "arrangement_clip.clear_all_envelopes": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.clear_envelope": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.color": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.create_automation_envelope": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.create_midi": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.crop": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.delete": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.deselect_all_notes": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.duplicate_from_session": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.duplicate_loop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.duplicate_notes_by_id": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.duplicate_region": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.end_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.end_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.file_path": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.fire": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.gain": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.gain_display_string": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.get_notes_by_id": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.get_notes_extended": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.get_selected_notes_extended": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.groove": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.has_envelopes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.has_groove": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_arrangement_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_audio_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_midi_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_overdubbing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_playing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_recording": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_session_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_take_lane_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.is_triggered": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.launch_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.launch_quantization": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.legato": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.loop_end": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.loop_start": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.looping": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.move_playing_pos": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.muted": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.pitch_coarse": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.pitch_fine": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.playing_position": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.position": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.quantize": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.quantize_pitch": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.ram_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.remove_notes_by_id": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.remove_notes_extended": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.replace_selected_notes": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.sample_length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.sample_rate": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.sample_to_beat_time": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "arrangement_clip.scrub": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.select_all_notes": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.set_fire_button_state": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.set_notes": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.signature_denominator": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.signature_numerator": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.start_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.start_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.stop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.stop_scrub": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.velocity_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.view_grid_is_triplet": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.view_grid_quantization": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.view_hide_envelope": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.view_select_envelope_parameter": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "arrangement_clip.view_show_envelope": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.view_show_loop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "arrangement_clip.warp_marker_beat_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.warp_marker_sample_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.warp_markers": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.warp_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "arrangement_clip.warping": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "arrangement_clip.will_record_on_start": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.audio_effects": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_children": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_is_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_is_folder": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_is_loadable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_source": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.child_uri": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.children": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.children_is_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.children_is_selected": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.children_iter_children": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.children_source": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.clips": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.colors": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.current_project": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.drums": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.filter_type": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "browser.grandchild": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.grandchild_is_folder": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.grandchild_is_loadable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.grandchild_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.grandchild_uri": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.hotswap_target": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.instruments": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.is_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.is_folder": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.is_loadable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.is_selected": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_children": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_is_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_is_folder": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_is_loadable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_is_selected": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_source": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.item_uri": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.iter_children": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.legacy_libraries": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.load_item": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "browser.max_for_live": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.midi_effects": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.packs": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.plugins": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.preview_item": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "browser.relation_to_hotswap_target": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "browser.root": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.samples": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.sounds": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.source": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.stop_preview": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "browser.uri": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.user_folders": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "browser.user_library": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.can_compare_ab": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.can_have_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.can_have_drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.chain_activator_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "chain.chain_activator_short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.chain_activator_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "chain.chain_activator_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.chain_activator_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.choke_group": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.class_display_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.color": {
+   "outcome": "inconclusive",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.delete_device": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "chain.device_class_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.device_is_active": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.device_name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.device_on": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.device_on_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.device_parameter": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.device_parameter_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.device_parameters": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.device_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "chain.devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.duplicate_device": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "chain.has_audio_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.has_audio_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.has_midi_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.has_midi_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.is_auto_colored": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.is_using_compare_preset_b": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.latency_in_ms": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.latency_in_samples": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.mixer_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.muted_via_solo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.out_note": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.panning": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.panning_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "chain.panning_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.panning_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "chain.panning_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.parameters_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "chain.send": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.send_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.store_chosen_bank": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "chain.str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "chain.type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "chain.volume_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "chain.volume_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "chain.volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.add_new_notes": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.add_warp_marker": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.apply_note_modifications": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.automation_envelope": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.automation_envelopes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.available_warp_modes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.beat_to_sample_time": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.clear_all_envelopes": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.clear_envelope": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "clip.color": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.create_automation_envelope": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.crop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.deselect_all_notes": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.detail": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.duplicate_loop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.duplicate_notes_by_id": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.duplicate_region": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.end_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.end_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.file_path": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.fire": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.gain": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.gain_display_string": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.get_notes_by_id": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.get_notes_extended": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.get_selected_notes_extended": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.groove": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.has_envelopes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.has_groove": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_arrangement_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_audio_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_midi_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_overdubbing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_playing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_recording": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_session_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_take_lane_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.is_triggered": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.launch_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.launch_quantization": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.legato": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.loop_end": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.loop_start": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.looping": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.move_playing_pos": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.move_warp_marker": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.muted": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.pitch_coarse": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.pitch_fine": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.playing_position": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.position": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.quantize": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.quantize_pitch": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.ram_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.remove_notes_by_id": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "clip.remove_notes_extended": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "clip.remove_warp_marker": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "clip.replace_selected_notes": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "clip.sample_length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.sample_rate": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.sample_to_beat_time": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.scrub": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.select_all_notes": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.set_fire_button_state": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.set_notes": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "clip.signature_denominator": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.signature_numerator": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.start_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.start_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.stop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.stop_scrub": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.velocity_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.view_grid_is_triplet": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.view_grid_quantization": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.view_hide_envelope": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.view_select_envelope_parameter": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip.view_show_envelope": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.view_show_loop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip.warp_marker_beat_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.warp_marker_sample_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.warp_markers": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip.warp_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.warping": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip.will_record_on_start": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.color": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.controls_other_clips": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.create_audio_clip": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip_slot.create_clip": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip_slot.delete_clip": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip_slot.duplicate_clip_to": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip_slot.fire": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip_slot.has_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.has_stop_button": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "clip_slot.highlighted": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.is_group_slot": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.is_playing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.is_recording": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.is_triggered": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.playing_status": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "clip_slot.set_fire_button_state": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "clip_slot.stop": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "clip_slot.will_record_on_start": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "cue.jump": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "cue.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "cue.time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.can_compare_ab": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.can_have_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.can_have_drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.can_show_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.class_display_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.class_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.delete": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "device.get_parameter_names": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "device.input_routing_channel": {
+   "error_code": "no_such_path",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "another object"
+  },
+  "device.input_routing_channel_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.input_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.input_routing_type": {
+   "error_code": "no_such_path",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "another object"
+  },
+  "device.input_routing_type_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.input_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.is_active": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.is_showing_chain_devices": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "device.is_showing_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "device.is_using_compare_preset_b": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "device.latency_in_ms": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.latency_in_samples": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "device.on": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.on_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "device.parameters": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.selected_band": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "device.store_chosen_bank": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "device.type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "device.view.is_collapsed": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_choke_group": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_delete_device": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "drum_pad.chain_devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.chain_mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_out_note": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_panning": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.chain_panning_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_send": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.chain_send_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chain_volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.chain_volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.delete_all_chains": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "drum_pad.device_class_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.device_name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.device_on": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.device_on_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.device_parameter": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.device_parameter_value": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "a Drum Rack"
+  },
+  "drum_pad.mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "drum_pad.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.note": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "drum_pad.solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "eq8.edit_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "eq8.frequency_hint": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "eq8.frequency_hint_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "eq8.global_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "eq8.oversample": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "groove.arrangement_clip_assignment": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "groove.base": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "groove.clip_assignment": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "groove.clip_assignment_name": {
+   "error_code": "no_such_path",
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "groove.global_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "groove.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "groove.pool": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "groove.quantization_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "groove.random_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "groove.timing_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "groove.velocity_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "hybrid_reverb.ir_attack_time": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "hybrid_reverb.ir_category_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "hybrid_reverb.ir_category_list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "hybrid_reverb.ir_decay_time": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "hybrid_reverb.ir_file_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "hybrid_reverb.ir_file_list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "hybrid_reverb.ir_size_factor": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "hybrid_reverb.ir_time_shaping_on": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "looper.loop_length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "looper.overdub_after_record": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "looper.record_length_index": {
+   "error_code": "live_error",
+   "outcome": "broken",
+   "proven": [
+    "get"
+   ]
+  },
+  "looper.record_length_list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "looper.tempo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.arrangement_clips": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "a different track kind"
+  },
+  "master.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.available_input_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.available_input_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.available_output_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.available_output_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.back_to_arranger": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.can_be_armed": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.can_be_frozen": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.can_show_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.clip_slots": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.color": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.create_midi_clip": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.crossfader": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.crossfader_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "master.crossfader_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.crossfader_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "master.crossfader_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.cue_volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.cue_volume_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "master.cue_volume_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.cue_volume_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "master.cue_volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.current_input_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.current_input_sub_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.current_output_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.delete_clip": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.duplicate_clip_slot": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.duplicate_clip_to_arrangement": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.duplicate_device": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.group_track": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.has_audio_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.has_audio_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.has_midi_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.has_midi_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_meter_left": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_meter_level": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_meter_right": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_routing_channel": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_routing_type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.input_sub_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_foldable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_frozen": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_grouped": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_part_of_selection": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_showing_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.is_visible": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.jump_in_running_session_clip": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.left_split_stereo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.mixer_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.mute": {
+   "error_code": "live_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "master.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_meter_left": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_meter_level": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_meter_right": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_routing_channel": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_routing_type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_sub_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.output_sub_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.panning_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.panning_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "master.panning_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.panning_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "master.panning_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.performance_impact": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "master.right_split_stereo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.sends": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.song_tempo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.stop_all_clips": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "a different track kind"
+  },
+  "master.str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "master.take_lanes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.track_activator_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "master.track_activator_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.track_activator_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "master.track_activator_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master.value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.volume_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master.volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.can_compare_ab": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.can_have_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.can_have_drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.class_display_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.class_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.delete": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "master_device.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.edit_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.global_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.is_active": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.is_using_compare_preset_b": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.latency_in_ms": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.latency_in_samples": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.on": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.on_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.oversample": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "master_device.parameter": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.parameter_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.parameter_value": {
+   "outcome": "inconclusive",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.parameters": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.re_enable_automation": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "master_device.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.store_chosen_bank": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "master_device.str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "master_device.type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "master_device.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "param.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "param.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "param.value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "param.value_raw": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack.add_macro": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.chain_selector": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "a rack that is not a Drum Rack"
+  },
+  "rack.chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.copy_pad": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "rack.delete_selected_variation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.has_drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.has_macro_mappings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.insert_chain": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.macro": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.macro_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.macro_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack.macros_mapped": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.randomize_macros": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.recall_last_used_variation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.recall_selected_variation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.remove_macro": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.return_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.selected_variation_index": {
+   "error_code": "no_such_path",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "another object"
+  },
+  "rack.store_variation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack.variation_count": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.view.drum_pads_scroll_position": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack.view.selected_chain": {
+   "error_code": "no_such_path",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "another view object"
+  },
+  "rack.view.selected_drum_pad": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [
+    "get"
+   ],
+   "wants": "a Drum Rack"
+  },
+  "rack.visible_drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack.visible_macro_count": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_drum_pad.chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_drum_pad.delete_all_chains": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "rack_drum_pad.mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack_drum_pad.name": {
+   "error_code": "not_settable",
+   "outcome": "broken",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_drum_pad.note": {
+   "error_code": "not_settable",
+   "outcome": "broken",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_drum_pad.solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack_return.devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_return.mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack_return.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_return.panning": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_return.panning_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack_return.solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "rack_return.volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "rack_return.volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.arrangement_clips": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "a different track kind"
+  },
+  "return.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.available_input_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.available_input_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.available_output_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.available_output_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.back_to_arranger": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.can_be_armed": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.can_be_frozen": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.can_show_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.clip_slots": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.color": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.create_midi_clip": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "return.crossfade_assign": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.current_input_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.current_input_sub_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.current_output_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.delete_clip": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "return.devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.duplicate_clip_slot": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "return.duplicate_clip_to_arrangement": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "return.duplicate_device": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "return.group_track": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.has_audio_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.has_audio_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.has_midi_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.has_midi_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_meter_left": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_meter_level": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_meter_right": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_routing_channel": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_routing_type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.input_sub_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_foldable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_frozen": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_grouped": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_part_of_selection": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_showing_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.is_visible": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.jump_in_running_session_clip": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "return.left_split_stereo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.mixer_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.muted_via_solo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_meter_left": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_meter_level": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_meter_right": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_routing_channel": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_routing_type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_sub_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.output_sub_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.panning_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.panning_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "return.panning_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.panning_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "return.panning_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.performance_impact": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "return.right_split_stereo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.send": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.send_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.sends": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.sends_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "return.sends_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.sends_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "return.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.stop_all_clips": {
+   "error_code": "live_error",
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "a different track kind"
+  },
+  "return.str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "return.take_lanes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.track_activator_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "return.track_activator_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.track_activator_str_for_value": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "return.track_activator_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return.value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.volume_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return.volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return_device.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.can_compare_ab": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.can_have_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.can_have_drum_pads": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.class_display_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.class_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.delete": {
+   "error_code": "type_error",
+   "outcome": "argument_gap",
+   "proven": [],
+   "wants": "call arguments this probe does not supply"
+  },
+  "return_device.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return_device.is_active": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.is_using_compare_preset_b": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return_device.latency_in_ms": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.latency_in_samples": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.list": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return_device.on": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.on_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return_device.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameter": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameter_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameter_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameter_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameter_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameter_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "return_device.parameter_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.parameters": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "return_device.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.store_chosen_bank": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "return_device.str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "return_device.type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "return_device.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "sample.clear_slices": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "sample.insert_slice": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "sample.move_slice": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "sample.remove_slice": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "sampler.parameter_by_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.clip_slots": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.color": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "scene.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.fire": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "scene.fire_as_selected": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "scene.is_empty": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.is_triggered": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "scene.set_fire_button_state": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "scene.tempo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.tempo_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "scene.time_signature_denominator": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "scene.time_signature_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "scene.time_signature_numerator": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.can_warp_as": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.can_warp_double": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.can_warp_half": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.crop": {
+   "outcome": "target_mismatch",
+   "proven": [],
+   "wants": "another object"
+  },
+  "simpler.guess_playback_length": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "simpler.multi_sample_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.note_pitch_bend_range": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.pad_playback_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.pad_sample_end_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.pad_sample_file_path": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.pad_sample_gain": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.pad_sample_start_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.pad_slicing": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.pitch_bend_range": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.playback_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.playing_position": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.playing_position_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.retrigger": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.reverse": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "simpler.sample": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_end": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_end_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_env_fade_in": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_env_fade_out": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_file_path": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_gain": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_loop_end": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_loop_fade": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_loop_start": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_sample_rate": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_slices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_slicing_beat_division": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_slicing_sensitivity": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_slicing_style": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_start": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.sample_start_marker": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_warp_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.sample_warping": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "simpler.slicing_playback_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.slicing_style": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.voices": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "simpler.warp_as": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "simpler.warp_double": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "simpler.warp_half": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.appointed_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.arrangement_overdub": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.back_to_arranger": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.begin_undo_step": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.can_capture_midi": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.can_jump_to_next_cue": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.can_jump_to_prev_cue": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.can_redo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.can_undo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.capture_and_insert_scene": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.capture_midi": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.clip_trigger_quantization": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.continue_playing": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.count_in_duration": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.create_audio_track": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.create_midi_track": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.create_return_track": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.create_scene": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.cue_points": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.current_song_time": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.delete_return_track": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.delete_scene": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.delete_track": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.duplicate_scene": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.duplicate_track": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.end_undo_step": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.exclusive_arm": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.exclusive_solo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.file_path": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.groove_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.groove_pool": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.groove_pool.grooves": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.is_ableton_link_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.is_ableton_link_start_stop_sync_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.is_counting_in": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.is_playing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.jump_by": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.jump_to_next_cue": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.jump_to_prev_cue": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.last_event_time": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.loop": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.loop_length": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.loop_start": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.master_track": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.metronome": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.midi_recording_quantization": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.move_device": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.nudge_down": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.nudge_up": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.overdub": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.play_selection": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.punch_in": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.punch_out": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.re_enable_automation_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.record_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.redo": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.return_tracks": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.root_note": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.scale_intervals": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.scale_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.scale_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.scenes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.scrub_by": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.select_on_launch": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.session_automation_record": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.session_record": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.session_record_status": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.set_or_delete_cue": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.signature_denominator": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.signature_numerator": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.song_length": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.start_playing": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.start_time": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.stop_all_clips": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.stop_playing": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.swing_amount": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.tap_tempo": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.tempo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.tempo_follower_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "song.tracks": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.trigger_session_record": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "song.tuning_system": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.undo": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "song.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "song.visible_tracks": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.arm": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.arrangement_clips": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.available_input_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.available_input_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.available_output_routing_channels": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.available_output_routing_types": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.back_to_arranger": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.can_be_armed": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.can_be_frozen": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.can_show_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.clip_slots": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.color": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.color_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.crossfade_assign": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.current_monitoring_state": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.delete_device": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.duplicate_clip_slot": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.duplicate_device": {
+   "error_code": "type_error",
+   "outcome": "broken",
+   "proven": []
+  },
+  "track.fired_slot_index": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.fold_state": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.group_track": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.has_audio_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.has_audio_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.has_midi_input": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.has_midi_output": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.implicit_arm": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_meter_left": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_meter_level": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_meter_right": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_routing_channel": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_routing_type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_sub_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.input_sub_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_foldable": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_frozen": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_grouped": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_part_of_selection": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_showing_chains": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.is_visible": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.jump_in_running_session_clip": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.left_split_stereo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.left_split_stereo_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.left_split_stereo_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.left_split_stereo_str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.left_split_stereo_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.mixer_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.mute": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.muted_via_solo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.name": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_meter_left": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_meter_level": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_meter_right": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_routing_channel": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_routing_type": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_sub_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.output_sub_routings": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.panning_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.panning_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.panning_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.panning_str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.panning_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.performance_impact": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.playing_slot_index": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.right_split_stereo": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.right_split_stereo_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.right_split_stereo_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.right_split_stereo_str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.right_split_stereo_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.select_instrument": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.send": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.send_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.send_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.sends": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.short_value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.solo": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.stop_all_clips": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.take_lanes": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.track_activator_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.track_activator_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.track_activator_str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.track_activator_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.value_items": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.view": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.view_device_insert_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.view_is_collapsed": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.view_selected_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_automation_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_default_value": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_display_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "track.volume_is_enabled": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_is_quantized": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_max": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_min": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_original_name": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_re_enable_automation": {
+   "outcome": "verified",
+   "proven": [
+    "call"
+   ]
+  },
+  "track.volume_state": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "track.volume_str_for_value": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "track.volume_value": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "view.detail_clip": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.draw_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "view.follow_song": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "view.highlighted_clip_slot": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.mod_mapping_device": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.mod_mapping_parameter": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.select_device": {
+   "outcome": "inconclusive",
+   "proven": []
+  },
+  "view.selected_chain": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.selected_parameter": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.selected_scene": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.selected_track": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "view.selected_track_devices": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "wavetable.filter_routing": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.mono_poly": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.oscillator_1_effect_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "wavetable.oscillator_1_wavetable_category": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.oscillator_1_wavetable_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.oscillator_1_wavetables": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "wavetable.oscillator_2_effect_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.oscillator_2_wavetable_category": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.oscillator_2_wavetable_index": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.oscillator_2_wavetables": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "wavetable.oscillator_wavetable_categories": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  },
+  "wavetable.poly_voices": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.unison_mode": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.unison_voice_count": {
+   "outcome": "verified",
+   "proven": [
+    "get",
+    "set"
+   ]
+  },
+  "wavetable.visible_modulation_target_names": {
+   "outcome": "verified",
+   "proven": [
+    "get"
+   ]
+  }
+ },
+ "script_version": "0.1.0"
+}

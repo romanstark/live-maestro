@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# The compiled Remote Script. Live loads __pycache__ if it is there, which is
+# why a code change that "did nothing" is almost always a stale cache
+# (docs/protocol.md §9). Covered by the pattern above; named here because
+# forgetting it costs a debugging session every single time.
+live-remote-script/__pycache__/
+
+# Ableton project artefacts. Live's own backups and its analysis sidecars are
+# generated, never source. A throwaway probe set belongs in scratch/ (ignored
+# below) rather than next to the code - a .als is gzipped XML and reviews as a
+# binary blob. A deliberate fixture set can still be added with `git add -f`.
+Backup/
+*.als.bak
+*.als~
+*.asd
+*.alc
+*.agr
+
+# Local session/runtime data
+*.log
+probe_results.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scratch
+scratch/
+tmp/
+uv.lock
+
+# Recorded sync runs -- machine- and set-specific, regenerate with --record
+sync-run*.json
+
+# The --specimens map for sync_catalog.py. It names concrete paths in ONE set --
+# song.tracks[10], song.tracks[15].clip_slots[0] -- so it is right for the machine
+# that wrote it and wrong for everyone else. Write your own against your own set.
+specimens.json
+
+# The real MCP client config names local absolute paths; only the example ships.
+.agents/*
+!.agents/mcp_config.example.json
