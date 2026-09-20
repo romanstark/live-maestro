@@ -490,10 +490,9 @@ class NoteStats:
         recurrence: Exact bar-periodic pitch pattern repetition fractions.
 
     Note:
-        Derived from the note corpus (docs/limits.md section 9), and re-checked
-        per clip against it over 85 clips with no deviation. Everything
-        here is measured and carries no target value: judging what the numbers mean for
-        a given piece is not this class's business.
+        Derived from the note corpus (docs/limits.md section 9) and re-checked against
+        85 clips with no deviation. Every figure here is measured and none is a target
+        value.
 
         Time signature is the clip's own, else the project's (from the master track),
         else 4/4. In 40 re-checked projects every one of the 2,177 MIDI clips carried

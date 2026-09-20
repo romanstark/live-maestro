@@ -55,11 +55,13 @@ Maestro reaches Live through three complementary channels, expanding on the orig
 
 Channel B complements the live bridge by handling data that the LOM does not expose in the open set, such as track automation in arrangements or reading unopened projects. Channel C answers what neither of the others can: how the audio measures. A parameter value is not a level, and a level is not a loudness.
 
+**Two tools use none of the three.** `match_sound` reads Ableton's own preview renders off the disk and compares them with audio the caller names, and `transcribe_stem` runs a transcriber in a separate Python interpreter. Neither asks Live anything, and both work while Live is closed. They are here because the question they answer, which instrument in this library sounds like this recording, has no answer anywhere in the object model. What they produce is then loaded and written over Channel A like anything else.
+
 ### Channel C: Audio measurement
 
 Channels A and B carry metadata. The Remote Script interpreter has no access to audio buffers at all, so neither channel can report whether a mix clips, how loud it is, or whether its low end survives being summed to mono. `analyze_audio` asks a device that can.
 
-`devices/LiveMaestro_Analyzer.amxd` is a Max for Live audio effect. It passes audio through unchanged, measures what passes, and answers one request with one reply. It is optional: the other 37 tools do not touch it, and without it `analyze_audio` reports `device_not_found` and the steps to load it.
+`devices/LiveMaestro_Analyzer.amxd` is a Max for Live audio effect. It passes audio through unchanged, measures what passes, and answers one request with one reply. It is optional: the other 42 tools do not touch it, and without it `analyze_audio` reports `device_not_found` and the steps to load it.
 
 **Wire format.** Open Sound Control over loopback UDP, because that is what Max's own objects speak: `udpsend`'s reference page states that Max messages are serialized as OSC-compatible UDP packets, and `udpreceive` decodes OSC. The device listens on `127.0.0.1:9882` for `/maestro/measure` and answers `/maestro/report` to the port the request names, which is the ephemeral port the client bound. `src/live_maestro/analyzer/protocol.py` holds the port, the addresses, the reply field order, the band edges and the schema number, and nothing else may hold a copy of any of them.
 
@@ -101,11 +103,17 @@ Supporting modules:
 - `analyzer/`: Channel C. `protocol.py` is the wire contract and its OSC codec, `client.py` the socket, `metrics.py` the arithmetic as pure functions, `report.py` the choosing and wording, `models.py` what the caller receives. Only `client.py` needs Live to be running.
 - `lom/paths.py`: Client-side parsing and validation of LOM path grammar.
 - `lom/introspect.py`: Runtime inspection of dynamic device parameters and session snapshots.
-- `music/`: Pure Python musical theory, chord voicings, note transformations, and groove humanization.
+- `music/`: Pure Python musical theory, chord voicings, note transformations, groove humanization, `launch.py` for when a fired clip actually starts, and `transcription.py` for cleaning up what a transcriber heard before any of it is written into Live.
 - `als/`: Parsers and writers for `.als` project files.
+- `audio/`: Nothing here touches Live. `decode.py` turns any file the system decoder reads into mono samples, `descriptor.py` reduces a piece of audio to a fixed vector that can be compared with another, and `sample_header.py` reads container metadata with the standard library alone, which is how an encrypted factory sample is recognised without decoding it.
+- `sound_index.py` and `indexer.py`: The index of how the installed library sounds, built from Ableton's own preview renders, and the ranking `match_sound` answers with. `indexer.py` is also the `live-maestro-index` entry point.
+- `transcribe.py`: Runs basic-pitch in a separate interpreter and hands back note events. The transcriber supports Python up to 3.11 and this server runs later, so it is a subprocess and not an import.
+- `instruments.py`: Intent to instrument lookup over Live's browser, which is what `find_sound` answers with.
 - `automation.py`: Curve generation, interpolation algorithms, and envelope sampling.
 - `lookup.py`: Intent to path lookup over the catalog: routing, lexical ranking, and family collapse.
 - `vocabulary.py`: Studio vocabulary (route tables and synonyms, read by `lookup.py`). Pure modules: no socket, no Live.
+- `maxgen.py` and `probe_protocol.py`: The Max for Live patcher generator, and the wire contract of the throwaway device the spikes used. The analyzer device and the probe device are both generated rather than hand-built, so the file in the repository cannot disagree with the contract the client holds.
+- `installer.py`: Puts the Remote Script and the analyzer device into the User Library. Ships in the wheel and is what `live-maestro-install` runs; `scripts/install_script.py` is a wrapper for running it from a checkout.
 - `server.py`: FastMCP server exposing tools and resources to AI clients.
 
 Design rule: Transport, path resolution, and musical logic remain isolated. `client.py` has no dependency on musical theory, and `music/` has no dependency on network sockets.
@@ -204,7 +212,7 @@ The Remote Script implements seventeen handlers (docs/protocol.md §5): five gen
 - `automation_read` / `automation_write` / `automation_clear`: Sampling, interpolating, and clearing clip envelopes.
 - `browser_walk`: Breadth-first searching and ranking of Live's browser graph.
 - `events_observe` / `events_drain` / `events_clear`: Event subscription via ring buffers.
-- `enum_names`: Reads the member names of a Live enum type, so an integer property's values can be decoded. Used to fill the catalog rather than at runtime.
+- `enum_names`: Reads the member names of a Live enum type, so an integer property's values can be decoded. It fills the catalog, and `lom_enums` exposes the same handler at runtime for a type no row covers.
 
 ---
 
@@ -326,16 +334,35 @@ src/live_maestro/
   automation.py     Curve generation, interpolation, and envelope sampling.
   lookup.py         Intent to path lookup: routing, lexical ranking, family collapse.
   vocabulary.py     Route tables and studio synonyms, read by lookup.py.
+  instruments.py    Intent to instrument lookup over Live's browser.
+  sound_index.py    The index of how the installed library sounds, and its ranking.
+  indexer.py        Builds that index. Also the live-maestro-index entry point.
+  transcribe.py     Runs basic-pitch in a sidecar interpreter, returns note events.
+  installer.py      Installs the Remote Script and the analyzer device.
+  maxgen.py         Generates Max for Live devices: patcher graph, container, CLI.
+  probe_protocol.py Wire contract of the throwaway device the spikes used.
   catalog/*.yaml    Declarative catalog files grouped by domain.
   lom/
     paths.py        LOM path grammar parser and validation helpers.
     introspect.py   Runtime object inspection and session snapshot builders.
+  audio/
+    decode.py       Any audio file to mono samples at the analysis rate.
+    descriptor.py   What a piece of audio sounds like, as comparable numbers.
+    sample_header.py Container metadata, standard library only, no decoding.
+  analyzer/
+    protocol.py     The OSC wire contract and its codec. Nothing else holds a copy.
+    client.py       The socket. The only file here that needs Live running.
+    metrics.py      Everything derived from a reply, as pure functions.
+    report.py       The choosing and the wording of the answer.
+    models.py       What analyze_audio returns.
   music/
     notes.py        MIDI note manipulation and formatting.
     theory.py       Musical scales, chord voicings, and transposition.
     humanize.py     Timing swing and velocity variations.
+    launch.py       When a fired clip or scene will actually start.
+    transcription.py Cleaning up what a transcriber heard, before it is written.
   als/
-    read.py         Parser for saved .als project files.
+    read.py         Parser for saved .als project and .adg preset files.
     write.py        Direct modifier for .als project files.
   server.py         FastMCP server implementation.
 
@@ -343,8 +370,18 @@ live-remote-script/
   __init__.py       Remote Script running inside Live.
 
 scripts/
-  install_script.py Installs the Remote Script into Ableton Live User Library.
-  sync_catalog.py   Reconciles catalog entries against a running Live instance.
-  probe_paths.py    Validates specific paths and updates catalog status.
-  inventory.py      Surveys the open set and the local installation.
+  install_script.py    Installs the Remote Script and analyzer device from a checkout.
+  sync_catalog.py      Reconciles catalog entries against a running Live instance.
+  probe_paths.py       Validates specific paths and updates catalog status.
+  write_measurements.py Folds probe runs into the report the catalog is checked against.
+  inventory.py         Surveys the open set and the local installation.
+  build_analyzer_device.py Generates the Max device that answers analyze_audio.
+  build_probe_device.py    Generates the throwaway device the spikes used.
+  build_sound_index.py     Wrapper around live_maestro.indexer, for a checkout.
+  eval_sound_index.py      Scores the sound index against the categories it carries.
+  eval_transcription.py    Scores the transcription cleanup against a MIDI export.
+  spike_probe.py           Drives the probe device and answers spikes 1 and 2.
+  stress_load_delete.py    A thousand load and delete cycles, for endurance.
 ```
+
+Nothing in `audio/`, `music/` or `analyzer/` except `analyzer/client.py` opens a socket or needs Live. That is what makes the sound matching, the transcription cleanup and every threshold in an audio verdict testable on a machine with no DAW on it.

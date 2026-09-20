@@ -1,25 +1,17 @@
 """Humanization, micro-timing, swing, and voice staggering for MIDI note lists.
 
-Provides pure operations over note lists in standard 480 ticks/quarter resolution:
-legato smoothing, breath pauses, swing grids, velocity shaping, and multi-voice jitter.
+Pure operations over note lists in 480 ticks per quarter: legato smoothing, breath pauses,
+swing grids, velocity shaping and multi-voice jitter. Legato closes gaps inside a phrase,
+which is what lets vocal synthesizers and legato instruments transition between syllables.
+Breath shortens the note before a phrase instead of delaying the next one, so the rhythm
+stays put. Swing delays even grid subdivisions. Decouple staggers unison and chord voices
+with per-note random jitter rather than a static per-voice offset. Attack shapes velocity
+over time (:func:`velocity_curve`) and on the metric grid (:func:`accent`).
 
-The interventions:
-1. Legato       Close gaps inside a phrase. Without touching notes, vocal synthesizers
-                or legato instruments cannot transition smoothly between syllables.
-2. Breath       Before every phrase, shorten the previous note rather than delaying
-                the next one to keep rhythmic timing intact.
-3. Swing        Delay even grid subdivisions for swing/groove feels.
-4. Decouple     Stagger multi-voice unison or chord arrangements with per-note random
-                timing jitter rather than static voice offsets.
-5. Attack       Velocity contouring over time (:func:`velocity_curve`) and metric
-                grid accentuation (:func:`accent`).
-
-Time units:
-- Internal representation: integer ticks (480 per quarter note, ``TickNote``).
-- Live representation: float beats (1.0 per quarter note, :class:`~live_maestro.models.Note`).
-- Psychoacoustic parameters (breath duration, jitter, stagger): specified in milliseconds
-  and converted using the tempo (BPM).
-- Always use :func:`to_live` before sending notes to Live.
+Times are integer ticks internally (480 per quarter, ``TickNote``) and float beats in Live
+(1.0 per quarter, :class:`~live_maestro.models.Note`). Psychoacoustic parameters (breath,
+jitter, stagger) are milliseconds converted with the tempo (BPM). Call :func:`to_live`
+before sending notes to Live.
 """
 
 from __future__ import annotations

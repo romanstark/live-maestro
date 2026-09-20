@@ -1,21 +1,15 @@
 """The wire contract between ``analyze_audio`` and ``LiveMaestro_Analyzer.amxd``.
 
-This module is the single place the contract exists. ``scripts/build_analyzer_device.py``
-generates the Max patcher from the constants below, and
-``live_maestro.analyzer.client`` decodes replies with them, so the device and the
-client cannot disagree about a port number, a field order or a field count. A
-port number written down in two places is a port number that is free to differ
-from itself, so none of these constants may be repeated anywhere else.
+``scripts/build_analyzer_device.py`` generates the Max patcher from the constants below
+and ``live_maestro.analyzer.client`` decodes replies with them, so device and client
+cannot disagree about a port number, a field order or a field count. None of these
+constants may be repeated anywhere else.
 
-The format is Open Sound Control, because that is what Max's own objects speak.
-``udpsend``'s reference page states that "Max messages received by the udpsend
-object are serialized and sent over the network as OSC-compatible UDP packets",
-and ``udpreceive`` decodes OSC and outputs Max messages. A raw JSON datagram sent
-at ``udpreceive`` is not the protocol it implements.
+The format is Open Sound Control, which is what Max's ``udpsend`` serializes to and
+what ``udpreceive`` decodes.
 
-Only four OSC types are handled: int32, float32, string and the address pattern.
-That is everything Max emits from a message box carrying ints, floats and symbols,
-and adding blobs or timetags would be code with no sender.
+Only int32, float32, string and the address pattern are handled, which is everything
+Max emits from a message box carrying ints, floats and symbols.
 
 >>> packet = encode(REQUEST_ADDRESS, [7, 500, 0, 54321])
 >>> decode(packet)
@@ -44,11 +38,9 @@ __all__ = [
     "encode",
 ]
 
-#: The port the device listens on. The device binds it, so two analyzer instances
-#: in one Live set both hear every request and both answer. That is deliberate:
-#: the client gathers all answers and picks by track, which also makes "which
-#: tracks can measure?" answerable. A per-instance port would need the instances
-#: to agree on who takes which number, and nothing in Max coordinates that.
+#: The port every device instance listens on. Two analyzers in one Live set therefore
+#: both hear every request and both answer. The client gathers all the answers and
+#: picks by track, which is also how it reports which tracks can measure.
 DEFAULT_DEVICE_PORT = 9882
 
 #: Where the client asks and where the device answers. The address carries the
@@ -63,30 +55,27 @@ REPLY_ADDRESS = "/maestro/report"
 REPLY_SCHEMA = 3
 
 #: The request, in order. ``window_ms`` is what the averaged measurements cover.
-#: ``reset`` restarts the integrated loudness of ``loudness~``. ``reply_port`` is
-#: where the answer goes and is a field rather than a constant because the client
-#: binds an ephemeral port. The device aims its ``udpsend`` from it before using
-#: it, so a hard-coded reply port cannot exist on either side.
+#: ``reset`` restarts the integrated loudness of ``loudness~``. ``reply_port`` is where
+#: the answer goes: the client binds an ephemeral port and the device aims its
+#: ``udpsend`` at it per request, so neither side holds a hard-coded reply port.
 REQUEST_FIELDS: tuple[str, ...] = ("request_id", "window_ms", "reset", "reply_port")
 
 #: The numeric half of the reply, in order. Every entry is one value the device
 #: measures and hands over raw. Nothing here is a dB value, a correlation or a
-#: verdict: those are derived in ``analyzer.metrics``, where a test can check the
-#: arithmetic without Ableton Live in the room.
+#: verdict: those are derived in ``analyzer.metrics``.
 #:
-#: ``loudness~`` supplies the first six. Its reference page names the outlets in
-#: this order: momentary (400 ms), short term (3 s), integrated since the last
-#: reset, loudness range, sample peak in dB, true peak in dB with oversampling.
+#: ``loudness~`` supplies the first six, in its own outlet order: momentary (400 ms),
+#: short term (3 s), integrated since the last reset, loudness range, sample peak in
+#: dB, true peak in dB with oversampling.
 #:
-#: ``window_samples`` is what the averaged measurements actually cover, reported
-#: back rather than echoed: the device clamps the requested window to what its
-#: averaging buffers hold at the current sample rate, and a caller that asked for
-#: more deserves to be told what it got.
+#: ``window_samples`` is what the averaged measurements actually cover, reported back
+#: rather than echoed: the device clamps the requested window to what its averaging
+#: buffers hold at the current sample rate.
 #:
 #: The averaged entries are amplitudes, not powers, because ``average~ @mode rms``
 #: reports the root of the mean square. ``mean_lr`` is the one exception: it is a
-#: bipolar average of the product of the two channels, which is what a correlation
-#: needs and what an RMS average would destroy by dropping the sign.
+#: bipolar average of the product of the two channels, which keeps the sign a
+#: correlation needs and an RMS average would drop.
 NUMERIC_REPLY_FIELDS: tuple[str, ...] = (
     "schema",
     "request_id",
@@ -118,25 +107,23 @@ NUMERIC_REPLY_FIELDS: tuple[str, ...] = (
 )
 
 #: The device carries its own reference signal: a sine of this frequency at this
-#: amplitude, wired into a second ``loudness~`` and never into the audio output.
-#: Its peak is therefore known exactly, so every reply says what this build of Max
-#: reports for a signal whose peak the reader already knows. That is what makes
-#: the sample peak correction a measurement taken on the same call, at the sample
-#: rate Live is running, rather than a constant somebody wrote down.
+#: amplitude, wired into a second ``loudness~`` and never into the audio output. Its
+#: peak is known exactly, so every reply reports what this build of Max makes of a
+#: signal the reader already knows, at the sample rate Live is running. That is what
+#: the sample peak correction is taken from, rather than from a fixed constant.
 #:
-#: 1 kHz is chosen because it is where the K-weighting curve is nearest unity and
-#: where an interpolating peak meter has the least to find: at 48 kHz a 1 kHz sine
-#: is sampled 48 times per cycle, so a correct true peak sits within about 0.02 dB
-#: of the sample peak. ``docs/limits.md`` records what each outlet does with it.
+#: 1 kHz is where the K-weighting curve is nearest unity and where an interpolating
+#: peak meter has the least to find: at 48 kHz a 1 kHz sine is sampled 48 times per
+#: cycle, so a correct true peak sits within about 0.02 dB of the sample peak.
+#: ``docs/limits.md`` records what each outlet does with it.
 CALIBRATION_HZ = 1000.0
 CALIBRATION_AMPLITUDE = 0.5
 
 #: The band edges the device filters at, in the order the reply carries them.
-#: ``None`` as the upper edge means the band is a high pass with no top: at 44.1 kHz
-#: a 20 kHz low pass sits close enough to Nyquist that a second order section is
-#: no longer trustworthy there, and everything above 10 kHz belongs to the air
-#: band anyway. The generator reads this table, so a band moved here moves in the
-#: device as well.
+#: ``None`` as the upper edge means the band is a high pass with no top: at 44.1 kHz a
+#: 20 kHz low pass sits close enough to Nyquist that a second order section is no
+#: longer trustworthy there. The generator reads this table, so a band moved here
+#: moves in the device as well.
 BANDS: tuple[tuple[str, float, float | None], ...] = (
     ("band_sub", 20.0, 60.0),
     ("band_bass", 60.0, 250.0),
@@ -158,10 +145,10 @@ MAX_AVERAGING_SAMPLES = 96000
 #: club system stops reproducing a stereo image and starts summing.
 LOW_BAND_HZ = 120.0
 
-#: The string half, always last. A track name is a symbol the user typed and can
-#: hold spaces, and an OSC serializer is free to split it. Keeping the strings
-#: behind every number lets the client rejoin a split tail instead of losing the
-#: numbers that followed it.
+#: The string half, always last. A track name is a symbol the user typed, it can hold
+#: spaces, and an OSC serializer is free to split it there. Keeping the strings behind
+#: every number lets the client rejoin a split tail instead of losing the numbers that
+#: would otherwise follow it.
 #:
 #: The name is the only string, and the reply carries no canonical path. Measured
 #: 2026-09-07 against Live 12.4.5: ``live.path`` answers both

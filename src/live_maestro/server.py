@@ -11,30 +11,52 @@ actions, and post-write verification.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import logging
+import math
 import os
 import re
 import sys
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
 from dataclasses import MISSING
 from dataclasses import fields as dataclass_fields
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from live_maestro import automation as auto
-from live_maestro import lookup, toolargs
+from live_maestro import instruments, lookup, sound_index, toolargs
+from live_maestro import transcribe as transcribe_audio
 from live_maestro.als import read as als_reader
 from live_maestro.als import write as als_writer
 from live_maestro.analyzer import AnalyzerClient
 from live_maestro.analyzer import report as analyzer_report
+from live_maestro.analyzer.metrics import (
+    SILENCE_FLOOR_DB,
+    band_amplitude_means,
+    band_occupancy_percentages,
+    band_occupancy_window,
+    to_dbfs,
+    window_coverage_pct,
+)
+from live_maestro.analyzer.models import (
+    AccumulationSpan,
+    BandOccupancy,
+    TransportState,
+    TransportUnavailable,
+)
+from live_maestro.analyzer.protocol import BANDS, REPLY_SCHEMA
+from live_maestro.audio import decode as audio_decode
+from live_maestro.audio import descriptor as descriptor_module
 from live_maestro.client import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -46,6 +68,7 @@ from live_maestro.client import (
 from live_maestro.executor import Result, UnknownSpecError, execute, execute_batch
 from live_maestro.lom import introspect, paths
 from live_maestro.models import Access, Note, PathStatus
+from live_maestro.music import launch, transcription
 from live_maestro.music import notes as note_ops
 from live_maestro.registry import CatalogError, Registry, area_of, default_registry
 from live_maestro.spec import PathSpec
@@ -55,8 +78,10 @@ from live_maestro.toolargs import (
     KindArg,
     NoteArg,
     ParameterPathArg,
+    PlacementArg,
     SlotArg,
     TrackArg,
+    placement_dicts,
 )
 
 # stderr, never stdout: stdout is the stdio transport and one stray print there
@@ -70,14 +95,12 @@ LIMITS_DOC = REPO_ROOT / "docs" / "limits.md"
 # --------------------------------------------------------------------------- #
 # Tool annotations: the machine-readable half of behavioural disclosure.
 # --------------------------------------------------------------------------- #
-# A client reads these before it reads a word of prose, and one of the four
-# carries real risk. ``idempotentHint`` is what tells a client a failed call is
-# safe to send again, and a write that timed out may already have landed in Live
-# (docs/limits.md, 'Write timeouts and retry policy'). So it is true only where
-# repeating the same arguments cannot apply twice, which means an absolute setter
-# storing the value it was handed. Anything relative (transpose_clip), additive
-# (arrange, create_clip) or toggling (set_locator) declares false, however safe a
-# retry happens to look in practice.
+# ``idempotentHint`` tells a client a failed call is safe to send again, and a write
+# that timed out may already have landed in Live (docs/limits.md, 'Write timeouts and
+# retry policy'). It is true only where repeating the same arguments cannot apply
+# twice, which means an absolute setter storing the value it was handed. Anything
+# relative (transpose_clip), additive (arrange, create_clip) or toggling (set_locator)
+# declares false, however safe a retry happens to look in practice.
 #
 # ``openWorldHint`` is false throughout. The domain is one running copy of Live
 # and the project files it saves, which is closed in the sense the MCP spec means.
@@ -102,19 +125,9 @@ DESTROYS = ToolAnnotations(
     readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
 )
 
-# --------------------------------------------------------------------------- #
-# Where a measurement's provenance goes.
-# --------------------------------------------------------------------------- #
-# A tool docstring is the description FastMCP ships to the client, so its reader is
-# a model, mid-session, with no way to re-run a probe. It needs the finding: that a
-# quantized parameter snaps, that inserting a track renumbers the ones after it. The
-# citation that backs the finding is for the person who can go and measure again, and
-# it lives in a comment above the tool it belongs to. Same fact, same file, same
-# distance from the code. Only the reader changes.
-#
-# Everywhere else the citation stays inline. A catalog row's doc is itself the record
-# own probe, and a code comment sits next to the line the measurement justifies, where
-# deleting one without the other is the mistake worth making hard.
+# A tool docstring is shipped to the client, so it carries the finding and not the
+# citation; the citation sits in a comment above the tool. Elsewhere it stays inline,
+# next to the line it justifies.
 
 # --------------------------------------------------------------------------- #
 # Technical finding notices repeated across tool responses.
@@ -201,12 +214,115 @@ SESSION_ONLY_SURVEY_NOTE = (
     "song.tracks[N].arrangement_clips for the clips themselves."
 )
 
+#: What a survey may say about the Session grid when it did not sweep it. The keys stay
+#: in the answer so a caller reading them positionally still finds them, and they carry
+#: null rather than a zero nothing was read for.
+SESSION_CLIPS_NOT_PROBED_NOTE = (
+    "The Session grid was not probed on this call (clips=false), so 'session_clip_count' "
+    "and each track's 'session_clips' are null rather than a reading. Null here means "
+    "not measured, not empty. Call get_session with clips=true, or get_clip for one "
+    "slot, to read the grid itself."
+)
+
 CONFIGURE_NOTE = (
     "Plugins reporting only 'Device On' have not had parameters exposed via Live Configure "
     "mode (up to 128 parameter slots per instance, measured against Live 12.4.5)."
 )
 
 SESSION_ONLY_NOTE = auto.SESSION_ONLY_NOTE
+
+SESSION_ARRANGEMENT_BOUNDARY_RULE = (
+    "The Arrangement timeline is not writable, it can only be populated. All content originates "
+    "in a Session clip and is duplicated. The Session slot is not an optional intermediate step, "
+    "but the sole write target."
+)
+
+ARRANGEMENT_END_MARKER_REFUSAL = (
+    "Writing end_marker on an Arrangement clip is refused here rather than passed to Live. "
+    "Observed once, 2026-09-10 against Live 12.4.5, in a producer session and not by a probe: "
+    "the write was accepted, end_time did not move, and that same clip was also one Live would "
+    "not let loop. The two were never separated, so whether the write is ineffective in general "
+    "or only while the clip does not loop is still unproven. The refusal stands because a write "
+    "that reports success and changes nothing is worse than an error. "
+) + SESSION_ARRANGEMENT_BOUNDARY_RULE
+
+ARRANGEMENT_READ_ROUTE = (
+    "Read an arrangement clip with lom_get on song.tracks[N].arrangement_clips[i].<property>, "
+    "for example .name, .start_time or .end_time, and read several properties or several clips "
+    "in one round trip with lom_batch."
+)
+
+ARRANGEMENT_WRITE_ROUTE = (
+    "Fill a Session clip in song.tracks[N].clip_slots[M], then copy it onto the Arrangement "
+    "timeline with arrange(track=N, slot=M, at_beat=<beat>), which carries the clip's notes and "
+    "envelopes with it."
+)
+
+ARRANGE_RETRY_NOTE = (
+    "Call arrange once per placement. Repeating a call adds another copy at the same beat rather "
+    "than replacing the first, so a retry after an unclear result needs the clip counts in this "
+    "answer checked first."
+)
+
+TRACK_IDENTITY_NOTE = (
+    "Track identity here is inferred, not read. The LOM hands this bridge no id for a track: the "
+    "handle for song.view.selected_track carries the property path, never 'song.tracks[N]' "
+    "(catalog row view.selected_track_devices), and a track index is a position that any insert "
+    "renumbers. 'The same track' therefore means the selected track's name and the number of "
+    "tracks in the set read the same before and after the load. A name is not an identity: Live "
+    "renames a track that still carries its default name when an instrument lands on it, and "
+    "from here that reads exactly like a selection that moved, so both are reported as not known "
+    "rather than guessed at."
+)
+
+MAX_BATCH_OPS = 1000
+"""Chosen ceiling on the number of operations in one lom_batch call.
+
+It is a budget, not a breaking point.
+
+Measured 2026-09-16 against Live 12.4.5 (macOS 26.6.2, four-track set): one request
+costs about 400 ms whatever its size. 200 ops took 500 ms, 1600 mixed reads (track name,
+mixer volume and panning value, playing_slot_index) 1506 ms and 3200 song.tempo gets
+1718 ms, error_count 0 throughout. The marginal cost is read between the 200-op point and
+the largest one of each kind, where the fixed cost has stopped dominating: about 0.72 ms
+per mixed real read and about 0.44 ms per song.tempo get. Against the single-request cost
+the same points give 0.69 ms and 0.41 ms, which is one measurement fitted from a different
+anchor rather than a second one. The Remote Script gives one lom_batch
+min(18 s, 4 s + 0.4 s per op) on Live's main thread, itself inside the client's 20 s
+write timeout, so read batches of this size finish with an order of magnitude to spare.
+Write and call ops were not measured, because measuring them would have mutated the open
+set, and each costs more than a read. 1000 is set where a batch of the most expensive
+plausible ops still has room, not where reads were seen to struggle.
+"""
+
+ARRANGE_CALL_CHUNK = 50
+"""How many duplication ops one arrange batch carries.
+
+Read ops chunk at :data:`MAX_BATCH_OPS`. A duplication is a write, its per-op cost has
+never been measured here, and the Remote Script gives one lom_batch
+min(18 s, 4 s + 0.4 s per op), which stops growing at 35 ops. A call chunk near that knee
+keeps the per-write allowance wide instead of spending the whole budget on op count.
+"""
+
+BEAT_MATCH_DECIMALS = 3
+"""Decimal places at which two beats count as the same position."""
+
+_TRANSPORT_PROBE_TRACKS = 64
+"""How many tracks one speculative transport probe reads, each one costing a pair of ops.
+
+The reads are speculative on purpose: the ops past the end of the set come back as
+per-op index_out_of_range rows, which lom_batch reports without aborting and which are
+sliced away here. That is cheaper than the extra round trip a count-first query spends.
+Measured 2026-09-16 against Live 12.4.5 (macOS 26.6.2, four-track set): one request costs
+about 400 ms whatever its size, and a mixed real read adds well under a millisecond to it
+(the marginal is 0.7 ms per read, MAX_BATCH_OPS records how it was fitted), so the 128
+reads this probe spends on 64 tracks are bought against a round trip of 400 ms.
+"""
+
+_TRANSPORT_NO_REPLY = (
+    "The analyzer device did not answer, so there was no measurement to time-stamp and "
+    "Live's transport was not read."
+)
 
 NOTES_REPLACE_NOTE = (
     "mode='replace' removes existing notes within the range before writing new notes. "
@@ -271,7 +387,11 @@ def _connection_fix() -> list[str]:
             f"This server connects to port {port} (127.0.0.1). Port 9877 belongs to another "
             "Ableton bridge service."
         ),
-        f"Cold-start check from a shell: python -m live_maestro.client ping --port {port}",
+        (
+            "Cold-start check: ask this server for get_session, which reports the "
+            "handshake. From a checkout of the repository, "
+            f".venv/bin/python -m live_maestro.client ping --port {port}"
+        ),
     ]
 
 
@@ -287,6 +407,43 @@ def _client_instance() -> LiveClient:
     return _client
 
 
+#: Below this peak a stretch of audio is silence rather than quiet, and describing it
+#: produces a vector built from the noise floor.
+_QUIET_PEAK = 0.002
+#: Clip fields that carry a time. Their unit is beats on a MIDI clip and on a warped audio
+#: clip, and seconds on an unwarped one, which the catalog row cannot express because it
+#: depends on the clip.
+_CLIP_TIME_FIELDS = ("length", "loop_start", "loop_end", "start_marker", "end_marker")
+
+#: Seconds of disagreement between a clip's length and its markers that are not worth
+#: reporting. Live stores these as floats and a marker write lands a few microseconds off.
+_LENGTH_TOLERANCE_S = 0.01
+#: A note that cites this repository's own files. Those are provenance for whoever
+#: maintains the server and are not something a caller reached over MCP can open, so
+#: they are reported apart from what the caller is meant to act on.
+_REPOSITORY_CITATION = re.compile(r"\b(?:src|tests|docs|scripts|live-remote-script)/")
+#: A recording sounding at least this share of the time is held rather than struck, which
+#: is the material a pitch transcriber reports in fragments.
+_SUSTAINED_FRACTION = 0.6
+
+#: Written events per second below this are not called suspect however little the
+#: recording holds, because a slow part over a drone is a real thing to write.
+_SUSTAINED_FLOOR_HZ = 1.0
+
+#: Onsets a stretch must hold before "hardly any notes came back" means anything. Below
+#: this the recording is sparse and a sparse transcription of it is correct.
+_PERCUSSIVE_ONSETS = 8.0
+
+#: Share of the recording's own onsets below which a transcription is called too thin.
+_TOO_FEW_SHARE = 0.25
+
+#: How many times the recording's onset rate a transcription may write before it is
+#: called too dense. Measured over four stems, written attacks against heard onsets in
+#: the busiest window: a bass 1.2 and a strummed guitar 2.7, both correct transcriptions,
+#: against a keys part at 9.6 and a pad at 53.5.
+_TOO_MANY_FACTOR = 3.0
+
+
 mcp = FastMCP(
     name="live-maestro",
     instructions=(
@@ -298,8 +455,11 @@ mcp = FastMCP(
         "find_path with the intent in your own words: it answers with the rows that apply, "
         "or says the answer is a runtime device parameter or impossible. Then reach it "
         "through lom_get/lom_set/lom_call/lom_batch/lom_describe. Do not read the whole "
-        "live://catalog resource to look a path up. live://limits says what is "
-        "impossible and why."
+        "live://catalog resource to look a path up. Two tools answer 'which instrument': "
+        "find_sound searches the browser by name, and match_sound takes an audio file you "
+        "have and ranks the library by what it sounds like, which is how to rebuild a stem "
+        "with the installed instruments. match_sound needs an index; sound_index_status "
+        "says whether there is one. live://limits says what is impossible and why."
     ),
 )
 
@@ -628,6 +788,51 @@ def _value_of(fields: Mapping[str, Any], label: str, default: Any = None) -> Any
     return default
 
 
+def _file_source(path: str | Path) -> dict[str, Any]:
+    """Return which file was read or written, and the state it was in.
+
+    Two answers about the same file can only be compared when each one says which file
+    it meant and what that file looked like at the time. The path is resolved, which is
+    what makes ``~/x.als``, ``./x.als`` and a symlink to the same file compare equal, and
+    the caller's own spelling is reported beside it under ``requested`` when it differs,
+    so a resolved path that surprises the caller can still be traced back to what they
+    typed.
+
+    One ``stat()`` inside a try/except, never an ``exists()`` followed by a ``stat()``:
+    between those two calls the file can be replaced or removed, and the second call is
+    the one that raises. That swap is exactly what this block exists to expose, so it
+    must not be the thing that crashes the tool.
+
+    Returns:
+        A dictionary with ``path``, optionally ``requested``, ``size_bytes`` and
+        ``mtime``. On failure the last two are None and ``code`` ("not_found" or
+        "stat_failed") and ``reason`` say what stopped the read.
+    """
+    requested = str(path)
+    resolved = Path(path).expanduser().resolve()
+    block: dict[str, Any] = {"path": str(resolved)}
+    if requested != str(resolved):
+        block["requested"] = requested
+    try:
+        st = resolved.stat()
+    except FileNotFoundError:
+        block["size_bytes"] = None
+        block["mtime"] = None
+        block["code"] = "not_found"
+        block["reason"] = f"No file was found at {resolved}, so its size and time are unknown."
+        return block
+    except OSError as exc:
+        block["size_bytes"] = None
+        block["mtime"] = None
+        block["code"] = "stat_failed"
+        block["reason"] = f"The file at {resolved} could not be inspected: {exc}."
+        return block
+    block["size_bytes"] = st.st_size
+    block["mtime"] = datetime.fromtimestamp(st.st_mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return block
+
+
+
 #: Live collections are Vector objects that do not all expose len().
 #: Probing indices sequentially in batches provides reliable count determination.
 SCAN_CAP = 128
@@ -645,7 +850,19 @@ def _scan(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any] | None]:
     """Query indexed catalog collections in a single batch probe."""
     state: dict[str, dict[str, Any]] = {
-        label: {"id": spec_id, "values": [], "count": 0, "exact": False, "stopped_by": None}
+        label: {
+            "id": spec_id,
+            "values": [],
+            "count": 0,
+            "exact": False,
+            "stopped_by": None,
+            # The path Live stopped resolving at, which it echoes in the error row. It
+            # says where the probe died: inside the collection being counted, or above
+            # it because a container on the way there does not exist. That difference
+            # is what separates an empty collection from a missing one, and no extra
+            # op is needed for it.
+            "stopped_at": None,
+        }
         for label, spec_id, _index_arg, _base in scans
     }
     pending: dict[str, int] = {label: 0 for label, _s, _i, _b in scans}
@@ -672,6 +889,7 @@ def _scan(
             for row in chunk:
                 if not row.get("ok"):
                     entry["stopped_by"] = row.get("code") or "error"
+                    entry["stopped_at"] = row.get("path")
                     stopped = True
                     break
                 entry["values"].append(row.get("value"))
@@ -722,9 +940,137 @@ def _verdict(call_ok: bool, moved: bool | None) -> tuple[bool, dict[str, Any]]:
     return call_ok and moved, {"verified": moved}
 
 
+#: The only path shape the clip tools address: a Session clip slot, with or without
+#: its trailing ``.clip``. It is matched in full, never searched. A search accepts
+#: ``song.tracks[0].clip_slots[0].clip.name``, which is a property of a clip and not a
+#: clip, and the tool would then answer about the clip while the caller asked about a
+#: name.
+_SESSION_CLIP_PATH = re.compile(r"^song\.tracks\[(\d+)\]\.clip_slots\[(\d+)\](?:\.clip)?$")
+
+#: Session track index for the clip tools. Optional, because a ``path`` can carry it.
+ClipTrackArg = Annotated[
+    int | None,
+    Field(
+        default=None,
+        description=(
+            "Session track index in song.tracks, counted from 0. Give track and slot, "
+            "or give path instead. These are Session coordinates; an Arrangement clip "
+            "has none."
+        ),
+        ge=0,
+    ),
+]
+
+#: Session slot index for the clip tools. Optional, because a ``path`` can carry it.
+ClipSlotArg = Annotated[
+    int | None,
+    Field(
+        default=None,
+        description=(
+            "Clip slot index in track.clip_slots, counted from 0, which is the scene "
+            "the clip sits in. Give track and slot, or give path instead. These are "
+            "Session coordinates; an Arrangement clip has none."
+        ),
+        ge=0,
+    ),
+]
+
+#: The path form of the same address, for a caller that already holds one.
+ClipPathArg = Annotated[
+    str,
+    Field(
+        description=(
+            "LOM path to a Session clip, song.tracks[N].clip_slots[M] with or without a "
+            "trailing .clip, as an alternative to track and slot. A "
+            "song.tracks[N].arrangement_clips[i] path is refused with code "
+            "region_not_addressable."
+        )
+    ),
+]
+
+
 def _clip_path(track: int, slot: int) -> str:
     """Return canonical LOM path for a Session clip slot."""
     return paths.clip(track, slot)
+
+
+def _resolve_clip_args(
+    track: int | None, slot: int | None, path: str, tool: str
+) -> dict[str, Any] | tuple[int, int]:
+    """Resolve a clip address to Session coordinates, or say why it cannot be.
+
+    Args:
+        track: Session track index, or None when the caller gave a path instead.
+        slot: Session slot index, or None when the caller gave a path instead.
+        path: A Session clip path, or the empty string.
+        tool: The tool's own name, so a refusal says which call it came from.
+
+    Returns:
+        ``(track, slot)`` when the address resolves, or a refusal dictionary carrying a
+        machine code in ``code`` and a human sentence in ``error``.
+    """
+    if path:
+        if ".arrangement_clips[" in path:
+            return {
+                "ok": False,
+                "code": "region_not_addressable",
+                "error": (
+                    f"{tool} addresses Session clips, by track and slot or by a clip_slots "
+                    f"path. Arrangement clips are not reachable through the clip tools at "
+                    f"all, so {path!r} cannot be answered here. "
+                    + SESSION_ARRANGEMENT_BOUNDARY_RULE
+                ),
+                "rule": SESSION_ARRANGEMENT_BOUNDARY_RULE,
+                "read_instead": ARRANGEMENT_READ_ROUTE,
+                "write_instead": ARRANGEMENT_WRITE_ROUTE,
+            }
+        match = _SESSION_CLIP_PATH.match(path)
+        if match is None:
+            return {
+                "ok": False,
+                "code": "bad_path",
+                "error": (
+                    "path must name a Session clip, song.tracks[N].clip_slots[M] with or "
+                    f"without a trailing .clip, and not {path!r}."
+                ),
+            }
+        named_track = int(match.group(1))
+        named_slot = int(match.group(2))
+        if (track is not None and track != named_track) or (
+            slot is not None and slot != named_slot
+        ):
+            passed = " ".join(
+                piece
+                for piece in (
+                    None if track is None else f"track={track}",
+                    None if slot is None else f"slot={slot}",
+                )
+                if piece
+            )
+            return {
+                "ok": False,
+                "code": "conflicting_arguments",
+                "error": (
+                    f"path names track {named_track} slot {named_slot}, and {passed} was "
+                    "passed beside it. Pass one address or the other, or pass coordinates "
+                    "that agree with the path."
+                ),
+                "path_names": {"track": named_track, "slot": named_slot},
+            }
+        return named_track, named_slot
+    if track is None or slot is None:
+        return {
+            "ok": False,
+            "code": "missing_arguments",
+            "error": (
+                f"{tool} needs either 'path' (a Session clip path) or both 'track' and "
+                "'slot'. track and slot are Session coordinates: track indexes song.tracks "
+                "and slot indexes that track's clip_slots, which is the scene the clip sits "
+                "in. An Arrangement clip has neither and is not addressable here."
+            ),
+            "rule": SESSION_ARRANGEMENT_BOUNDARY_RULE,
+        }
+    return track, slot
 
 
 #: Metadata keys attached by Live note queries that are excluded from Note models.
@@ -996,12 +1342,20 @@ def get_session(
         return {"ok": False, "error": str(exc), "script": info}
 
     groups = [t.index for t in snap.group_tracks]
+    session = snap.to_dict()
+    if not clips:
+        # No slot was probed, so every clip figure below is the absence of a sweep and
+        # not a reading of the grid. Zero here would be a report of an empty Session on
+        # a full one.
+        for track_entry in session.get("tracks", []):
+            if isinstance(track_entry, dict) and "session_clips" in track_entry:
+                track_entry["session_clips"] = None
     result: dict[str, Any] = {
         "ok": True,
         "script": info,
-        "session": snap.to_dict(),
+        "session": session,
         "track_count": snap.track_count,
-        "session_clip_count": snap.session_clip_count,
+        "session_clip_count": snap.session_clip_count if clips else None,
         "group_track_indices": groups,
         "notes": [
             (
@@ -1009,7 +1363,7 @@ def get_session(
                 "human touches the mouse. It says nothing about the .als on disk."
             ),
             GROUP_TRACK_NOTE if groups else "No group tracks in this set.",
-            SESSION_ONLY_SURVEY_NOTE,
+            SESSION_ONLY_SURVEY_NOTE if clips else SESSION_CLIPS_NOT_PROBED_NOTE,
             STALE_INDEX_NOTE,
         ],
     }
@@ -1112,12 +1466,57 @@ def get_track(track: TrackArg, kind: KindArg = "track") -> dict[str, Any]:
 # Measured 2026-08-30 against Live 12.4.5 on a 1.14-unit audio clip at 120 BPM:
 # turning warping on doubled loop_end and end_marker while length did not follow.
 # At 60 BPM the same toggle moved neither.
-@mcp.tool(annotations=READS)
-def get_clip(track: TrackArg, slot: SlotArg) -> dict[str, Any]:
-    """Read one Session clip's properties: length, loop, warp, pitch, markers, flags.
+def _length_against_markers(fields: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Report an unwarped audio clip whose ``length`` contradicts its own markers.
 
-    Checks the slot is filled first, because a clip only exists while its slot
-    has one and every property read would otherwise fail one by one.
+    For a clip that is not looping, ``length`` is the span between the markers. Measured
+    2026-09-19 against Live 12.4.6: after a write that moved ``end_marker`` from 240.7936
+    to 228.7922, ``length`` still read 240.7936, with ``start_marker`` at 0 and looping
+    off. Nothing in the LOM says the reading is out of date, so a caller sizing anything
+    by ``length`` sizes it by a number that was true before its own write.
+
+    Returns:
+        The two numbers and the gap, or ``None`` where they agree, where the clip loops
+        (``length`` is then the loop and the markers are a different question), or where
+        any of the three could not be read.
+    """
+    def number(name: str) -> float | None:
+        entry = fields.get(name)
+        if not isinstance(entry, dict) or not entry.get("ok"):
+            return None
+        value = entry.get("value")
+        return float(value) if isinstance(value, (int, float)) else None
+
+    looping = fields.get("looping")
+    if isinstance(looping, dict) and looping.get("value") is not False:
+        return None
+    length = number("length")
+    start = number("start_marker")
+    end = number("end_marker")
+    if length is None or start is None or end is None:
+        return None
+    span = end - start
+    if abs(length - span) <= _LENGTH_TOLERANCE_S:
+        return None
+    return {
+        "length": round(length, 6),
+        "between_markers": round(span, 6),
+        "gap": round(length - span, 6),
+        "why": (
+            "This clip does not loop, so length is the span between its markers and "
+            "these two disagree. Live does not update length when a marker is written. "
+            "Size anything by the markers, not by length."
+        ),
+    }
+
+
+@mcp.tool(annotations=READS)
+def get_clip(
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
+    path: ClipPathArg = "",
+) -> dict[str, Any]:
+    """Read one Session clip's properties: length, loop, warp, pitch, markers, flags.
 
     Returns:
         Dictionary with ``has_clip``, and where that is true the clip path, whether
@@ -1125,27 +1524,35 @@ def get_clip(track: TrackArg, slot: SlotArg) -> dict[str, Any]:
         false`` and says so rather than failing.
 
     Note:
-        Notes are not properties. Use ``read_clip_notes``. Automation is not a
-        property either. Use ``read_automation``.
+        Notes and automation are not properties: use ``read_clip_notes`` and
+        ``read_automation``.
 
         ``warping``, ``warp_mode`` and ``pitch_coarse`` are reachable only through a
-        generic path, because a per-command bridge has no command for them and a
-        missing command is easily mistaken for a missing capability
-        (docs/architecture.md, 'the restart tax'). Each was read, written, read back
-        and restored on 2026-08-29 against Live 12.4.5, and all three rows are
-        ``verified``. ``pitch_fine`` is read-verified only, with no write attempted
-        on it, and the integer mapping behind ``warp_mode`` is still a hypothesis:
-        confirm it against ``clip.available_warp_modes``, which is the authoritative
-        per-clip list.
+        generic path. Each was read, written, read back and restored on 2026-08-29
+        against Live 12.4.5, and all three rows are ``verified``. ``pitch_fine`` is
+        read-verified only, and the integer mapping behind ``warp_mode`` is still a
+        hypothesis: confirm it against ``clip.available_warp_modes``.
 
-        Writing ``warping`` invalidates every time field this tool just returned. On a
-        1.14-unit audio clip at 120 BPM, turning warping on took ``loop_end`` from 0.5704
-        to 1.1408 and ``end_marker`` from 1.1408 to 2.2816, both doubled, while ``length``
-        did not follow. At 60 BPM the same toggle moved neither. The mechanism is not
-        established and is not claimed. What is established is that the numbers move and
-        that the factor tracks the tempo. Call this again after any write to ``warping``
-        rather than reusing what it said before.
+        **An audio clip's times are in seconds while warping is off, and in beats while
+        it is on.** ``times_in`` says which, and the per-field ``unit`` follows it. A MIDI
+        clip is always in beats. Measured 2026-09-19 against Live 12.4.6 on three
+        unwarped clips of one 228.792167 s file: ``loop_end`` read 228.79216666666667 on
+        all three, and a write of a larger ``end_marker`` clamped to that same number.
+
+        **Toggling ``warping`` rescales the stored markers and does not undo it.** On the
+        same clip, turning warping on took ``end_marker`` from 240.918 to 253.682, a
+        factor of 1.05298, and turning it back off left it at 253.682 while ``loop_end``
+        returned to the file length. The factor is the clip's own warp tempo over 60
+        (1.05298 is 63.18 BPM; another clip moved 0.5704 to 1.1408 at 120 BPM and not at
+        all at 60). Every toggle multiplies again, so a clip toggled twice carries markers
+        well past the end of its own file and nothing reports it. Read the markers after
+        any write to ``warping`` and set them back deliberately.
     """
+    resolved = _resolve_clip_args(track, slot, path, "get_clip")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     has = _run("clip_slot.has_clip", track=track, slot=slot)
     if not has.get("ok"):
         return has
@@ -1163,7 +1570,13 @@ def get_clip(track: TrackArg, slot: SlotArg) -> dict[str, Any]:
         return err
     assert fields is not None
     is_midi = _value_of(fields, "is_midi_clip")
-    return {
+    in_seconds = not is_midi and _value_of(fields, "warping") is False
+    if in_seconds:
+        for name in _CLIP_TIME_FIELDS:
+            entry = fields.get(name)
+            if isinstance(entry, dict) and entry.get("ok"):
+                entry["unit"] = "seconds"
+    result: dict[str, Any] = {
         "ok": True,
         "track": track,
         "slot": slot,
@@ -1171,10 +1584,17 @@ def get_clip(track: TrackArg, slot: SlotArg) -> dict[str, Any]:
         "path": _clip_path(track, slot),
         "fields": fields,
         "is_midi": is_midi,
+        "times_in": "seconds" if in_seconds else "beats",
+        "length_disagrees": _length_against_markers(fields) if in_seconds else None,
         "notes": [
             (
-                "Times (length, loop_start, loop_end, markers) are in beats and clip-local: "
-                "beat 0 is the clip's own start, not the arrangement's."
+                "Times (length, loop_start, loop_end, markers) are in seconds on this "
+                "clip, because it is audio and warping is off, and they are clip-local: "
+                "0 is the clip's own start, not the arrangement's. Turning warping on "
+                "makes the same fields read in beats."
+                if in_seconds
+                else "Times (length, loop_start, loop_end, markers) are in beats and "
+                "clip-local: beat 0 is the clip's own start, not the arrangement's."
             ),
             "gain is normalised, not dB.",
             (
@@ -1185,6 +1605,12 @@ def get_clip(track: TrackArg, slot: SlotArg) -> dict[str, Any]:
             ),
         ],
     }
+    if not is_midi:
+        fp_res = _run("clip.file_path", track=track, slot=slot)
+        if fp_res.get("ok") and fp_res.get("value"):
+            fp = str(fp_res.get("value"))
+            result["source"] = _file_source(fp)
+    return result
 
 
 @mcp.tool(annotations=READS)
@@ -1197,7 +1623,8 @@ def get_devices(track: TrackArg, kind: KindArg = "track") -> dict[str, Any]:
     Returns:
         Dictionary with the device count and one entry per device carrying its index,
         name, class name, on/off state, parameter count and ``configure_needed`` flag.
-        A track with an empty chain answers ``device_count: 0`` rather than an error.
+        A track with an empty chain answers ``device_count: 0`` rather than an error,
+        while an index with no track behind it is refused with ``index_out_of_range``.
 
     Note:
         Read the parameter count first. A third-party plug-in reporting exactly one
@@ -1223,6 +1650,24 @@ def get_devices(track: TrackArg, kind: KindArg = "track") -> dict[str, Any]:
         return err
     count = int(listed.get("count", 0))
     if count == 0:
+        # A zero count answers two different questions. The probe that came back empty
+        # either reached the devices collection and found nothing in it, or never got
+        # that far because the track itself is not there. The path Live stopped at says
+        # which, and a stale index must not be answered as a bare track.
+        # An empty stopped_at is no evidence either way, so it keeps the bare-chain
+        # answer rather than inventing a refusal. Live echoes the path it stopped at on
+        # every error row, so this only stands in for a reply that carried none.
+        stopped_at = str(listed.get("stopped_at") or "")
+        if stopped_at and ".devices[" not in stopped_at:
+            return {
+                "ok": False,
+                "code": "index_out_of_range",
+                "error": (
+                    f"There is no {kind} at index {track} in this set, so its device "
+                    "chain could not be read. Call get_session for the indices that "
+                    "exist now."
+                ),
+            }
         return {
             "ok": True,
             "kind": kind,
@@ -1572,22 +2017,164 @@ def create_track(
     }
 
 
-def _selected_chain_names() -> list[str]:
-    """Return device names on the currently selected track in signal order.
+def _chain_names(row: Mapping[str, Any]) -> list[str]:
+    """Return the device names in a selected_track_devices row, in signal order.
 
     The order is the one Live sends. Measured 2026-09-01 against Live 12.4.5.
 
     An empty result is ambiguous on purpose and must stay that way here: the caller
-    reports both chains it compared, so "nothing was displaced" cannot be confused with
-    "nothing was looked at".
+    reports both chains it compared and whether each read succeeded, so "nothing was
+    displaced" cannot be confused with "nothing was looked at".
     """
-    listed = _run("view.selected_track_devices")
-    if not listed.get("ok"):
+    if not row.get("ok"):
         return []
-    value = listed.get("value")
+    value = row.get("value")
     if not isinstance(value, list):
         return []
     return [str(device.get("name") or "?") for device in value if isinstance(device, dict)]
+
+
+def _selection_snapshot() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    """Read the selected track and its device chain in one round trip.
+
+    The two belong to the same instant or they describe nothing: a chain read a round
+    trip after the handle it belongs to can already be a different track's chain.
+
+    Returns:
+        The selected_track row, the selected_track_devices row, and the error dict that
+        stopped the batch, or None. On an error both rows come back empty, which
+        :func:`_chain_names` and :func:`_handle_name` read as unreadable.
+    """
+    rows, err = _run_batch([{"id": "view.selected_track"}, {"id": "view.selected_track_devices"}])
+    if err is not None:
+        return {}, {}, err
+    if rows is None or len(rows) < 2:
+        return {}, {}, {"ok": False, "error": "the selection read came back short."}
+    return rows[0], rows[1], None
+
+
+def _handle_name(row: Mapping[str, Any]) -> str | None:
+    """Return the name carried by a handle a successful read answered with, or None."""
+    if not row.get("ok"):
+        return None
+    value = row.get("value")
+    if not isinstance(value, Mapping):
+        return None
+    name = value.get("name")
+    return name if isinstance(name, str) else None
+
+
+def _exact_count(probe: Mapping[str, Any]) -> int | None:
+    """Return a probed collection count only when the probe reached its end.
+
+    bool is excluded before the int check, because True is an int in Python and would
+    otherwise be reported as a count of one.
+    """
+    if not probe.get("exact"):
+        return None
+    count = probe.get("count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return None
+    return count
+
+
+def _selection_identity(
+    name_before: str | None,
+    name_after: str | None,
+    count_before: int | None,
+    count_after: int | None,
+) -> tuple[bool | None, str | None, str]:
+    """Say whether the load stayed on one track, in the only terms this bridge has.
+
+    It answers True or None and never False. A reading that moved proves that something
+    moved, not that Live selected a different track: an instrument load renames a track
+    still carrying Live's default name, and from here a rename reads exactly like a
+    selection that went elsewhere.
+
+    Returns:
+        True when name and track count both read the same on either side, otherwise
+        None; the machine code saying why it is None, or None; and the sentence naming
+        what was compared, which the caller puts in its notes.
+    """
+    evidence = (
+        f"Compared before and after: selected track name {name_before!r} then "
+        f"{name_after!r}, track count {count_before} then {count_after}."
+    )
+    if name_before is None or name_after is None or count_before is None or count_after is None:
+        return None, "track_identity_unreadable", evidence
+    if name_before == name_after and count_before == count_after:
+        return True, None, evidence
+    return None, "selection_moved_during_load", evidence
+
+
+def _displaced_names(before: Sequence[str], after: Sequence[str]) -> list[str]:
+    """Return the names the chain lost, counting duplicates as the multiset they are.
+
+    A membership test reports nothing when a track carried two devices of the same name
+    and the load took one of them, because the surviving copy answers for the one that
+    is gone.
+    """
+    remaining = list(after)
+    lost: list[str] = []
+    for name in before:
+        if name in remaining:
+            remaining.remove(name)
+        else:
+            lost.append(name)
+    return lost
+
+
+def _loaded_device_index(before: Sequence[str], after: Sequence[str]) -> int | None:
+    """Return the chain position the load landed on, or None when it is not settled.
+
+    Two shapes settle it and no other: one device more, with exactly one position whose
+    removal reproduces the chain from before, or the same length with exactly one
+    position changed. Anything else, including two names that changed at once, answers
+    None rather than naming a position on a guess.
+    """
+    old = list(before)
+    new = list(after)
+    if len(new) == len(old) + 1:
+        candidates = [i for i in range(len(new)) if new[:i] + new[i + 1 :] == old]
+        return candidates[0] if len(candidates) == 1 else None
+    if len(new) == len(old):
+        changed = [i for i in range(len(new)) if new[i] != old[i]]
+        return changed[0] if len(changed) == 1 else None
+    return None
+
+
+def _device_path(row: Mapping[str, Any], index: int) -> str:
+    """Return the address of one device in a selected_track_devices row.
+
+    Live's own handle path is preferred where the reply carries one, because it is the
+    address Live answers to. The positional fallback is what the reply itself implies
+    when a handle came back without a path.
+    """
+    if row.get("ok"):
+        value = row.get("value")
+        if isinstance(value, list) and 0 <= index < len(value):
+            entry = value[index]
+            if isinstance(entry, Mapping):
+                handle_path = entry.get("path")
+                if isinstance(handle_path, str) and handle_path:
+                    return handle_path
+    return f"song.view.selected_track.devices[{index}]"
+
+
+def _parameter_count(client: LiveClient, device_path: str) -> int | None:
+    """Return how many parameters a device exposes, or None when it cannot be read.
+
+    One raw lom_get, because the number wanted is the collection's own ``count`` and not
+    the encoded list, which the script caps.
+    """
+    try:
+        reply = client.send("lom_get", {"path": f"{device_path}.parameters"})
+    except LiveError:
+        return None
+    count = reply.get("count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return None
+    return count
 
 
 # Measured 2026-08-30 against Live 12.4.5: an instrument load renames a track that
@@ -1612,20 +2199,20 @@ def load_device(
             "current_project",
             "drums",
             "instruments",
-            "legacy_libraries",
             "max_for_live",
             "midi_effects",
             "packs",
             "plugins",
             "samples",
             "sounds",
-            "user_folders",
             "user_library",
         ],
         Field(
             description=(
                 "Browser category to search inside. Empty searches every category, "
-                "which is slower and returns more near misses."
+                "which is slower and returns more near misses. These are the roots the "
+                "Remote Script walks; there is no user_folders or legacy_libraries here, "
+                "although the catalog carries rows for both."
             )
         ),
     ] = "",
@@ -1655,6 +2242,20 @@ def load_device(
         int,
         Field(description="How many search candidates to return."),
     ] = 12,
+    track: Annotated[
+        int,
+        Field(
+            ge=-1,
+            description=(
+                "Track to load onto, counted from 0. -1 uses whatever is selected, "
+                "which is what this did before the argument existed. Naming a track "
+                "points the selection at it first, so a caller does not have to express "
+                "the load as two steps and cannot load onto a track that happened to be "
+                "selected. The selection stays there afterwards and is not put back: "
+                "the LOM offers nothing to restore it to. 'aimed' reports where it went."
+            ),
+        ),
+    ] = -1,
     confirm: Annotated[
         bool,
         Field(
@@ -1666,62 +2267,36 @@ def load_device(
         ),
     ] = False,
 ) -> dict[str, Any]:
-    """Search Live's browser and load a device onto the currently selected track.
-
-    Two steps, and the first one is not optional in practice: call with confirm=False
-    to search and to see which track is selected, then call again with confirm=True
-    and the uri or item_path of the item you chose.
+    """Search Live's browser and load a device onto a track: a search step, then a load step.
 
     Returns:
-        Dictionary of search candidates and the selected track on the search step, or
-        the load result and the resulting device chain on the load step.
+        Dictionary of search candidates and the selected track on the search step,
+        or the load result and the resulting device chain on the load step.
 
     Note:
-        Loading an instrument is destructive. ``Browser.load_item`` takes no track
-        argument: it loads onto whatever ``song.view.selected_track`` points at.
-        It cannot be aimed inside a rack from here. Measured 2026-09-07 against
-        Live 12.4.5: writing ``rack.view.selected_chain`` reads back as the chain
-        that was asked for, and a device loaded afterwards still lands on the
-        track. The chain kept its six devices and the track went from one device
-        to two. Live's browser follows the selection in its own interface, which
-        no write over this channel drives. An effect is appended to the end of the
-        chain, but an instrument replaces the instrument already on the track and
-        discards it silently, together with every parameter configured on it and
-        every clip envelope pointing at it. Check the selection and the existing
-        chain with get_devices before confirming.
+        A load cannot be aimed inside a rack: measured 2026-09-07 against Live 12.4.5,
+        ``rack.view.selected_chain`` read back as written and the device still landed on the
+        track. An effect is appended; an instrument replaces the one already there and
+        discards it silently, with its settings and the clip envelopes pointing at it: check
+        with get_devices first. Loading plug-ins in rapid succession can crash Live
+        (measured: a batch load during a plug-in rescan with a licence dialog open took Live
+        down), so load one at a time. A load also arms the target track and disarms every
+        other one (measured 2026-09-19 against Live 12.4.6: of two armed tracks and an
+        unarmed target, the target came back armed and the others disarmed), and nothing
+        here reports it. An instrument load renames a track that still has Live's default
+        name; an effect never renames.
 
-        Loading plug-ins in rapid succession can crash Live (measured: a batch load
-        during a background plug-in rescan, with a licence dialog open, took the
-        whole application down). Load one at a time, check the connection between
-        loads, and save the set first.
-
-        A successful return proves the call ran, not that the track makes a sound: a
-        measured Drum Rack load reported success on a silent track. Read the chain
-        back with get_devices, and for a rack check that ``chains`` is not empty.
-
-        An instrument load renames the track while the track still carries Live's default
-        name, so a track name cached from an earlier get_session is stale afterwards. An
-        effect never renames. To reorder what is already loaded, call ``song.move_device``
-        through lom_call rather than loading again.
-
-        Three things about the search step are worth knowing before trusting it.
-
-        An empty ``candidates`` with ``truncated: true`` is not proof that the item is
-        absent. The walk ran out of budget before it reached the item, and a search
-        narrowed with ``root`` can find on the first try what an unrooted search missed
-        entirely. Narrow before concluding something is not installed.
-
-        A ``uri`` from the search step can fail to resolve on the load step for the same
-        reason, with ``stopped by node_budget``: resolving one walks the browser again,
-        and a uri carries no hint about where to look. The ``item_path`` in that same
-        candidate addresses the item directly and cannot run out of budget, so prefer
-        it. Where the uri is what you have, pass ``root`` with it and the second walk
-        is narrowed to that one category the same way the search was.
-
-        Loading onto the main track works and is reached the same way as any other
-        target, by pointing the selection at it first: write ``song.view.selected_track``
-        with ``{"__path__": "song.master_track"}`` through lom_set, then load. There is no
-        track index for the main track, which is why the usual index does not apply.
+        Success means the call ran, not that the track sounds: a measured Drum Rack load
+        reported success on a silent track, and an empty rack is what that looks like, so
+        read ``song.tracks[N].devices[i].chains``, which get_devices does not report. A null
+        ``selected_track_same``, ``displaced`` or ``configure_needed`` means the comparison
+        failed, not ``false``; the first compares name and track count, not identity.
+        ``loaded_device_index`` is the position of the new device, computed only where
+        the two chains single out exactly one, and null otherwise.
+        ``status: incomplete`` with no candidates means the walk stopped early, not that the
+        item is absent: retry ``unreached_roots``; only ``complete`` rules it out. The main
+        track has no index: write ``song.view.selected_track`` with ``{"__path__":
+        "song.master_track"}`` through lom_set, then load.
     """
     client = _client_instance()
     if not query and not (confirm and (uri or item_path)):
@@ -1734,28 +2309,54 @@ def load_device(
     if root:
         params["root"] = root
 
-    selected = _run("view.selected_track")
-    selected_handle = selected.get("value") if selected.get("ok") else None
-
     if not confirm or not (uri or item_path):
+        selected = _run("view.selected_track")
+        selected_handle = selected.get("value") if selected.get("ok") else None
         try:
             found = client.send("browser_walk", params)
         except LiveError as exc:
             return _live_error(exc)
         matches = found.get("matches") or []
+        # A script that predates the status field says nothing about coverage, and a
+        # plain .get("status", "complete") would turn that silence into a completeness
+        # claim it never made. Live reloads Remote Scripts only at startup, so an older
+        # one is on the wire for as long as the application stays open. Falling back to
+        # truncated keeps this branch from making the one claim it exists to prevent.
+        status = found.get("status") or ("incomplete" if found.get("truncated") else "complete")
+        unreached = [str(name) for name in (found.get("unreached_roots") or [])]
+        next_step = (
+            "Call again with track=N for where it should go, and "
+            "with item_path=<the 'path' of the candidate of your choice> and "
+            "confirm=True. Each candidate below carries that value under the key "
+            "'path'; there is no field named 'item_path' in this answer. "
+            "Prefer item_path over uri: it addresses the item directly, while a "
+            "uri has to be walked for again and that walk can run out of budget."
+        )
+        if status == "incomplete":
+            next_step += (
+                " WARNING: this search did not cover the whole browser, so the "
+                "candidate list is a lower bound and an empty one is not proof that "
+                "the item is absent."
+            )
+            if unreached:
+                next_step += (
+                    " These categories were not fully searched: "
+                    + ", ".join(unreached)
+                    + ". Pass root=<category> to search one of them on its own budget."
+                )
+            else:
+                next_step += " Narrow the query or raise limit, then search again."
+
         return {
             "ok": True,
+            "status": status,
             "loaded": False,
             "selected_track": selected_handle,
             "candidates": matches,
             "count": found.get("count"),
             "truncated": found.get("truncated"),
-            "next_step": (
-                "Point song.view.selected_track at the target track, then call again "
-                "with item_path=<the item_path of your choice> and confirm=True. "
-                "Prefer item_path over uri: it addresses the item directly, while a "
-                "uri has to be walked for again and that walk can run out of budget."
-            ),
+            "unreached_roots": unreached,
+            "next_step": next_step,
             "warning": (
                 "Loading an instrument replaces the instrument already on the selected track. "
                 "Effects are appended; the chain can be reordered afterwards with song.move_device."
@@ -1805,23 +2406,134 @@ def load_device(
         return {"ok": False, "error": f"no browser item with uri {uri!r}", "resolved": resolved}
     item_path = item_path or str(resolved.get("item_path") or "")
 
-    before = _run("view.selected_track")
-    chain_before = _selected_chain_names()
-    loaded = _run("browser.load_item", confirm=True, call_args=[{"__path__": item_path}])
-    after = _run("view.selected_track")
-    chain_after = _selected_chain_names()
-    displaced = [name for name in chain_before if name not in chain_after]
+    # Six reads around the load, and no more: the track count and the selection on
+    # either side, then the new device's parameter count only where the two chains
+    # single one device out. song.view.selected_track._live_ptr is not among them and
+    # cannot be: the path parser answers bad_path for a private attribute.
+    probe_before, _count_err_before = _count("track.name", "track", {})
+    track_count_before = _exact_count(probe_before)
 
-    notes: list[str] = []
-    if displaced:
+    # Aiming happens here rather than in the caller's head. Live's browser loads onto
+    # song.view.selected_track and takes no track argument, so the detour is Live's and
+    # cannot be removed; what can be removed is the caller having to know it.
+    aimed: dict[str, Any] | None = None
+    if track >= 0:
+        if track_count_before is not None and track >= track_count_before:
+            return {
+                "ok": False,
+                "code": "no_such_track",
+                "error": (
+                    f"track {track} does not exist: the set has {track_count_before}, "
+                    f"counted from 0."
+                ),
+            }
+        was = _client_instance().send("lom_get", {"path": "song.view.selected_track"})
+        previous = was.get("value") if isinstance(was, Mapping) else None
+        previous_name = (
+            str(previous.get("name")) if isinstance(previous, Mapping) else None
+        )
+        pointed = _client_instance().send(
+            "lom_set",
+            {
+                "path": "song.view.selected_track",
+                "value": {"__path__": f"song.tracks[{track}]"},
+            },
+        )
+        # read_back and not "ok": a raw handler reply carries no ok field, that is put
+        # on by the tool layer, and a guard that asks for it refuses every successful
+        # write. The read-back is the evidence anyway.
+        if pointed.get("read_back") != "applied":
+            return {
+                "ok": False,
+                "code": "selection_refused",
+                "error": (
+                    f"the selection could not be pointed at track {track}, so nothing "
+                    f"was loaded."
+                ),
+                "selection_result": pointed,
+            }
+        landed = pointed.get("after")
+        aimed = {
+            "track": track,
+            "name": landed.get("name") if isinstance(landed, Mapping) else None,
+            "selection_was": previous_name,
+            "selection_left_here": True,
+        }
+
+    track_before, devices_before, _snap_err_before = _selection_snapshot()
+
+    loaded = _run("browser.load_item", confirm=True, call_args=[{"__path__": item_path}])
+
+    track_after, devices_after, snap_err_after = _selection_snapshot()
+    probe_after, _count_err_after = _count("track.name", "track", {})
+    track_count_after = _exact_count(probe_after)
+
+    chain_before = _chain_names(devices_before)
+    chain_after = _chain_names(devices_after)
+    chains_read = (
+        isinstance(devices_before.get("value"), list)
+        and bool(devices_before.get("ok"))
+        and isinstance(devices_after.get("value"), list)
+        and bool(devices_after.get("ok"))
+    )
+    same_track, identity_reason, identity_evidence = _selection_identity(
+        _handle_name(track_before),
+        _handle_name(track_after),
+        track_count_before,
+        track_count_after,
+    )
+
+    displaced: list[str] | None = None
+    displaced_unknown_reason: str | None = None
+    if same_track is not True:
+        displaced_unknown_reason = identity_reason
+    elif not chains_read:
+        displaced_unknown_reason = "chain_unreadable"
+    else:
+        displaced = _displaced_names(chain_before, chain_after)
+
+    loaded_device_index: int | None = None
+    if same_track is True and chains_read:
+        loaded_device_index = _loaded_device_index(chain_before, chain_after)
+
+    configure_needed: bool | None = None
+    configure_needed_unknown_reason: str | None = None
+    if not loaded.get("ok"):
+        configure_needed_unknown_reason = "load_failed"
+    elif displaced_unknown_reason is not None:
+        configure_needed_unknown_reason = displaced_unknown_reason
+    elif loaded_device_index is None:
+        configure_needed_unknown_reason = "new_device_not_identified"
+    else:
+        exposed = _parameter_count(client, _device_path(devices_after, loaded_device_index))
+        if exposed is None:
+            configure_needed_unknown_reason = "parameter_count_unreadable"
+        else:
+            configure_needed = exposed == 1
+
+    notes: list[str] = [TRACK_IDENTITY_NOTE]
+    if snap_err_after is not None:
+        notes.append(
+            "The selection could not be read back after the load ("
+            f"{snap_err_after.get('error') or snap_err_after.get('code') or 'read failed'}"
+            "). The load call itself may already have run, so read the track with "
+            "get_devices before loading anything again."
+        )
+    if displaced is None:
+        notes.append(identity_evidence)
+        notes.append(
+            "Nothing is reported as displaced, because what the chain lost could not be "
+            f"established (code {displaced_unknown_reason})."
+        )
+    elif displaced:
         notes.append(
             "Replaced: " + ", ".join(repr(name) for name in displaced) + " is gone from "
             "the track. An instrument load replaces the instrument that was there."
         )
-    elif chain_before and chain_after:
-        notes.append(
-            f"Nothing was displaced: the chain went {chain_before} -> {chain_after}."
-        )
+    else:
+        notes.append(f"Nothing was displaced: the chain went {chain_before} -> {chain_after}.")
+    if configure_needed is True:
+        notes.append(CONFIGURE_NOTE)
     notes.extend(
         [
             "Verify with get_devices on the selected track.",
@@ -1829,20 +2541,35 @@ def load_device(
             RAN_NOT_EFFECTIVE,
         ]
     )
-    return {
+    result: dict[str, Any] = {
         "ok": bool(loaded.get("ok")),
         "loaded": bool(loaded.get("ok")),
         "uri": uri,
         "item_path": item_path,
         "item": resolved.get("item"),
-        "selected_track_before": before.get("value") if before.get("ok") else None,
-        "selected_track_after": after.get("value") if after.get("ok") else None,
+        "aimed": aimed,
+        "selected_track_before": track_before.get("value") if track_before.get("ok") else None,
+        "selected_track_after": track_after.get("value") if track_after.get("ok") else None,
+        "selected_track_same": same_track,
+        "track_count_before": track_count_before,
+        "track_count_after": track_count_after,
         "chain_before": chain_before,
         "chain_after": chain_after,
         "displaced": displaced,
+        "displaced_unknown_reason": displaced_unknown_reason,
+        "loaded_device_index": loaded_device_index,
+        "configure_needed": configure_needed,
+        "configure_needed_unknown_reason": configure_needed_unknown_reason,
         "call": loaded,
         "notes": notes,
     }
+    if configure_needed is True:
+        result["next_step"] = (
+            "The device exposes one parameter, which is what an unconfigured plug-in "
+            "looks like. Select it in Live, press Configure, and touch the parameters "
+            "you want to automate."
+        )
+    return result
 
 
 @mcp.tool(annotations=ADDS)
@@ -1879,6 +2606,11 @@ def create_clip(
 
         The clip arrives empty. Fill it with write_clip_notes, and copy it onto the
         Arrangement timeline with arrange once it holds something.
+
+        Live gives a new Session clip a loop: ``looping`` reads back true with
+        ``loop_start`` at 0 and ``loop_end`` at the length asked for. That is Live's
+        own default for Session clips and this does not set it. Turn it off through
+        ``lom_set`` on ``clip.looping`` where the part is to play once.
     """
     has = _run("clip_slot.has_clip", track=track, slot=slot)
     if not has.get("ok"):
@@ -1925,9 +2657,10 @@ def create_clip(
 
 @mcp.tool(annotations=DESTROYS)
 def delete_clip(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
     confirm: ConfirmArg = False,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Delete the clip in a Session slot, its notes and envelopes with it.
 
@@ -1947,6 +2680,11 @@ def delete_clip(
         A clip already copied into the Arrangement by arrange is a separate clip and
         survives this.
     """
+    resolved = _resolve_clip_args(track, slot, path, "delete_clip")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     fields, err = _read_fields(
         [
             ("clip_slot.has_clip", {"track": track, "slot": slot}),
@@ -2274,16 +3012,18 @@ def delete_device(
     }
 
 
+
 # --------------------------------------------------------------------- music
 # Measured 2026-09-01 against Live 12.4.5: a sent 0.29 read back as
 # 0.29000010406260407 and a sent 0.18 as 0.17999994796869798. Re-measured
 # 2026-09-02 against Live 12.4.5 at 124 BPM: both reproduced to every digit, a
 # start_time of 2.29 came back as 2.290000104062604, and a duration of 0.5 came
 # back exactly.
-@mcp.tool(annotations=ADDS)
+@mcp.tool(annotations=DESTROYS)
 def write_clip_notes(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
+    *,
     notes: Annotated[
         list[NoteArg],
         Field(
@@ -2311,6 +3051,7 @@ def write_clip_notes(
             )
         ),
     ] = True,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Write MIDI notes into a Session clip.
 
@@ -2318,44 +3059,36 @@ def write_clip_notes(
         Dictionary containing write confirmation, validation reports, and optional diff.
 
     Note:
-        Times are in beats and clip-local, so beat 0 is the clip's own start.
+        Times are in beats and clip-local, so beat 0 is the clip's own start. ``replace``
+        (the default) makes the clip match the list given; Live's own note writing appends,
+        so without it a second write duplicates a melody (measured: 63 + 23 = 86 notes). Ask
+        for ``append`` by name to layer onto an existing performance. An empty list with
+        ``replace`` empties the clip but keeps its length, loop and envelopes; delete_clip
+        takes all of them.
 
-        With mode='replace' (the default), the clip is updated to match the provided note
-        list. Live's native note writing appends by default, so mode='replace' ensures a
-        second write updates rather than duplicates a melody (measured: 63 + 23 = 86 notes).
-        Ask for 'append' by name when layering notes into an existing performance. To
-        empty a clip without writing new notes, use delete_clip.
+        A list straight from ``read_clip_notes`` can be written back: the keys in
+        :data:`~live_maestro.music.notes.TOLERATED_NOTE_KEYS`, such as Live's ``note_id``,
+        are dropped and reported as ``input_keys_ignored``, and every other unrecognised key
+        is an error. ``pitch``, ``start_time`` and ``duration`` are never defaulted, so a
+        list spelled with ``pos``/``dur`` is refused before anything is sent instead of
+        becoming sixteenths stacked on beat 0.
 
-        Use read_clip_notes to inspect existing notes before rewriting them. Use
-        quantize_clip to adjust timing to a grid, and transpose_clip to shift pitch
-        without altering rhythm.
-
-        A list straight from ``read_clip_notes`` can be written back. Live adds
-        ``note_id`` to every note it hands out, which is identity rather than content,
-        so the keys in :data:`~live_maestro.music.notes.TOLERATED_NOTE_KEYS` are
-        dropped instead of refused and reported as ``input_keys_ignored``. Every other
-        unrecognised key is an error.
-
-        ``pitch``, ``start_time`` and ``duration`` are never defaulted. A reader that
-        substitutes ``start_time=0.0`` and ``duration=0.25`` for missing keys turns a
-        list built with ``pos``/``dur`` (the humanise spelling) into a pile of
-        sixteenths stacked on beat 0, and reports success while doing it. Wrong keys are
-        refused before anything is sent.
-
-        A note does not come back bit-identical to the note sent. Times and durations
-        return with a small deviation in both directions: a sent 0.29 reads back as
-        0.29000010406260407 and a sent 0.18 as 0.17999994796869798, about 4e-7 relative,
-        and both reproduce to every digit across runs. A ``start_time`` of 2.29 comes back
-        as 2.290000104062604, and a duration of 0.5 comes back exactly. The cause is not
-        established: it is not a tick grid (no grid of 96, 192, 480 or 960 per quarter
-        produces those numbers) and not a single float32 conversion (float32 of 0.29 is
-        0.28999999). That 0.5 survives while 0.29 does not is consistent with a
-        binary-representable value passing through untouched, but the mechanism is not
-        claimed here. At 124 BPM the error is around 50 nanoseconds, so musically it is
-        nothing. It matters only for comparison: never test a note time for equality. The
-        diff run here already uses a tolerance, which is why it reports ``0 changed`` for
-        values that differ in the seventh decimal.
+        Times and durations do not come back bit-identical. They return with a deviation in
+        both directions, about 4e-7 relative and reproducible to every digit across runs: a
+        sent 0.29 reads back as 0.29000010406260407, a sent 0.18 as 0.17999994796869798 and
+        a ``start_time`` of 2.29 as 2.290000104062604, while a duration of 0.5 comes back
+        exactly. The cause is not established: it is neither a tick grid of 96, 192, 480
+        or 960 per quarter, nor a single float32 conversion (float32 of 0.29 is
+        0.28999999). At 124 BPM the error is around
+        50 nanoseconds, so it matters only for comparison: never test a note time for
+        equality. The diff run here uses a tolerance, which is why it reports ``0 changed``
+        for values that differ in the seventh decimal.
     """
+    resolved = _resolve_clip_args(track, slot, path, "write_clip_notes")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     if mode not in ("replace", "append"):
         return {"ok": False, "error": f"mode must be 'replace' or 'append', not {mode!r}"}
 
@@ -2465,8 +3198,8 @@ def write_clip_notes(
 # at beats 0, 1, 2, 3 with pitches 72, 60, 67, 62 came back 60, 62, 67, 72.
 @mcp.tool(annotations=READS)
 def read_clip_notes(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
     from_time: Annotated[
         float | None,
         Field(
@@ -2485,12 +3218,34 @@ def read_clip_notes(
             )
         ),
     ] = None,
+    pitch_min: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            le=127,
+            description=(
+                "Lowest MIDI pitch to return, inclusive. Omit for no lower bound. Use "
+                "it to ask about part of a clip too large to read whole, such as what "
+                "sits below an instrument's real range."
+            ),
+        ),
+    ] = None,
+    pitch_max: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            le=127,
+            description=(
+                "Highest MIDI pitch to return, inclusive. Omit for no upper bound."
+            ),
+        ),
+    ] = None,
     count_only: Annotated[
         bool,
         Field(
             description=(
-                "True counts the notes inside Live and returns the number without "
-                "transferring them, which is the way to ask about a large clip."
+                "True counts the notes and returns the number without carrying them "
+                "back, which is the way to ask about a large clip."
             )
         ),
     ] = False,
@@ -2504,6 +3259,7 @@ def read_clip_notes(
             )
         ),
     ] = True,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Read MIDI notes of a Session clip, query a specific window, or count notes.
 
@@ -2511,34 +3267,39 @@ def read_clip_notes(
         Dictionary containing notes, count, window parameters, and validation report.
 
     Note:
-        Times and positions are expressed in clip-local beats. Muted notes are included
-        and carry ``mute: true``. ``time_span`` is a length in beats, not an end beat:
-        beats 24 to 32 is ``from_time=24, time_span=8``.
+        Times and positions are clip-local beats. Muted notes are included and carry ``mute:
+        true``.
 
-        Windowing and counting keep a small question small. A single drum clip of 384
-        notes comes back as 57k characters, past the tool-result cap, so a survey across
-        59 clips cannot be a full read of each. The LOM has no ``note_count`` on ``Clip``
-        at all, so a count taken out here means transferring every note to measure it.
-        ``count_only=True`` counts inside Live and carries back one integer.
+        A single drum clip of 384 notes comes back as 57k characters, past the tool-result
+        cap, and ``Clip`` has no ``note_count`` in the LOM, so counting from out here
+        otherwise means transferring every note. ``count_only=True`` carries back one
+        integer instead. ``pitch_min`` and ``pitch_max`` narrow the read the way time does,
+        which is what makes a question like "what sits below this guitar's lowest string"
+        answerable on a clip too large to read whole. ``get_notes_extended`` through
+        ``lom_call`` takes a pitch window too, but answers with opaque note handles that can
+        be counted and not read. With ``count_only`` there is nothing to validate, so
+        ``check`` is ignored; with a window, ``check`` sees the window and not the clip.
 
-        With ``count_only`` there is nothing to validate, so ``check`` is ignored. With a
-        window, ``check`` sees the window and not the clip.
-
-        Returned notes are sorted by time, then pitch. Live hands its notes back ordered
-        by pitch, which is the one order a musical instruction never means: "the third
-        note", "every other note" and "the last note" are all about when a note sounds.
-        Four notes written at beats 0, 1, 2, 3 with pitches 72, 60, 67, 62 come back 60,
-        62, 67, 72, so taking every other entry off the raw list picks alternating pitches
-        rather than alternating beats, silently and plausibly. For Live's own order call
-        ``get_notes_extended`` through ``lom_call``.
+        Returned notes are sorted by time, then pitch. Live hands them back ordered by
+        pitch, which is the one order a musical instruction never means: four notes written
+        at beats 0, 1, 2, 3 with pitches 72, 60, 67, 62 come back 60, 62, 67, 72, so taking
+        every other entry off the raw list picks alternating pitches rather than alternating
+        beats, silently and plausibly. For Live's own order call ``get_notes_extended``
+        through ``lom_call``.
     """
+    resolved = _resolve_clip_args(track, slot, path, "read_clip_notes")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     clip_path = _clip_path(track, slot)
     params: dict[str, Any] = {"path": clip_path}
     if from_time is not None:
         params["from_time"] = from_time
     if time_span is not None:
         params["time_span"] = time_span
-    if count_only:
+    pitched = pitch_min is not None or pitch_max is not None
+    if count_only and not pitched:
         params["count_only"] = True
     try:
         got = _client_instance().send("notes_get", params)
@@ -2546,21 +3307,37 @@ def read_clip_notes(
         return _live_error(exc)
 
     windowed = from_time is not None or time_span is not None
+    raw = got.get("notes") or []
+    if pitched and isinstance(raw, list):
+        low = 0 if pitch_min is None else pitch_min
+        high = 127 if pitch_max is None else pitch_max
+        raw = [
+            note
+            for note in raw
+            if isinstance(note, dict)
+            and isinstance(note.get("pitch"), (int, float))
+            and low <= note["pitch"] <= high
+        ]
     if count_only:
         return {
             "ok": True,
             "track": track,
             "slot": slot,
             "path": clip_path,
-            "count": got.get("count"),
+            "count": len(raw) if pitched else got.get("count"),
             "window": got.get("window"),
+            "pitch_range": [pitch_min, pitch_max] if pitched else None,
             "note": (
-                "Counted inside Live; no notes were carried back. "
-                + ("The count is for the window, not the clip." if windowed else "")
+                (
+                    "Counted here over the notes Live sent, because a pitch range was "
+                    "asked for and Live's own count does not take one."
+                    if pitched
+                    else "Counted inside Live; no notes were carried back."
+                )
+                + (" The count is for the window, not the clip." if windowed else "")
             ).strip(),
         }
 
-    raw = got.get("notes") or []
     if isinstance(raw, list):
         raw = sorted(
             raw,
@@ -2577,11 +3354,18 @@ def read_clip_notes(
         "track": track,
         "slot": slot,
         "path": clip_path,
-        "count": got.get("count", len(raw)),
+        "count": len(raw) if pitched else got.get("count", len(raw)),
         "notes": raw,
         "api": got.get("api"),
         "note": "Times are beats, clip-local: beat 0 is the clip's own start.",
     }
+    if pitched:
+        payload["pitch_range"] = [pitch_min, pitch_max]
+        payload["pitch_note"] = (
+            f"Only notes from pitch {pitch_min if pitch_min is not None else 0} to "
+            f"{pitch_max if pitch_max is not None else 127} are here, and count is "
+            "how many of those there are, not how many the clip holds."
+        )
     if windowed:
         payload["window"] = got.get("window")
         end_desc = (from_time or 0) + time_span if time_span is not None else "the end"
@@ -2616,8 +3400,8 @@ def read_clip_notes(
 
 @mcp.tool(annotations=SETS)
 def quantize_clip(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
     grid: Annotated[
         float,
         Field(
@@ -2646,6 +3430,7 @@ def quantize_clip(
             )
         ),
     ] = False,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Quantize MIDI clip note positions and lengths to a specified beat grid.
 
@@ -2668,6 +3453,11 @@ def quantize_clip(
         To shift pitch instead of timing, use transpose_clip. To write custom or micro-timed
         notes off-grid, use write_clip_notes.
     """
+    resolved = _resolve_clip_args(track, slot, path, "quantize_clip")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     if grid <= 0:
         return {"ok": False, "error": f"grid must be positive (beats), got {grid}"}
     if not 0.0 <= strength <= 1.0:
@@ -2689,7 +3479,9 @@ def quantize_clip(
         before, grid, strength=strength, quantize_ends=quantize_ends
     )
     changes = note_ops.diff(before, after, match_on="pitch")
-    written = write_clip_notes(track, slot, note_ops.to_dicts(after), mode="replace", verify=True)
+    written = write_clip_notes(
+        track, slot, notes=note_ops.to_dicts(after), mode="replace", verify=True
+    )
     written["quantize"] = {
         "grid_beats": grid,
         "strength": strength,
@@ -2708,8 +3500,9 @@ def quantize_clip(
 # clip.pitch_coarse, and the write is relative there too.
 @mcp.tool(annotations=ADDS)
 def transpose_clip(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
+    *,
     semitones: Annotated[
         int,
         Field(
@@ -2730,6 +3523,7 @@ def transpose_clip(
             )
         ),
     ] = "error",
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Transpose a MIDI clip by note pitch or an audio clip via pitch_coarse.
 
@@ -2758,6 +3552,11 @@ def transpose_clip(
         pitch and dropped ones are gone. Keep the default 'error' unless the clip
         has been read out with read_clip_notes first.
     """
+    resolved = _resolve_clip_args(track, slot, path, "transpose_clip")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     if out_of_range not in ("error", "clamp", "drop"):
         return {"ok": False, "error": "out_of_range must be 'error', 'clamp' or 'drop'"}
 
@@ -2797,7 +3596,9 @@ def transpose_clip(
     except ValueError as exc:
         return {"ok": False, "blocked": True, "error": str(exc)}
 
-    written = write_clip_notes(track, slot, note_ops.to_dicts(after), mode="replace", verify=True)
+    written = write_clip_notes(
+        track, slot, notes=note_ops.to_dicts(after), mode="replace", verify=True
+    )
     written["transpose"] = {
         "semitones": semitones,
         "out_of_range": out_of_range,
@@ -3192,38 +3993,29 @@ def set_parameter_display(
         took. On refusal, why - including the case where the device reports no units.
 
     Note:
-        This is the inverse of ``set_parameter``, and it exists because there is no
-        formula to invert. The curve from the raw range onto the displayed unit
-        differs per parameter and is rarely linear: on one measured third-party
-        compressor Attack is ``v^4 * 1000 ms``, Ratio is ``20^v`` and Threshold about
-        ``40 * log10(v)``. Writing "10" at a parameter that displays milliseconds
-        lands at 316 ms there, a factor of 30, and reports success.
+        The inverse of ``set_parameter``, and there is no formula to invert: the curve from
+        the raw range onto the displayed unit differs per parameter and is rarely linear. On
+        one measured third-party compressor Attack is ``v^4 * 1000 ms``, Ratio is ``20^v``
+        and Threshold about ``40 * log10(v)``, so writing 10 at a parameter that displays
+        milliseconds lands at 316 ms, a factor of 30, and reports success.
 
-        So the taper is sampled rather than computed: one batch of probes asks the
-        device what each raw value *would* read as, the answers are bracketed around
-        the target, a second batch refines inside that bracket, and only then is a
-        single value written and read back. Two round trips, and nothing in the set
-        moves until the last step.
+        The taper is sampled, not computed: one batch of probes asks what each raw value
+        would read as, the answers are bracketed around the target, a second batch refines
+        inside that bracket, and only then is a single value written and read back. Two
+        round trips, and nothing in the set moves until that last step. Probing with real
+        writes has been measured leaving Delay Feedback at 100 % (self-oscillation) and
+        Saturator Drive at 100 % across 20 parameters (catalog row
+        return_device.str_for_value); the probes here write nothing. They also stay strictly
+        inside the range and never ask at ``min`` or ``max``, where a plug-in's own
+        formatting code has crashed Live in native code no try/except reaches
+        (docs/limits.md, 'Asking for a display string at an endpoint (Live)').
 
-        That last point is the reason not to bisect with real writes instead. A
-        probing bisection that does not restore what it touched has been measured
-        leaving Delay Feedback at 100 % - self-oscillation - and Saturator Drive at
-        100 % across 20 parameters (catalog row return_device.str_for_value). The
-        probes here write nothing at all.
-
-        The probes stay strictly inside the range and never ask at ``min`` or
-        ``max``: an endpoint has crashed Live inside a plugin's own formatting code,
-        which is native code no try/except reaches (docs/limits.md, 'Asking for a
-        display string at an endpoint (Live)').
-
-        Where the device reports no unit this refuses instead of aiming. Every VST2
-        reports a bare number (0 of 36 measured), which is formally a number and
-        physically meaningless, so a display-driven search there would walk the
-        control to its end stop and call it a result. For those, use ``set_parameter``
-        with a normalised value and calibrate by ear once.
-
-        The result is the stored value and its display, which is not audibility: a
-        parameter on a device that is switched off reads back exactly the same.
+        Where the device reports no unit this refuses instead of aiming: every VST2 reports
+        a bare number (0 of 36 measured), so a display-driven search there would walk the
+        control to its end stop and call it a result. Use ``set_parameter`` with a
+        normalised value for those and calibrate by ear once. The result is the stored value
+        and its display, which is not audibility: a parameter on a device that is switched
+        off reads back exactly the same.
     """
     _, err = _kind_args(kind, track)
     if err is not None:
@@ -3432,8 +4224,9 @@ def set_parameter_display(
 # ---------------------------------------------------------------- automation
 @mcp.tool(annotations=ADDS)
 def write_automation(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
+    *,
     parameter: ParameterPathArg,
     points: Annotated[
         list[list[float]],
@@ -3495,6 +4288,7 @@ def write_automation(
             )
         ),
     ] = True,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Write an automation envelope into a Session clip and verify the read-back.
 
@@ -3523,6 +4317,11 @@ def write_automation(
         stopping does not restore it. Capture the statics you care about before the first
         playthrough: once a curve has run, nothing reports the value it covered.
     """
+    resolved = _resolve_clip_args(track, slot, path, "write_automation")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     try:
         paths.validate(parameter)
     except paths.PathSyntaxError as exc:
@@ -3586,8 +4385,9 @@ def write_automation(
 
 @mcp.tool(annotations=READS)
 def read_automation(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
+    *,
     parameter: ParameterPathArg,
     start: Annotated[
         float | None,
@@ -3618,6 +4418,7 @@ def read_automation(
             )
         ),
     ] = 64,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Sample a clip envelope into a list of values and report what it found.
 
@@ -3637,6 +4438,11 @@ def read_automation(
         that parameter, which is not the same as an envelope holding the parameter's
         current value.
     """
+    resolved = _resolve_clip_args(track, slot, path, "read_automation")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     try:
         paths.validate(parameter)
     except paths.PathSyntaxError as exc:
@@ -3742,8 +4548,8 @@ def _envelope_loss(parameter: str, existing: Mapping[str, Any] | None) -> dict[s
 
 @mcp.tool(annotations=DESTROYS)
 def clear_automation(
-    track: TrackArg,
-    slot: SlotArg,
+    track: ClipTrackArg = None,
+    slot: ClipSlotArg = None,
     parameter: Annotated[
         str,
         Field(
@@ -3765,38 +4571,38 @@ def clear_automation(
         ),
     ] = False,
     confirm: ConfirmArg = False,
+    path: ClipPathArg = "",
 ) -> dict[str, Any]:
     """Delete automation envelopes on a Session clip. Requires confirm=True.
 
-    Requires confirm=True. With confirm=False it changes nothing and reports the
-    envelope it would remove: its range, where the low and the high point sit, and
-    how densely it was sampled to find them.
-
-    That report covers one named parameter. With all_envelopes it says whether the
-    clip is automated at all, because has_envelopes is one flag for the whole clip.
-    To see which parameters those envelopes belong to, read
-    clip.automation_envelopes with lom_get and then each
-    automation_envelopes[i].parameter.name.
+    With confirm=False it changes nothing and reports the envelope it would remove: its
+    range, where the low and the high point sit, and how densely it was sampled to find
+    them. That report covers one named parameter; with all_envelopes it says only whether
+    the clip is automated at all, because has_envelopes is one flag for the whole clip. To
+    see which parameters those envelopes belong to, read clip.automation_envelopes with
+    lom_get and then each automation_envelopes[i].parameter.name.
 
     Returns:
         Dictionary reporting the clearance, or the envelopes that would go.
 
     Note:
-        A cleared envelope is gone, and the parameter falls back to whatever value it
-        holds outside the clip rather than to the first breakpoint. Sample it with
-        read_automation first if the shape might be wanted back, since nothing here
-        restores it.
+        A cleared envelope is gone, and the parameter falls back to whatever value it holds
+        outside the clip rather than to the first breakpoint. Sample it with read_automation
+        first if the shape might be wanted back, since nothing here restores it.
 
-        The dry run samples the curve rather than reading its breakpoints, so a
-        feature narrower than the reported sampling step can still sit between two
-        samples. Where the exact shape matters, read it with read_automation at a
-        resolution you choose, or read the breakpoints out of the saved file with
-        als_read.
+        The dry run samples the curve rather than reading its breakpoints, so a feature
+        narrower than the reported sampling step can still sit between two samples. Where
+        the exact shape matters, read it with read_automation at a resolution you choose, or
+        read the breakpoints out of the saved file with als_read.
 
-        To change a curve rather than remove it, write_automation with
-        ``clear_first=True`` replaces it in one call and needs no clearing first.
-        This tool is for leaving the parameter unautomated.
+        To change a curve rather than remove it, write_automation with ``clear_first=True``
+        replaces it in one call and needs no clearing first.
     """
+    resolved = _resolve_clip_args(track, slot, path, "clear_automation")
+    if isinstance(resolved, dict):
+        return resolved
+    track, slot = resolved
+
     if not parameter and not all_envelopes:
         return {
             "ok": False,
@@ -3872,31 +4678,356 @@ def clear_automation(
     }
 
 
+# ------------------------------------------------- shared batch and beat helpers
+def _beat_key(value: float) -> float:
+    """Return a beat rounded to millibeat resolution, for matching one beat to another.
+
+    Two beats count as the same position when they agree to three decimals. That absorbs
+    the representation noise a float picks up on its way through Live and its way back,
+    and nothing else: a triplet sits 333 millibeats from the beat and stays distinct.
+    """
+    return round(value, BEAT_MATCH_DECIMALS)
+
+
+def _row_ok(row: Mapping[str, Any]) -> bool:
+    """Return True when a result row reports success, in either shape it arrives in.
+
+    A row straight off the wire carries ``status`` ('success' or 'error',
+    docs/protocol.md section 5.7). A row that came through the executor carries ``ok``.
+    Both are read here so a helper can be handed either without a caller translating.
+    """
+    status = row.get("status")
+    if status is not None:
+        return status == "success"
+    return bool(row.get("ok"))
+
+
+class _ChunkedBatch(NamedTuple):
+    """What one chunked lom_batch run gathered, and what stopped it.
+
+    Attributes:
+        results: One row per dispatched op, in order, padded where the script was short.
+        round_trips: How many lom_batch requests the run cost.
+        ops_dispatched: How many ops were actually sent, which after an error is more
+            than the caller can assume did nothing.
+        error: The exception that stopped the run, or None.
+    """
+
+    results: list[dict[str, Any]]
+    round_trips: int
+    ops_dispatched: int
+    error: LiveError | None
+
+
+def _batch_chunked(ops: Sequence[Mapping[str, Any]], size: int) -> _ChunkedBatch:
+    """Send ops to Live in chunks of at most ``size``, and gather every result row.
+
+    It splits instead of refusing, because a limit this server sets itself must never
+    fail a caller's request. It never raises: a LiveError stops the run at the chunk that
+    raised and comes back in the answer, together with the number of ops already
+    dispatched, which is what a caller needs before deciding whether a write may already
+    have landed.
+
+    Args:
+        ops: The operations in wire form, in the order they have to run.
+        size: The chunk size asked for, clamped to 1..MAX_BATCH_OPS.
+
+    Returns:
+        A :class:`_ChunkedBatch`. The result list is always as long as the number of ops
+        dispatched: a chunk that answered with fewer rows than it had ops is padded with
+        an error row rather than silently shifting every later row onto the wrong op.
+    """
+    limit = max(1, min(size, MAX_BATCH_OPS))
+    gathered: list[dict[str, Any]] = []
+    round_trips = 0
+    dispatched = 0
+    for start in range(0, len(ops), limit):
+        chunk = [dict(op) for op in ops[start : start + limit]]
+        round_trips += 1
+        dispatched += len(chunk)
+        try:
+            reply = _client_instance().batch(chunk)
+        except LiveError as exc:
+            return _ChunkedBatch(gathered, round_trips, dispatched, exc)
+        raw = reply.get("results")
+        rows = list(raw) if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)) else []
+        for row in rows[: len(chunk)]:
+            if isinstance(row, Mapping):
+                gathered.append(dict(row))
+            else:
+                gathered.append(
+                    {
+                        "status": "error",
+                        "code": "malformed_result",
+                        "message": "the script returned a result row that is not an object",
+                    }
+                )
+        while len(gathered) < dispatched:
+            gathered.append(
+                {
+                    "status": "error",
+                    "code": "missing_result",
+                    "message": "the script returned fewer results than the batch had ops",
+                }
+            )
+    return _ChunkedBatch(gathered, round_trips, dispatched, None)
+
+
+def _numeric(result: Mapping[str, Any]) -> float | None:
+    """Return the number a successful get answered with, or None.
+
+    bool is excluded before the int check, because True is an int in Python and a boolean
+    property read as 1.0 would look like a measurement of something it is not.
+    """
+    if not _row_ok(result):
+        return None
+    value = result.get("value")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _clip_handle_paths(result: Mapping[str, Any]) -> tuple[list[str], str | None]:
+    """Return the clip paths an arrangement_clips read answered with, or a reason it cannot.
+
+    Live sends the elements of a collection as handles keyed '__lom__', 'path' and 'name'
+    (docs/protocol.md section 7), so the address of a clip is under ``path``. '__path__'
+    is the REQUEST spelling, the form that passes an object as an argument to a method
+    (section 5.5), and it never comes back in a reply. Reading '__path__' off a reply
+    finds nothing at all, which reads as an empty clip list for placements that landed.
+
+    A result carrying ``truncated`` answers with a reason naming list_cap instead of a
+    short list: the script stops encoding a collection at its list_cap, and a partial list
+    read as a complete one turns clips that exist into clips that were never added.
+    """
+    if not _row_ok(result):
+        code = result.get("code") or "error"
+        return [], f"the arrangement_clips read failed with code {code}."
+    if result.get("truncated"):
+        cap = result.get("list_cap")
+        return [], (
+            f"the arrangement_clips read stopped at the script's list_cap ({cap}), so the clip "
+            "list is partial and cannot be compared against another one."
+        )
+    value = result.get("value")
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return [], "the arrangement_clips read did not answer with a list of clip handles."
+    clip_paths: list[str] = []
+    for item in value:
+        handle_path = item.get("path") if isinstance(item, Mapping) else None
+        if not isinstance(handle_path, str) or not handle_path:
+            return [], (
+                "an arrangement_clips entry came back without a 'path', so the clips on this "
+                "track cannot be addressed individually."
+            )
+        clip_paths.append(handle_path)
+    return clip_paths, None
+
+
+def _arrangement_snapshot(
+    tracks: Sequence[int], *, with_end: bool
+) -> tuple[dict[int, dict[str, Any]], int, LiveError | None]:
+    """Read the arrangement clips of each listed track, with the beats they sit on.
+
+    One entry per track, whatever happened to it, so a caller never has to ask whether a
+    track is missing from the answer because it was not asked for or because it could not
+    be read.
+
+    Args:
+        tracks: Track indices to read. Repeats are collapsed; order is preserved.
+        with_end: True reads each clip's end_time as well as its start_time.
+
+    Returns:
+        The snapshot keyed by track index, each entry carrying 'count' (Live's own
+        collection length, not the length of the encoded list), 'clips' in collection
+        order each {path, start_time, end_time}, and 'reason' saying why the track could
+        not be read completely, or None; the round trips the snapshot cost; and the
+        LiveError that stopped it, or None.
+    """
+    wanted: list[int] = []
+    for index in tracks:
+        if index not in wanted:
+            wanted.append(index)
+    snapshot: dict[int, dict[str, Any]] = {
+        index: {"count": None, "clips": [], "reason": None} for index in wanted
+    }
+    if not wanted:
+        return snapshot, 0, None
+
+    listing = _batch_chunked(
+        [{"op": "get", "path": f"song.tracks[{index}].arrangement_clips"} for index in wanted],
+        MAX_BATCH_OPS,
+    )
+    round_trips = listing.round_trips
+    if listing.error is not None:
+        return snapshot, round_trips, listing.error
+
+    per_track: dict[int, list[str]] = {}
+    for index, row in zip(wanted, listing.results, strict=False):
+        entry = snapshot[index]
+        count = row.get("count")
+        exact = count if isinstance(count, int) and not isinstance(count, bool) else None
+        clip_paths, reason = _clip_handle_paths(row)
+        if reason is not None:
+            entry["reason"] = reason
+            entry["count"] = exact
+            continue
+        entry["count"] = exact if exact is not None else len(clip_paths)
+        entry["clips"] = [
+            {"path": clip_path, "start_time": None, "end_time": None} for clip_path in clip_paths
+        ]
+        per_track[index] = clip_paths
+
+    ops: list[dict[str, Any]] = []
+    slots: list[tuple[int, int, str]] = []
+    for index, clip_paths in per_track.items():
+        for position, clip_path in enumerate(clip_paths):
+            ops.append({"op": "get", "path": f"{clip_path}.start_time"})
+            slots.append((index, position, "start_time"))
+            if with_end:
+                ops.append({"op": "get", "path": f"{clip_path}.end_time"})
+                slots.append((index, position, "end_time"))
+    if not ops:
+        return snapshot, round_trips, None
+
+    times = _batch_chunked(ops, MAX_BATCH_OPS)
+    round_trips += times.round_trips
+    if times.error is not None:
+        return snapshot, round_trips, times.error
+    for (index, position, field), row in zip(slots, times.results, strict=False):
+        number = _numeric(row)
+        entry = snapshot[index]
+        if number is None:
+            clip_path = entry["clips"][position]["path"]
+            entry["reason"] = (
+                f"{field} of {clip_path} could not be read, so the clips on this track cannot "
+                "be compared by beat."
+            )
+            continue
+        entry["clips"][position][field] = number
+    return snapshot, round_trips, None
+
+
+def _added_arrangement_clips(
+    entry_before: Mapping[str, Any], entry_after: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Return the clips a duplication added to one track, by difference.
+
+    Verification is a difference, never a scan: matching a requested beat against every
+    clip on the track lets one that was already sitting on that beat stand in for a
+    placement that never landed, which is the fallback-to-zero case this comparison
+    exists to catch.
+
+    Args:
+        entry_before: That track's :func:`_arrangement_snapshot` entry from before.
+        entry_after: The same track's entry from after, read with end times.
+
+    Returns:
+        The added clips in collection order, each carrying 'beat' (the matching key),
+        'start_time', 'end_time', 'index' (its position in the after collection) and
+        'used'; and the reason the two readings could not be compared, or None.
+    """
+    reason = entry_before.get("reason") or entry_after.get("reason")
+    if reason is not None:
+        return [], str(reason)
+    pool = [
+        _beat_key(clip["start_time"])
+        for clip in entry_before.get("clips", [])
+        if clip.get("start_time") is not None
+    ]
+    added: list[dict[str, Any]] = []
+    for position, clip in enumerate(entry_after.get("clips", [])):
+        start = clip.get("start_time")
+        if start is None:
+            continue
+        key = _beat_key(start)
+        if key in pool:
+            pool.remove(key)
+        else:
+            added.append(
+                {
+                    "beat": key,
+                    "start_time": start,
+                    "end_time": clip.get("end_time"),
+                    "index": position,
+                    "used": False,
+                }
+            )
+    return added, None
+
+
 # --------------------------------------------------------------- arrangement
 @mcp.tool(annotations=ADDS)
 def arrange(
-    track: TrackArg,
-    slot: SlotArg,
-    at_beat: Annotated[
-        float,
+    track: Annotated[
+        int | None,
         Field(
+            default=None,
+            description=(
+                "Track index in song.tracks, counted from 0. Required if placements "
+                "is omitted."
+            ),
+            ge=0,
+        ),
+    ] = None,
+    slot: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Clip slot index in track.clip_slots, counted from 0. A slot index is "
+                "the scene the clip sits in, so slot 2 is the third scene down. "
+                "Required if placements is omitted."
+            ),
+            ge=0,
+        ),
+    ] = None,
+    at_beat: Annotated[
+        float | None,
+        Field(
+            default=None,
             description=(
                 "Where the copy starts on the Arrangement timeline, in beats from "
-                "the start of the song. Fractional beats are accepted."
-            )
+                "the start of the song. Fractional beats are accepted. "
+                "Required if placements is omitted."
+            ),
         ),
-    ],
+    ] = None,
     to_track: Annotated[
         int | None,
         Field(
+            default=None,
             description=(
                 "Track index to place the copy on. Omit to use the source track, "
                 "which is the usual case. A MIDI clip needs a MIDI destination."
-            )
+            ),
+            ge=0,
+        ),
+    ] = None,
+    placements: Annotated[
+        list[PlacementArg] | None,
+        Field(
+            default=None,
+            description=(
+                "List of placements to duplicate onto the Arrangement timeline, each "
+                "verified against the destination track it landed on: "
+                "[{\"track\": 0, \"slot\": 1, \"at_beat\": 64.0, \"to_track\": null}, ...]. "
+                "A long list is chunked across several round trips rather than refused. "
+                "When provided, the single-placement parameters (track, slot, at_beat) "
+                "must be omitted, including to_track, which each placement carries "
+                "itself."
+            ),
         ),
     ] = None,
 ) -> dict[str, Any]:
-    """Copy a Session clip onto the Arrangement timeline at a beat position.
+    """Copy Session clips onto the Arrangement timeline at beat positions.
+
+    Supports two modes:
+    1. Single placement: specify track, slot, at_beat (and optionally to_track).
+    2. Batch placements: pass a placements list to duplicate several clips and verify
+       each one against the destination track it landed on.
 
     A copy, not a move: the Session clip stays in its slot and the two are separate
     clips afterwards, so editing one leaves the other alone. This is how a Session
@@ -3904,21 +5035,284 @@ def arrange(
     reaches the Arrangement timeline.
 
     Returns:
-        Dictionary with the placement status, the destination track, and the
-        Arrangement clip count before and after.
+        For single placement: dictionary with placement status, destination track,
+        clip counts before and after, the beat the clip actually landed on, and the
+        clip itself under placed_clip. Both modes identify a placement by comparing the
+        destination track before and after, so a clip that was already on the requested
+        beat never stands in for one that did not land.
+        For placements list: dictionary with per-placement requested_beat, actual_beat,
+        ok, and summary counts.
 
     Note:
         Call it once per placement. Repeating the same call adds another copy at the
         same beat rather than replacing the first, so a retry after an unclear result
         needs the clip count in this answer checked first.
 
+        A list retries worse than a single call, not better: a list that half landed
+        doubles what landed if it is sent again. 'destinations' carries the clip count
+        per destination track before and after, which is the number to check first.
+
         Use create_clip and write_clip_notes to build the source clip, and
         set_arrangement_time then play to hear where it landed.
     """
+    if placements is not None:
+        given = {"track": track, "slot": slot, "at_beat": at_beat, "to_track": to_track}
+        extra = {name: value for name, value in given.items() if value is not None}
+        if extra:
+            return {
+                "ok": False,
+                "code": "conflicting_arguments",
+                "error": (
+                    "arrange takes either 'placements' or a single track/slot/at_beat, "
+                    f"and this call passed both ({', '.join(sorted(extra))} beside "
+                    "placements). In list mode each placement carries its own "
+                    "destination in its own to_track. Nothing was sent to Live."
+                ),
+                "ignored": extra,
+            }
+        if not placements:
+            return {
+                "ok": False,
+                "code": "empty_placements",
+                "error": "placements must be a non-empty list of placement dictionaries.",
+            }
+        try:
+            items = placement_dicts(placements)
+        except (ValidationError, TypeError, ValueError) as exc:
+            return {
+                "ok": False,
+                "code": "invalid_placements",
+                "error": f"placements could not be read as a list of placements: {exc}",
+            }
+
+        dup_ops: list[dict[str, Any]] = []
+        requests: list[tuple[int, int, int, float]] = []
+        destinations: list[int] = []
+        for item in items:
+            src_t = item["track"]
+            src_s = item["slot"]
+            beat = float(item["at_beat"])
+            dest = src_t if item.get("to_track") is None else item["to_track"]
+            requests.append((src_t, src_s, dest, beat))
+            if dest not in destinations:
+                destinations.append(dest)
+            dup_ops.append(
+                {
+                    "op": "call",
+                    "path": f"song.tracks[{dest}]",
+                    "method": "duplicate_clip_to_arrangement",
+                    "args": [{"__path__": _clip_path(src_t, src_s)}, beat],
+                }
+            )
+
+        before_snapshot, trips_before, before_error = _arrangement_snapshot(
+            destinations, with_end=False
+        )
+        if before_error is not None:
+            failed = _live_error(before_error)
+            failed["phase"] = "snapshot_before"
+            failed["round_trips"] = trips_before
+            failed["notes"] = [
+                (
+                    "Nothing was duplicated. The destination tracks could not be read, "
+                    "and without that reading a placement cannot be told apart from a "
+                    "clip that was already there."
+                )
+            ]
+            return failed
+
+        run = _batch_chunked(dup_ops, ARRANGE_CALL_CHUNK)
+        if run.error is not None:
+            failed = _live_error(run.error)
+            failed["phase"] = "duplicate"
+            failed["round_trips"] = trips_before + run.round_trips
+            failed["placements_dispatched"] = run.ops_dispatched
+            failed["placements_answered"] = len(run.results)
+            failed["placements_not_sent"] = len(dup_ops) - run.ops_dispatched
+            failed["notes"] = [
+                ARRANGE_RETRY_NOTE,
+                (
+                    "The duplication stopped part way through. A write that may already "
+                    "have landed is never resent here, because a second copy would land "
+                    "beside the first rather than replace it. Read the destination "
+                    "tracks with lom_get on song.tracks[N].arrangement_clips before "
+                    "sending anything again."
+                ),
+                SESSION_ARRANGEMENT_BOUNDARY_RULE,
+            ]
+            return failed
+
+        after_snapshot, trips_after, after_error = _arrangement_snapshot(
+            destinations, with_end=True
+        )
+
+        # Verification is a difference, never a scan: the clips that were not there
+        # before and are there now. Matching a requested beat against every clip on the
+        # track lets one that was already sitting on that beat stand in for a placement
+        # that never landed, which is the fallback-to-zero case this list form exists to
+        # catch.
+        added: dict[int, list[dict[str, Any]]] = {}
+        not_measured: dict[int, str] = {}
+        for dest in destinations:
+            entry_before = before_snapshot.get(dest, {})
+            entry_after = after_snapshot.get(dest, {})
+            if after_error is not None:
+                not_measured[dest] = (
+                    "the arrangement could not be read back after the duplication "
+                    f"({after_error}), so no placement on this track was observed."
+                )
+                continue
+            new_clips, reason = _added_arrangement_clips(entry_before, entry_after)
+            if reason is not None:
+                not_measured[dest] = reason
+                continue
+            added[dest] = new_clips
+
+        rows: list[dict[str, Any]] = []
+        for index, (src_t, src_s, dest, beat) in enumerate(requests):
+            call_row = run.results[index] if index < len(run.results) else {}
+            row: dict[str, Any] = {
+                "track": src_t,
+                "slot": src_s,
+                "destination_track": dest,
+                "requested_beat": beat,
+                "actual_beat": None,
+                "end_beat": None,
+                "ok": False,
+            }
+            if not _row_ok(call_row):
+                row["code"] = str(call_row.get("code") or "call_failed")
+                said = call_row.get("message") or call_row.get("error")
+                row["error"] = (
+                    str(said)
+                    if said
+                    else f"the duplication call for track {src_t} slot {src_s} did not succeed."
+                )
+                rows.append(row)
+                continue
+            if dest in not_measured:
+                row["code"] = "not_measured"
+                row["error"] = (
+                    f"The call succeeded, but track {dest} could not be compared before "
+                    f"and after: {not_measured[dest]} Whether this clip landed is "
+                    "unknown, so read the track before sending the placement again."
+                )
+                rows.append(row)
+                continue
+
+            wanted = _beat_key(beat)
+            pool_here = added.get(dest, [])
+            match = next(
+                (clip for clip in pool_here if not clip["used"] and clip["beat"] == wanted),
+                None,
+            )
+            if match is not None:
+                match["used"] = True
+                row["actual_beat"] = match["start_time"]
+                row["end_beat"] = match["end_time"]
+                row["ok"] = True
+                rows.append(row)
+                continue
+            zero = next(
+                (
+                    clip
+                    for clip in pool_here
+                    if not clip["used"] and clip["beat"] == _beat_key(0.0)
+                ),
+                None,
+            )
+            if zero is not None:
+                zero["used"] = True
+                row["actual_beat"] = zero["start_time"]
+                row["end_beat"] = zero["end_time"]
+                row["code"] = "stack_fallback_to_zero"
+                row["error"] = (
+                    f"No clip was added at beat {beat} on track {dest}, but a clip was "
+                    "added at beat 0.0. That is the documented duplication trap: a "
+                    "destination time Live did not accept falls back to 0.0 while the "
+                    "call still reports success. Delete the clip at 0.0 and duplicate "
+                    "again. Do not resend this call, which would add a further copy."
+                )
+            else:
+                row["code"] = "not_observed"
+                row["error"] = (
+                    f"The call reported success, but no clip was added at beat {beat} on "
+                    f"track {dest} and none was added at 0.0 either. Read the track "
+                    "before sending the placement again."
+                )
+            rows.append(row)
+
+        destination_rows: list[dict[str, Any]] = []
+        for dest in destinations:
+            entry: dict[str, Any] = {
+                "track": dest,
+                "arrangement_clips_before": before_snapshot.get(dest, {}).get("count"),
+                "arrangement_clips_after": after_snapshot.get(dest, {}).get("count"),
+                "clips_added": None if dest in not_measured else len(added.get(dest, [])),
+                "placements_requested": sum(1 for _t, _s, d, _b in requests if d == dest),
+            }
+            if dest in not_measured:
+                entry["not_measured"] = not_measured[dest]
+            destination_rows.append(entry)
+
+        result: dict[str, Any] = {
+            "ok": all(row["ok"] for row in rows),
+            "verified": after_error is None and not not_measured,
+            "placements": rows,
+            "total": len(rows),
+            "succeeded": sum(1 for row in rows if row["ok"]),
+            "failed": sum(1 for row in rows if not row["ok"]),
+            "destinations": destination_rows,
+            "round_trips": trips_before + run.round_trips + trips_after,
+            "round_trips_by_phase": {
+                "snapshot_before": trips_before,
+                "duplicate": run.round_trips,
+                "snapshot_after": trips_after,
+            },
+            "notes": [
+                ARRANGE_RETRY_NOTE,
+                (
+                    "Verification is a difference, not a search: each destination track "
+                    "was read before and after, and a placement is matched only against "
+                    "a clip that was not there before. A clip already sitting on the "
+                    "requested beat therefore does not count as the placement."
+                ),
+                SESSION_ARRANGEMENT_BOUNDARY_RULE,
+                SESSION_ONLY_NOTE,
+            ],
+        }
+        if after_error is not None:
+            result["code"] = "verification_unavailable"
+        elif not_measured:
+            result["code"] = "verification_incomplete"
+        return result
+
+    if track is None or slot is None or at_beat is None:
+        return {
+            "ok": False,
+            "code": "missing_arguments",
+            "error": (
+                "arrange requires either 'placements' (a list of placement dictionaries) "
+                "or all three of 'track', 'slot', and 'at_beat'."
+            ),
+        }
+
     destination = track if to_track is None else to_track
-    before, err = _count("arrangement_clip.name", "clip", {"track": destination})
-    if err is not None:
-        return err
+    before_snapshot, trips_before, before_error = _arrangement_snapshot(
+        [destination], with_end=False
+    )
+    if before_error is not None:
+        failed = _live_error(before_error)
+        failed["phase"] = "snapshot_before"
+        failed["round_trips"] = trips_before
+        failed["notes"] = [
+            (
+                "Nothing was duplicated. The destination track could not be read, and "
+                "without that reading a placement cannot be told apart from a clip that "
+                "was already there."
+            )
+        ]
+        return failed
 
     placed = _run(
         "arrangement_clip.duplicate_from_session",
@@ -3928,15 +5322,36 @@ def arrange(
     if not placed.get("ok"):
         return placed
 
-    after, err = _count("arrangement_clip.name", "clip", {"track": destination})
-    if err is not None:
-        return err
-    grew = _grew(before, after)
-    ok, evidence = _verdict(bool(placed.get("ok")), grew)
+    after_snapshot, trips_after, after_error = _arrangement_snapshot(
+        [destination], with_end=True
+    )
+    entry_before = before_snapshot.get(destination, {})
+    entry_after = after_snapshot.get(destination, {})
+
+    # The same standard the list mode holds: the placement is the clip that was not on
+    # the track before and is on it now. The collection is ordered by start time, so its
+    # last entry is the latest clip on the track and not necessarily this one.
+    added_here: list[dict[str, Any]] = []
+    unmeasured: str | None = None
+    if after_error is not None:
+        unmeasured = (
+            "the arrangement could not be read back after the duplication "
+            f"({after_error}), so the placement was not observed."
+        )
+    else:
+        added_here, unmeasured = _added_arrangement_clips(entry_before, entry_after)
+
+    wanted = _beat_key(at_beat)
+    match = next((clip for clip in added_here if clip["beat"] == wanted), None)
+    if match is None:
+        match = next((clip for clip in added_here if clip["beat"] == _beat_key(0.0)), None)
+        landed_at_zero = match is not None
+    else:
+        landed_at_zero = False
 
     detail: dict[str, Any] | None = None
-    if grew and after.get("exact") and after["count"]:
-        index = after["count"] - 1
+    if match is not None:
+        index = int(match["index"])
         fields, ferr = _read_fields(
             [
                 ("arrangement_clip.name", {"track": destination, "clip": index}),
@@ -3948,25 +5363,60 @@ def arrange(
         if ferr is None:
             detail = fields
 
-    return {
-        "ok": ok,
+    result: dict[str, Any] = {
+        "ok": match is not None and not landed_at_zero,
         "source": {"track": track, "slot": slot, "path": _clip_path(track, slot)},
         "destination_track": destination,
         "at_beat": at_beat,
-        "arrangement_clip_count_before": before.get("count"),
-        "arrangement_clip_count_after": after.get("count"),
-        "last_clip": detail,
+        "actual_beat": None if match is None else match["start_time"],
+        "end_beat": None if match is None else match["end_time"],
+        "arrangement_clip_count_before": entry_before.get("count"),
+        "arrangement_clip_count_after": entry_after.get("count"),
+        "placed_clip": detail,
         "call": placed,
-        **evidence,
+        "verified": unmeasured is None and match is not None and not landed_at_zero,
+        "round_trips": trips_before + trips_after,
+        "round_trips_by_phase": {
+            "snapshot_before": trips_before,
+            "snapshot_after": trips_after,
+        },
         "notes": [
+            ARRANGE_RETRY_NOTE,
+            SESSION_ARRANGEMENT_BOUNDARY_RULE,
             SESSION_ONLY_NOTE,
             (
-                "last_clip is the last entry in the destination track's arrangement list, "
-                "which is the new one only if nothing else was added in between."
+                "placed_clip is the clip that was not on the destination track before this "
+                "call and is on it now, matched by beat. The arrangement collection is "
+                "ordered by start time, so its last entry is the latest clip on the track "
+                "and is not this one unless this placement is the latest."
             ),
             COLLECTION_NOTE,
         ],
     }
+    if unmeasured is not None:
+        result["code"] = "not_measured"
+        result["error"] = (
+            f"The call succeeded, but track {destination} could not be compared before "
+            f"and after: {unmeasured} Whether this clip landed is unknown, so read the "
+            "track before sending the placement again."
+        )
+    elif landed_at_zero:
+        result["code"] = "stack_fallback_to_zero"
+        result["error"] = (
+            f"No clip was added at beat {at_beat} on track {destination}, but a clip was "
+            "added at beat 0.0. That is the documented duplication trap: a destination "
+            "time Live did not accept falls back to 0.0 while the call still reports "
+            "success. Delete the clip at 0.0 and duplicate again. Do not resend this "
+            "call, which would add a further copy."
+        )
+    elif match is None:
+        result["code"] = "not_observed"
+        result["error"] = (
+            f"The call reported success, but no clip was added at beat {at_beat} on "
+            f"track {destination} and none was added at 0.0 either. Read the track "
+            "before sending the placement again."
+        )
+    return result
 
 
 @mcp.tool(annotations=ADDS)
@@ -4096,6 +5546,11 @@ def set_arrangement_time(
         Dictionary with the write confirmation and the read-back song time.
 
     Note:
+        Writing ``song.current_song_time`` is bounded by ``song.song_length``;
+        attempting to set a position past ``song_length`` fails with Live error
+        ``"Cannot set the Songtime behind the Songlength"``. Transport playback
+        in Session view advances freely past ``song_length``.
+
         Do not sample a moving transport through lom_batch. A read that follows a
         jump inside the same batch still reports the position from before the move,
         and it reports it without an error (see lom_batch). One call per position.
@@ -4146,9 +5601,9 @@ def play(
 
         A Session clip that has played leaves its track in Session view, and the
         track then ignores the Arrangement until Live's Back to Arrangement button
-        is pressed. ``song.back_to_arranger`` reports that state and cannot clear
-        it: measured 2026-09-07 against Live 12.4.5, writing it false reads back
-        ``not_observed`` and the value stays true.
+        is pressed. ``song.back_to_arranger`` reports that state and clears it
+        when written false (applied asynchronously, taking up to 2 read-back
+        attempts for ``read_back: "applied"``).
     """
     moved: dict[str, Any] | None = None
     if from_beat is not None:
@@ -4201,7 +5656,7 @@ def stop(
     Note:
         With ``quantized=True`` the clips stop on the next grid point rather than at
         once, so an immediate read can still show a clip playing without anything
-        having gone wrong. Use play to resume playback, or set_arrangement_time(time=0)
+        having gone wrong. Use play to resume playback, or set_arrangement_time(at_beat=0)
         to rewind the Arrangement timeline to the beginning.
 
         Stopping does not restore a parameter a clip envelope was driving. The envelope
@@ -4416,6 +5871,7 @@ def als_read(
         located = _als_locate(root, locate)
         return {
             "ok": True,
+            "source": _file_source(target),
             "file": target.name,
             "locate": locate,
             "locations": located,
@@ -4445,6 +5901,7 @@ def als_read(
             }
         return {
             "ok": True,
+            "source": _file_source(target),
             "file": project.file,
             "track": {
                 "name": found.name,
@@ -4489,6 +5946,7 @@ def als_read(
     automation = als_reader.automation_of(project)
     payload: dict[str, Any] = {
         "ok": True,
+        "source": _file_source(target),
         "file": project.file,
         "path": project.path,
         "live_version": project.live_version,
@@ -4849,46 +6307,33 @@ def als_write(
 ) -> dict[str, Any]:
     """Edit a saved .als project file on disk. Requires confirm=True.
 
-    Supported operations: 'sidechain', 'configure', 'attribute', 'restore'.
-    The target file must not be the one Live currently holds: Live writes its own
-    memory over the file when it next saves, without a conflict warning, and the
-    edit is gone. Live running on a different set is fine.
+    The target file must not be the one Live currently holds: Live writes its own memory
+    over the file when it next saves, without a conflict warning, and the edit is gone. Live
+    running on a different set is fine.
 
     Returns:
         Dictionary reporting write status, changes made, and verification report.
 
     Note:
-        ``sidechain`` is here for the set Live is not holding, someone else's project
-        wired on disk. Measured across the 174-project corpus (docs/limits.md section 9):
-        74 of 82 in the house/trance BPM window use sidechain compression, median 6
-        wirings each. For
-        the set on screen use ``lom_set`` and keep the read-back.
+        ``sidechain`` and ``configure`` reach what the LOM cannot; for the set open in Live
+        use ``lom_set``, ``set_parameter`` or ``set_mix`` instead. Measured across the
+        174-project corpus (docs/limits.md section 9), 74 of 82 projects in the house/trance
+        BPM window use sidechain compression, median 6 wirings each.
 
-        ``configure`` fills a plugin's parameter strip, which no LOM call can do whatever
-        the strip currently holds. Two parameters written into an instance whose strip
-        held nothing came back on reopen with their real values, writable through
-        ``lom_set`` with ``read_back: applied``. Live allocates 128 slots per instance and
-        leaves them all in the file, so nothing is inserted. Three fields of an existing
-        element are filled.
+        ``configure`` fills a plug-in's parameter strip whatever the strip currently holds.
+        Two parameters written into an instance whose strip held nothing came back on reopen
+        with their real values, writable through ``lom_set`` with ``read_back: applied``.
+        Live allocates 128 slots per instance and leaves them all in the file, so nothing is
+        inserted: three fields of an existing element are filled.
 
-        ``attribute`` sets one attribute anywhere in the file, addressed by an
-        ElementTree expression. An expression matching more than one element is refused
-        unless ``index`` picks one, and ``index`` counts the matches of that expression
-        rather than tracks in the project: ``.//MidiTrack/Name/EffectiveName`` does not
-        see the audio tracks at all.
-
-        Where the expression comes from: ``als_read`` with ``locate='tempo'`` or
-        ``locate='track_names'`` answers with the expression, the attribute and the
-        index for those fields, which are the ones usually edited on a file. For
-        anything else the expression is built by hand, and ``confirm=False`` resolves
-        it against the file first and reports what it selects, so a wrong one is
-        caught before it writes rather than after.
-
-        Choosing between the four: ``sidechain`` and ``configure`` for the two things
-        the LOM cannot do at all, ``attribute`` for anything else in the file, and
-        ``restore`` to undo any of them. For
-        the set open in Live, none of these: use lom_set, set_parameter or set_mix
-        and keep the read-back.
+        ``attribute`` sets one attribute anywhere in the file, addressed by an ElementTree
+        expression. An expression matching more than one element is refused unless ``index``
+        picks one, and ``index`` counts the matches of that expression rather than tracks in
+        the project: ``.//MidiTrack/Name/EffectiveName`` does not see the audio tracks at
+        all. ``als_read`` with ``locate='tempo'`` or ``locate='track_names'`` answers with
+        the expression, attribute and index for those fields; otherwise the expression is
+        built by hand, and ``confirm=False`` resolves it against the file and reports what
+        it selects.
     """
     target = Path(path).expanduser()
     if operation not in ("sidechain", "attribute", "restore", "configure"):
@@ -4909,6 +6354,7 @@ def als_write(
         if not target.exists():
             preflight["error"] = f"no such file: {target}"
             return preflight
+        preflight["source"] = _file_source(target)
         # An expression built by hand is the argument most likely to be wrong, so
         # the dry run resolves it against the file rather than only announcing
         # that a confirmation is needed.
@@ -4932,11 +6378,14 @@ def als_write(
     if not target.exists():
         return {"ok": False, "error": f"no such file: {target}"}
 
+    source_before = _file_source(target)
+
     open_here, why = _set_open_in_live(target)
     if open_here is True:
         return {
             "ok": False,
             "blocked": True,
+            "source": source_before,
             "error": (
                 f"{why}. A write now would sit on disk until Live's next save and then be "
                 "lost. Live does not have to be quit: close the set (File > New, or open "
@@ -4956,6 +6405,8 @@ def als_write(
                 "operation": "restore",
                 "restored_to": str(restored),
                 "from_backup": backup,
+                "source": source_before,
+                "source_after": _file_source(restored),
                 "note": "The backup was checked for being a parseable Live set before restoring.",
             }
         if operation == "sidechain":
@@ -5018,21 +6469,29 @@ def als_write(
             "refused": True,
             "written": False,
             "backup_made": False,
+            "source": source_before,
             "error": str(exc),
             "note": (
                 "Nothing was written and no backup was made. Close the set in Live and try again."
             ),
         }
     except als_writer.AlsWriteError as exc:
-        return {"ok": False, "written": False, "error": str(exc)}
+        return {"ok": False, "written": False, "source": source_before, "error": str(exc)}
     except OSError as exc:
-        return {"ok": False, "written": False, "error": f"file error: {exc}"}
+        return {
+            "ok": False,
+            "written": False,
+            "source": source_before,
+            "error": f"file error: {exc}",
+        }
 
     return {
         "ok": result.verified,
         "operation": operation,
         "file": str(result.file),
         "backup": str(result.backup),
+        "source": source_before,
+        "source_after": _file_source(result.file),
         "verified": result.verified,
         "verify_failures": list(result.verify_failures),
         "changes": [
@@ -5051,6 +6510,12 @@ def als_write(
         "notes": [
             "verified indicates the file was re-read from disk and edits verified.",
             "Undo with operation='restore' and the backup path.",
+            (
+                "source is the file as it was found, source_after as it was left. Two calls "
+                "whose source blocks do not line up mean something else replaced the file in "
+                "between. size_bytes there agrees with size_before and size_after, which the "
+                "writer reports."
+            ),
         ],
     }
 
@@ -5146,55 +6611,48 @@ def lom_set(
 ) -> dict[str, Any]:
     """Write a property value by LOM path and return verification read-back.
 
-    The generic write, for the property no dedicated tool covers. Prefer
-    set_parameter for a device knob, set_mix for a mixer control and set_tempo for
-    the tempo: each validates against the catalog before writing, which this does
-    not. Use lom_call for a method, which is not reachable as a property, and
-    lom_batch to send several writes in one round trip.
+    The generic write, and the unvalidated one: set_parameter, set_mix and set_tempo check
+    the catalog first. lom_call takes a method, lom_batch several writes in one round trip.
 
     Returns:
         Dictionary reporting requested, before, after, clamped, and changed status.
         For a device parameter it also carries ``display`` and ``is_quantized``.
 
     Note:
-        Live does not accept an out-of-range value silently, however often that is given
-        as the reason to read back. It refuses out loud and stores nothing, so
-        ``...volume.value = 1.4`` answers
-        ``live_error "Invalid value. Check the parameters range with min/max"`` and leaves
-        0.85 standing. A tempo of 5000 and a panning of 5 are refused the same way.
+        An out-of-range value is refused out loud and nothing is stored: ``...volume.value =
+        1.4`` answers ``live_error "Invalid value. Check the parameters range with
+        min/max"`` and leaves 0.85 standing, as do tempo 5000 and panning 5. What the
+        read-back catches is quantised snap: ``<Compressor>.parameters[10].value = 0.4``
+        (Model: Peak / RMS / Expand) stored 0 and reported ``clamped: true, read_back:
+        "clamped", is_quantized: true, display: "Peak"``, so a value between two steps
+        silently becomes another. ``is_quantized`` is what separates a snap to a step
+        from a clamp to a range.
+        A write can apply asynchronously, leaving ``read_back`` at ``not_observed``, which
+        is neither ``clamped`` nor a failure; a method call has no read-back at all; and an
+        unknown property name is ignored and reported as success, so check ``changed``
+        rather than ``ok``. A collection like ``song.tracks`` cannot be assigned: set a
+        property on an element instead.
 
-        What the read-back really catches is quantised snap.
-        ``<Compressor>.parameters[10].value = 0.4`` (Model: Peak / RMS / Expand)
-        stored 0 and reported ``clamped: true, read_back: "clamped", display:
-        "Peak", is_quantized: true``. A caller who asks for a value between two steps
-        gets a different one and is told nowhere else.
-
-        Three more, measured separately. A write can apply asynchronously, so the
-        first read is stale and comes back ``read_back: "not_observed"``, which is
-        not ``clamped`` and not a failure. A method call has no read-back at all.
-        And Live ignores an unknown property name silently, reporting success for a
-        write that did nothing, so check ``changed`` rather than ``ok``.
-
-        A collection (``song.tracks``, ``device.parameters``) cannot be assigned.
-        Address an element and set one of its properties.
-
-        A Live object cannot travel as a plain value. Where a property really holds
-        one (``song.view.selected_track``, ``song.view.selected_scene``,
-        ``song.view.detail_clip``, ``browser.hotswap_target``, ``clip.groove``, and
-        on a device ``input_routing_type`` and ``input_routing_channel``) pass
-        ``value={"__path__": "song.tracks[2]"}``, resolved through the same guards as
-        a lom_call argument (protocol section 5.4). Handed a plain JSON value the
-        first five answer ``not_settable``.
-        The two routing properties, a compressor's sidechain source and its tap
-        point, take their reference out of ``<device>.available_input_routing_types``
-        and ``...available_input_routing_channels``, never a name string, because
-        RoutingType carries ``category`` and ``display_name`` read-only and an
-        ``attached_object`` pointing at the Track.
+        A Live object cannot travel as a plain value. Where a property holds one
+        (``song.view.selected_track``, ``song.view.selected_scene``,
+        ``song.view.detail_clip``, ``browser.hotswap_target``, ``clip.groove``, and on a
+        device ``input_routing_type`` and ``input_routing_channel``) pass
+        ``value={"__path__": "song.tracks[2]"}`` (protocol section 5.4); handed plain JSON
+        the first five answer ``not_settable``. The two routing properties take their
+        reference out of ``<device>.available_input_routing_types`` and
+        ``...available_input_routing_channels``, never a name string.
     """
     try:
         paths.validate(path)
     except paths.PathSyntaxError as exc:
         return {"ok": False, "error": str(exc)}
+    if re.search(r"\barrangement_clips\[\d+\]\.end_marker\b", path):
+        return {
+            "ok": False,
+            "error": ARRANGEMENT_END_MARKER_REFUSAL,
+            "code": "arrangement_clip_not_writable",
+            "rule": SESSION_ARRANGEMENT_BOUNDARY_RULE,
+        }
     hint = _catalog_hint(path, writing=True)
     try:
         written = _client_instance().set(path, value)
@@ -5290,8 +6748,9 @@ def lom_batch(
         list[BatchOpArg],
         Field(
             description=(
-                "The operations to run, in order. Each one declares its own op, "
-                "path and payload; the item schema carries the field meanings."
+                f"The operations to run, in order (at most {MAX_BATCH_OPS} operations). "
+                "Each one declares its own op, path and payload; the item schema carries "
+                "the field meanings."
             )
         ),
     ],
@@ -5308,34 +6767,66 @@ def lom_batch(
 ) -> dict[str, Any]:
     """Execute multiple raw LOM operations (get, set, call) in a single round trip.
 
-    One trip instead of many, which is what makes a wide read affordable at roughly
-    450 ms per round trip.
-
     Returns:
         Dictionary containing ordered results for each operation.
 
     Note:
-        A batch runs inside one handler call, so nothing Live recomputes between
-        operations is visible to a later operation in the same batch. A read that follows
-        a transport jump in the same batch still reports the position from before the
-        move. Four jumps interleaved with four reads returned four identical pre-jump
-        values and no error at all. That is the failure shape to expect here. It does not
-        raise. It returns a clean set of numbers that look like a measurement of a
-        parameter which never changes, and the conclusion drawn from them is wrong. Sample
-        a moving transport with one call per position, never inside a batch.
+        A batch runs inside one handler call, synchronously on Live's main thread, and is
+        capped at 1000 operations (max_ops=1000): a larger one is rejected upfront and never
+        truncated. Measured 2026-09-16 against Live 12.4.5 (macOS 26.6.2, four-track set):
+        one request costs about 400 ms whatever its size, with 200 ops at 500 ms, 1600 mixed
+        reads at 1506 ms and 3200 song.tempo gets at 1718 ms, error_count 0 throughout; past
+        the 200-op point the marginal cost is about 0.72 ms per mixed real read and 0.44 ms
+        per song.tempo get. Write and call ops were not measured and cost more.
 
-        ``atomic`` is a stop switch and not a transaction: nothing is undone. After a
-        partial failure, read the state back rather than assuming either all or none
-        of the batch landed.
+        Nothing Live recomputes between operations is visible to a later operation in the
+        same batch: a read after a transport jump still reports the position from before the
+        move, and four jumps interleaved with four reads returned four identical pre-jump
+        values and no error. That is the failure shape to expect here. It does not raise. It
+        returns a clean set of numbers that look like a measurement of a parameter which
+        never changes, and the conclusion drawn from them is wrong. Sample a moving
+        transport with one call per position, never inside a batch.
 
-        Prefer a dedicated tool for anything it covers. get_session, get_track and
-        get_devices already batch their own reads, and set_mix writes a whole mixer
-        in one trip, each with verification this does not perform.
+        An end_marker write on an Arrangement clip is refused here rather than sent.
+        Observed once, 2026-09-10 against Live 12.4.5: the write was accepted without an
+        error and end_time did not move; what it read back was never recorded, and
+        docs/limits.md section 5 carries the probe that would settle it. ``atomic`` stops at
+        the first error but undoes nothing, so read the state back after a partial failure.
+        Prefer a dedicated tool where one exists: get_session, get_track, get_devices and
+        set_mix batch their own reads and verify, which this does not.
     """
     if not isinstance(ops, list) or not ops:
         return {"ok": False, "error": "ops must be a non-empty list of operations"}
+    if len(ops) > MAX_BATCH_OPS:
+        return {
+            "ok": False,
+            "code": "batch_too_large",
+            "error": (
+                f"lom_batch takes at most {MAX_BATCH_OPS} operations per call, and this "
+                f"call passed {len(ops)}. Split it across several calls. Nothing was "
+                "sent to Live and nothing was truncated."
+            ),
+            "max_ops": MAX_BATCH_OPS,
+            "count": len(ops),
+        }
+    # Normalise once, guard what was normalised, and send that same list. FastMCP hands
+    # this tool validated BatchOp models, and isinstance(BatchOp(...), Mapping) is False,
+    # so a guard reading the argument directly inspects nothing a real client ever sends.
+    normalised = toolargs.batch_ops(ops)
+    for idx, op in enumerate(normalised):
+        if isinstance(op, Mapping) and op.get("op") == "set":
+            target_path = str(op.get("path") or "")
+            if re.search(r"\barrangement_clips\[\d+\]\.end_marker\b", target_path):
+                return {
+                    "ok": False,
+                    "code": "arrangement_clip_not_writable",
+                    "error": (
+                        f"Op {idx} ({target_path}): " + ARRANGEMENT_END_MARKER_REFUSAL
+                    ),
+                    "rule": SESSION_ARRANGEMENT_BOUNDARY_RULE,
+                }
     try:
-        result = _client_instance().batch(toolargs.batch_ops(ops), atomic=atomic)
+        result = _client_instance().batch(normalised, atomic=atomic)
     except LiveError as exc:
         return _live_error(exc)
     for row in result.get("results") or []:
@@ -5505,30 +6996,28 @@ def find_path(
         and the next call to make when rows are not the answer.
 
     Note:
-        Four routes, and which one comes back matters more than the rows do.
+        There are four routes, and which one comes back matters more than the rows do.
+        ``catalog_row`` means the rows carry the answer: each hit gives the path template to
+        fill in, the access verbs, the full doc, and ``scopes``, the other places the same
+        property exists, since track, return, master and chain mirror one another and a clip
+        row usually has an arrangement_clip twin. ``writes`` appears when the best row is a
+        read-only parameter object and names the sibling that actually takes a value.
 
-        ``catalog_row`` means the rows carry the answer. Each hit gives the path
-        template to fill in, the access verbs, the full doc, and ``scopes``: the other
-        places the same property exists, since track, return, master and chain mirror one
-        another and a clip row usually has an arrangement_clip twin. ``writes`` appears
-        when the best row is a read-only parameter object and names the sibling that
-        actually takes a value.
+        ``device_parameter`` means the answer is a knob inside a device, which this catalog
+        cannot enumerate because what a device exposes depends on the device: filter cutoff,
+        resonance, attack, threshold and everything else behind a front panel arrive this
+        way, with the procedure to reach them.
 
-        ``device_parameter`` means the answer is a knob inside a device, which this
-        catalog cannot enumerate: what a device exposes depends on the device. Filter
-        cutoff, resonance, attack, threshold and every other parameter behind a device
-        front panel arrive this way, with the procedure to reach them.
+        ``blocked`` means Live's API cannot do it at all, with what to do in Live instead.
+        ``intent_tool`` is reported in the ``tool`` field alongside the rows rather than in
+        place of them, because a tool that verifies its own work is the better route to the
+        same end but the path is still worth seeing. ``unresolved`` means nothing matched,
+        and ``unmatched`` lists the words that found nothing, which is usually where the
+        query went wrong.
 
-        ``blocked`` means Live's API cannot do it at all, with what to do in Live
-        instead. ``intent_tool`` is reported in the ``tool`` field alongside the rows
-        rather than in place of them, because a tool that verifies its own work is the
-        better route to the same end but the path is still worth seeing.
-        ``unresolved`` means nothing matched. ``unmatched`` lists the words that found
-        nothing, which is usually where the query went wrong.
-
-        This exists so that finding a path costs about 1.5k tokens instead of reading the
-        whole catalog. It does not touch Live: it reads the catalog only, so nothing here
-        proves anything about the set that is open.
+        A lookup costs about 1.5k tokens instead of the whole catalog. It does not touch
+        Live: it reads the catalog only, so nothing here proves anything about the set that
+        is open.
     """
     registry, err = _registry_or_error()
     if err is not None:
@@ -5575,12 +7064,1169 @@ def find_path(
     if found.unmatched:
         out["unmatched"] = found.unmatched
         out["unmatched_note"] = (
-            "These words matched nothing in the catalog. If one of them is the point of "
-            "the question, the answer is probably a device parameter rather than a row."
+            "These words matched nothing in the catalog, so the rows above answer the "
+            "rest of the question and not this part of it. If one of them is the point "
+            "of the question, the rows are a near miss however verified they look: the "
+            "answer is then a device parameter, a tool of its own, or nothing this "
+            "server has. Measured example: 'drum transcription' answers with six "
+            "verified rows about drum rack pads and recording quantisation, on the "
+            "strength of 'drum' alone, while 'transcription' matches nothing."
         )
-    if found.notes:
-        out["notes"] = found.notes
+    if found.matched_on:
+        out["matched_on"] = found.matched_on
+    caller_facing = [n for n in found.notes if not _REPOSITORY_CITATION.search(n)]
+    established = [n for n in found.notes if _REPOSITORY_CITATION.search(n)]
+    if caller_facing:
+        out["notes"] = caller_facing
+    if established:
+        out["established_in"] = established
+        out["established_in_note"] = (
+            "Source files of this server, named so a claim can be traced by whoever "
+            "maintains it. They are not files you have and not a step to take. What you "
+            "can read is the catalog row named beside them, through "
+            "live://catalog/{selector}."
+        )
     return out
+
+
+# Root and depth, measured 2026-09-17 against Live 12.4.6 read-only through
+# browser_walk, on the library installed on the machine this was written on. The
+# 'sounds' root walks to completion at 4961 of 5000 nodes. 'drums' completes at depth 3
+# with 704 and exhausts the node budget at the script's default depth, which is why this
+# tool sends a depth. 'instruments' can never finish for presets, because they sit at
+# depth 4, so a negative from that root is not evidence of absence. A preset uri carries
+# its category and a stable FileId (query:Sounds#Bass:FileId_16547), which is the
+# identity the ranking de-duplicates on. What these readings cost and why the tool
+# exists at all is in its own Note.
+@mcp.tool(annotations=READS)
+def find_sound(
+    intent: Annotated[
+        str,
+        Field(
+            description=(
+                "The sound you want, in your own words and in any order: 'warm bass', "
+                "'dark cinematic strings', 'punchy kick'. The phrase is split into "
+                "words and each one is searched for separately, which is what the "
+                "browser's own search does not do."
+            )
+        ),
+    ],
+    root: Annotated[
+        Literal[
+            "",
+            "audio_effects",
+            "clips",
+            "current_project",
+            "drums",
+            "instruments",
+            "max_for_live",
+            "midi_effects",
+            "packs",
+            "plugins",
+            "samples",
+            "sounds",
+            "user_library",
+        ],
+        Field(
+            description=(
+                "Browser root to search. Empty picks one from your words: a drum word "
+                "searches 'drums', everything else searches 'sounds'. The reply says "
+                "which was chosen and why."
+            )
+        ),
+    ] = "",
+    kind: Annotated[
+        Literal["preset", "device", "sample", "folder", "any"],
+        Field(
+            description=(
+                "What to keep. 'preset' is the default and is what a sound is. "
+                "'device' with root='instruments' answers which instruments exist at "
+                "all, rather than which preset to load."
+            )
+        ),
+    ] = "preset",
+    limit: Annotated[
+        int,
+        Field(ge=1, le=30, description="How many candidates to return."),
+    ] = instruments.DEFAULT_LIMIT,
+) -> dict[str, Any]:
+    """Find an instrument or preset in Live's library by what you want it to sound like.
+
+    Returns:
+        Dictionary with the root that was searched and why, the words that were searched
+        for, the ranked candidates each carrying ``item_path``, ``uri`` and ``category``,
+        how far the walks got, and the next call.
+
+    Note:
+        Nothing here has been listened to: the ranking reads the preset's name and the
+        browser category in its uri, so load one and listen before believing it fits.
+        ``status`` is coverage, not fit: an empty ``candidates`` under ``complete`` does
+        mean no name there answers, while ``incomplete`` makes the list a lower bound.
+        Measured 2026-09-17 against Live 12.4.6, ``sounds`` completes, ``drums`` completes
+        at the depth this tool sends, and ``instruments`` cannot be searched to the end for
+        presets, so a negative from that root is never evidence of absence.
+
+        Each word costs one browser walk and blocks Live's main thread, so three are
+        searched and the rest named in ``words_not_searched``. ``considered`` is the sum
+        of items those walks examined, not the size of the root and not the size of the
+        library, so it exceeds either when two words search the same place. Both word
+        lists describe the walk, not the library: the ranking scores every intent word,
+        and shortened forms, against the names returned, so an unsearched word still
+        appears in ``matched``.
+        Measured 2026-09-17 against Live 12.4.6, "rhodes" and "moog" match no preset name in
+        ``sounds``, and "kick" none in ``drums`` though a folder "Kick" matches under
+        ``kind="any"``.
+
+        ``category`` is derived from the uri's fragment rather than read from Live and is
+        null where the uri carries none; ``also_in`` names the other categories it was
+        filed under. To load one, call ``load_device`` with the candidate's ``load_with``
+        block, the target ``track`` and ``confirm=True``, preferring ``item_path``: a
+        ``uri`` is walked for again and can run out of budget. Loading an instrument
+        silently replaces the one on that track, so read the chain with get_devices first.
+    """
+    client = _client_instance()
+    if not intent.strip():
+        return {
+            "ok": False,
+            "code": "empty_intent",
+            "error": "Say what you want it to sound like, e.g. 'warm bass' or 'glassy "
+                     "keys'. This tool searches the browser for words.",
+        }
+    plan = instruments.plan(intent, root=root, kind="" if kind == "any" else kind)
+    replies: list[dict[str, Any]] = []
+    productive = 0
+    for term in plan.terms:
+        if not plan.may_walk(len(replies), productive):
+            break
+        try:
+            reply = client.send("browser_walk", plan.walk_for(term))
+        except LiveError as exc:
+            failed = _live_error(exc)
+            failed["note"] = (
+                "Live did not answer the browser walk, so nothing about the library was "
+                "read here. Call get_session to check the handshake."
+            )
+            return failed
+        replies.append(reply)
+        if reply.get("matches"):
+            productive += 1
+    result = instruments.rank(plan, replies, limit=limit)
+    not_searched = list(plan.terms[len(replies) :])
+
+    out: dict[str, Any] = {
+        "ok": True,
+        "intent": intent,
+        "root": plan.root,
+        "root_reason": plan.root_reason,
+        "words_searched": result.terms_searched,
+        "walks": result.walks,
+        "status": result.status,
+        "kind": kind,
+        "depth": plan.depth,
+        "considered": result.considered,
+        "count": len(result.candidates),
+        "basis": "name_and_category",
+        "caveat": instruments.CAVEAT,
+        "candidates": [
+            {
+                "name": hit.name,
+                "category": hit.category,
+                "also_in": hit.also_in,
+                "kind": hit.kind,
+                "is_loadable": hit.is_loadable,
+                "item_path": hit.item_path,
+                "uri": hit.uri,
+                "matched": hit.matched,
+                "score": hit.score,
+                "load_with": {
+                    "item_path": hit.item_path,
+                    "root": plan.root,
+                    "track": -1,
+                    "confirm": False,
+                },
+            }
+            for hit in result.candidates
+        ],
+        "next_step": (
+            "Call load_device with the 'load_with' block of the candidate you chose, "
+            "after setting its track to the track you mean. The block carries track=-1, "
+            "which is whatever track happens to be selected in Live, and confirm=false, "
+            "so the first call reports the candidates and the selected track and "
+            "changes nothing. Read that track's chain with get_devices before sending "
+            "it again with confirm=true: loading an instrument replaces the instrument "
+            "already on that track and discards it silently."
+        ),
+    }
+    if not_searched:
+        out["words_not_searched"] = not_searched
+        out["words_not_searched_note"] = (
+            f"The walk budget ran out after {len(replies)} words, because each word "
+            "costs a browser walk that holds Live's main thread. Ask again with these "
+            "words on their own if they are the point of the question."
+        )
+    if result.terms_without_hits:
+        out["words_without_hits"] = result.terms_without_hits
+        out["words_without_hits_note"] = (
+            f"A walk was spent on each of these words and matched nothing: no item of "
+            f"kind {kind!r} that the walks reached in the {plan.root!r} root carries the "
+            "word in its name. That is narrower than 'this library has none of those'. "
+            "Another kind was not searched, nor was any part of the root the walks did "
+            "not reach. And a word named here can still appear under a candidate's "
+            "'matched' below, where the browser category answered it or where a "
+            "shortened form of the word is inside the name."
+        )
+    if result.candidates and not result.covered_all_terms:
+        out["partial_note"] = (
+            "No candidate answers every word you said, so each one below is here for "
+            "some of them. 'matched' says which."
+        )
+    if result.unreached_roots:
+        out["unreached_roots"] = result.unreached_roots
+    if result.truncated_by:
+        out["truncated_by"] = result.truncated_by
+        out["truncated_by_note"] = (
+            "Why each walk stopped short. 'limit' is this tool's own cap on how many "
+            "names per word it pulls back to rank, so a word carrying hundreds of names "
+            "was ranked from the best of them by the browser's own name rank and not "
+            "from all of them. 'node_budget' and 'time_budget' mean coverage was lost, "
+            "and 'status' says so."
+        )
+    if result.status != "complete":
+        out["status_note"] = (
+            "A walk stopped before it had covered what it was asked to search, so this "
+            "list is a lower bound and an empty one is not proof that nothing matches. "
+            "Narrow the search with root= or ask for fewer words."
+        )
+    elif not result.candidates:
+        out["status_note"] = (
+            f"The walks covered the {plan.root!r} root completely and no item there "
+            "answers these words. Try other words, or another root."
+        )
+    return out
+
+
+@mcp.tool(annotations=ADDS)
+def fire_scene(
+    scene: Annotated[
+        int, Field(ge=0, description="Scene index in song.scenes, counted from 0.")
+    ],
+    confirm: Annotated[
+        bool,
+        Field(
+            description=(
+                "True fires the scene. False reports the launch grid and where a "
+                "launch issued now would land, and fires nothing."
+            )
+        ),
+    ] = False,
+) -> dict[str, Any]:
+    """Fire a scene and report which beat the launch actually lands on.
+
+    Returns:
+        Dictionary with the launch grid, the song position read on either side of the
+        call, and the beat the launch falls on, or both candidate beats where the
+        window spanned a boundary.
+
+    Note:
+        ``fire`` answers that it succeeded and says nothing about when anything starts.
+        Live quantises a launch to the next grid boundary, so aiming a scene at a
+        particular bar from outside is a race: read the position, decide, fire, and Live
+        may already have passed the boundary the decision was made for. Measured against
+        Live 12.4.5: a read of ``song.current_song_time`` returned 55.6, the scene was
+        fired, and the launch landed at 96 rather than 64, one 8 bar boundary later than
+        intended. Nothing in the result said so.
+
+        This does not remove the race, which is Live's and is not reachable from here.
+        It makes the landing visible. The position is read immediately before and after
+        the call, and the answer names the beat a launch issued at either end of that
+        window falls on. Where the two differ, ``certain`` is false and both are given:
+        the launch is on one of them and which one is not knowable from outside.
+
+        With quantisation off the launch starts at once, so the window's own ends are
+        the answer and the beat is known no better than the window is wide.
+
+        This fires and does not wait. ``is_playing`` read straight afterwards is
+        normally false and that is correct, not a failure: nothing has started yet.
+    """
+    client = _client_instance()
+    try:
+        reading = client.send(
+            "lom_batch",
+            {
+                "ops": [
+                    {"op": "get", "path": "song.current_song_time"},
+                    {"op": "get", "path": "song.clip_trigger_quantization"},
+                    {"op": "get", "path": "song.signature_numerator"},
+                    {"op": "get", "path": "song.signature_denominator"},
+                    {"op": "get", "path": "song.is_playing"},
+                ]
+            },
+        )
+    except LiveError as exc:
+        return _live_error(exc)
+
+    results = reading.get("results") or []
+    values = [r.get("value") if isinstance(r, Mapping) else None for r in results]
+    numbers = [v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+               for v in values[:4]]
+    if len(values) < 5 or any(v is None for v in numbers):
+        return {
+            "ok": False,
+            "code": "song_unreadable",
+            "error": (
+                "the song position and launch grid could not be read, so nothing was "
+                "fired."
+            ),
+            "reading": reading,
+        }
+    before = float(numbers[0] or 0.0)
+    quantization = int(numbers[1] or 0)
+    numerator = int(numbers[2] or 4)
+    denominator = int(numbers[3] or 4)
+    was_playing = bool(values[4])
+
+    try:
+        grid = launch.grid_beats(quantization, numerator, denominator)
+    except ValueError as exc:
+        return {"ok": False, "code": "unknown_quantization", "error": str(exc)}
+
+    plan: dict[str, Any] = {
+        "scene": scene,
+        "quantization": quantization,
+        "quantization_name": launch.QUANTIZATION_NAMES.get(quantization, "unknown"),
+        "grid_beats": round(grid, 6),
+        "signature": f"{numerator}/{denominator}",
+        # Read before the fire, and named so: a scene fired from a stop starts the
+        # transport, so an unqualified name would describe the wrong side of the call.
+        "was_playing_before": was_playing,
+        "position_before": round(before, 6),
+    }
+    if not confirm:
+        would = launch.landing(before, before, quantization, numerator, denominator)
+        plan["fired"] = False
+        plan["would_land_on_beat"] = round(would.earliest, 6)
+        plan["next_step"] = (
+            f"Call again with confirm=True to fire scene {scene}. The beat above is "
+            f"where a launch issued at this instant would land, and the instant will "
+            f"have moved by then."
+        )
+        return {"ok": True, **plan}
+
+    # Read, fire and read again inside one batch. Two separate round trips put 1.2
+    # seconds between the readings at 120 BPM, which is 2.4 beats, so the window spans
+    # a bar boundary more often than not and the answer is almost always two beats
+    # wide. The batch holds Live's main thread for all three, which is the only way to
+    # make the window narrow enough for the answer to be one beat.
+    try:
+        fired = client.send(
+            "lom_batch",
+            {
+                "ops": [
+                    {"op": "get", "path": "song.current_song_time"},
+                    {
+                        "op": "call",
+                        "path": f"song.scenes[{scene}]",
+                        "method": "fire",
+                        "args": [],
+                    },
+                    {"op": "get", "path": "song.current_song_time"},
+                ],
+                "atomic": True,
+            },
+        )
+    except LiveError as exc:
+        return _live_error(exc)
+
+    steps = fired.get("results") or []
+    if len(steps) < 3 or any(
+        isinstance(r, Mapping) and r.get("status") == "error" for r in steps
+    ):
+        return {
+            "ok": False,
+            "code": "fire_failed",
+            "error": f"scene {scene} could not be fired.",
+            "results": steps,
+            **plan,
+        }
+    inner_before = steps[0].get("value") if isinstance(steps[0], Mapping) else None
+    inner_after = steps[2].get("value") if isinstance(steps[2], Mapping) else None
+    if isinstance(inner_before, (int, float)):
+        before = float(inner_before)
+    after = float(inner_after) if isinstance(inner_after, (int, float)) else before
+    plan["position_before"] = round(before, 6)
+
+    where = launch.landing(before, after, quantization, numerator, denominator)
+    answer: dict[str, Any] = {
+        "ok": True,
+        "fired": True,
+        **plan,
+        "position_after": round(after, 6),
+        "window_beats": where.window_beats,
+        "lands_on_beat": round(where.earliest, 6),
+        "certain": where.certain,
+        "call": steps[1] if len(steps) > 1 else None,
+    }
+    if not where.certain:
+        answer["lands_on_beat_or"] = round(where.latest, 6)
+        answer["uncertainty_note"] = (
+            f"The window between the two position reads spanned a grid boundary, so "
+            f"the launch is on beat {where.earliest:g} or {where.latest:g} and which "
+            f"one is not knowable from outside Live."
+        )
+    if not was_playing:
+        answer["transport_note"] = (
+            "The transport was stopped when this was fired. A scene fired from a stop "
+            "starts the transport, and the beat above is where it starts from rather "
+            "than a boundary it waited for."
+        )
+    answer["notes"] = [
+        (
+            "Fired and not waited for. is_playing read straight after a fire is "
+            "normally false and that is correct: the launch has not arrived yet."
+        )
+    ]
+    return answer
+
+
+#: How long a stretch the transcription is checked against its recording in.
+_CHECK_WINDOW_S = 20.0
+
+#: Notes starting within this of each other are one attack. A transcriber does not put
+#: the notes of a chord at one time: measured over four stems it reports 1.05 to 1.68
+#: notes per attack, so counting notes where the audio counts attacks reads a chord as
+#: several strikes.
+_ONE_ATTACK_S = 0.03
+
+
+def _attacks_between(
+    notes: Sequence[Any], from_beat: float, to_beat: float, tempo: float
+) -> int:
+    """Count attacks, not notes, in a stretch of a transcription.
+
+    The recording's onset rate counts events. A chord is one event and several notes, so
+    the two are comparable only once the notes that begin together are counted once.
+    """
+    tolerance = _ONE_ATTACK_S * tempo / 60.0
+    starts = sorted(
+        n.start_time for n in notes if from_beat <= n.start_time < to_beat
+    )
+    attacks = 0
+    previous: float | None = None
+    for start in starts:
+        if previous is None or start - previous > tolerance:
+            attacks += 1
+            previous = start
+    return attacks
+
+
+def _onset_disagreement(
+    heard: descriptor_module.Descriptor,
+    *,
+    written: int,
+    window: tuple[float, float],
+) -> dict[str, Any] | None:
+    """Report where a transcription's note density contradicts the recording's own.
+
+    A pitch transcriber has two ways to be confidently wrong about material it was not
+    built for, and they are opposites. On percussion it finds almost no fundamentals and
+    writes a handful of notes where the recording is striking constantly. On held
+    material it reports one sustained note whose level wavers as several, and writes a
+    stutter where the recording starts nothing at all.
+
+    Both are read off the same pair of numbers: how often the audio starts an event in
+    the stretch that was looked at, and how many notes were put there.
+
+    Args:
+        heard: Descriptor of the stretch of audio that was looked at.
+        written: Notes the transcription placed inside that same stretch.
+        window: ``(from_s, to_s)`` of the stretch, for the report.
+
+    Returns:
+        The report, or ``None`` where the two agree well enough to say nothing. A
+        report is a reason to listen, never a measurement of musical quality.
+    """
+    seconds = max(0.001, window[1] - window[0])
+    expected = heard.onset_rate_hz * seconds
+    rate = written / seconds
+    common: dict[str, Any] = {
+        "window_s": [round(window[0], 2), round(window[1], 2)],
+        "onsets_in_the_audio": round(expected, 1),
+        "notes_transcribed_there": written,
+        "heard_onsets_per_s": round(heard.onset_rate_hz, 2),
+        "written_onsets_per_s": round(rate, 2),
+    }
+    if expected >= _PERCUSSIVE_ONSETS and written < expected * _TOO_FEW_SHARE:
+        return {
+            **common,
+            "kind": "too_few",
+            "why": (
+                f"The recording starts a new event about {heard.onset_rate_hz:.1f} "
+                f"times a second in its busiest stretch, and the transcription put "
+                f"{written} notes there. A pitch transcriber hears fundamentals, and "
+                "percussion has none, so a drum or a noise part comes back as a few "
+                "notes from resonances and reports success. Listen before writing "
+                "this, and for drums expect to build the part another way."
+            ),
+        }
+    if heard.sustain_fraction >= _SUSTAINED_FRACTION and rate > max(
+        _SUSTAINED_FLOOR_HZ, heard.onset_rate_hz * _TOO_MANY_FACTOR
+    ):
+        return {
+            **common,
+            "kind": "too_many",
+            "why": (
+                f"The recording sounds {heard.sustain_fraction:.0%} of the time and "
+                f"starts a new event {heard.onset_rate_hz:.2f} times a second in its "
+                f"busiest stretch, and the transcription writes {rate:.1f} a second "
+                "there. A transcriber reports a held note whose level wavers as "
+                "several notes, so a pad or a string part arrives as a stutter at the "
+                "right pitches. sustained=true joins the fragments and cuts this by "
+                "about two thirds; measured on a pad it still wrote 2.25 attacks a "
+                "second where the recording started 0.10, so it is a mitigation and "
+                "not a repair."
+            ),
+        }
+    return None
+
+
+@mcp.tool(annotations=DESTROYS)
+def transcribe_stem(
+    path: Annotated[
+        str,
+        Field(
+            description=(
+                "Absolute path to the audio to transcribe. A separated stem, one "
+                "instrument at a time. A whole mix transcribes as one tangle."
+            )
+        ),
+    ],
+    tempo: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=999.0,
+            description=(
+                "Beats per minute, to turn seconds into clip beats. Read the set's own "
+                "tempo unless the recording has a different one. A recording whose "
+                "tempo drifts will separate from one number over the length of a song."
+            ),
+        ),
+    ],
+    monophonic: Annotated[
+        bool,
+        Field(
+            description=(
+                "True for a part played one note at a time, such as a bass or a sung "
+                "line. It reduces the result to the lowest note sounding, which is how "
+                "a bass loses the harmonics a transcriber hears above it, and which "
+                "throws away the upper voices of anything that plays chords."
+            )
+        ),
+    ] = False,
+    sustained: Annotated[
+        bool,
+        Field(
+            description=(
+                "True for material that holds its notes rather than striking them: a "
+                "pad, a string section, an organ. It joins same-pitch fragments "
+                "separated by a gap too small to play, which is how one held chord "
+                "stops arriving as eight notes. Off by default because on struck "
+                "material it costs agreement on pitch content, between one and ten "
+                "points measured over five stems, and it does not repair a pad: it "
+                "took one from 5.35 written attacks a second to 2.25, where the "
+                "recording started 0.10. See transcription_suspect."
+            )
+        ),
+    ] = False,
+    track: Annotated[
+        int,
+        Field(
+            ge=-1,
+            description=(
+                "Track to write the notes into. -1 returns them instead of writing, "
+                "which is the default and is how to look before committing."
+            ),
+        ),
+    ] = -1,
+    slot: Annotated[
+        int, Field(ge=0, description="Session clip slot on that track.")
+    ] = 0,
+    confirm: Annotated[
+        bool,
+        Field(
+            description=(
+                "True writes into the clip, replacing every note already in it. False "
+                "reports what would be written and changes nothing."
+            )
+        ),
+    ] = False,
+    preview: Annotated[
+        int,
+        Field(ge=0, le=200, description="How many notes to include in the answer."),
+    ] = 12,
+) -> dict[str, Any]:
+    """Turn a recording of one instrument into notes, cleaned of what it is not.
+
+    Returns:
+        Dictionary with how many notes were heard and how many survived cleaning, the
+        pitch range, the span in beats, a sample of the notes, and the write result
+        where one was asked for.
+
+    Note:
+        **This transcribes pitch, and percussion has no pitch.** A drum kit returns cymbal
+        and shell resonances, reporting success: measured on a four minute drum stem, 39
+        notes for 488 beats, none of them a kick, and nothing across forty bars of steady
+        playing. Never write drums from here. Held material fails the other way: a wavering
+        sustained note reads as several, so a pad arrives at the right pitches with a rhythm
+        nobody played. Measured 2026-09-19 over four stems in their busiest 20 seconds,
+        written attacks ran 3.35 a second against 2.85 onsets on bass, 3.50 against 1.30 on
+        a strummed guitar, and 5.35 and 5.30 against 0.10 and 0.55 on pad and keys.
+
+        ``transcription_suspect`` flags that disagreement, ``kind`` says which way, and
+        ``transcription_checked`` says whether the comparison ran at all, since it needs a
+        macOS-only second decode: elsewhere no warning means nothing. Measured 2026-09-19
+        against exported MIDI for five pitched stems, pitch content agreed 93.7 to 96.2
+        percent: which notes, not when, the export's own timing having drifted. Harmonics
+        are removed where a lower, louder note at the same time explains them;
+        ``monophonic`` then leaves nothing sounding at the same time as anything else.
+        ``scripts/eval_transcription.py`` recomputes these.
+
+        Writing needs a clip: ``create_clip`` on the target slot first, long enough for the
+        whole part, then this with ``confirm=True``. ``span_beats`` runs from beat 0 to the
+        last note's end, so a clip of that length rounded up to a bar holds it. Writing
+        replaces every note in the clip, with no undo here and no rollback in the LOM: a
+        write that fails after the removal leaves nothing.
+    """
+    source = Path(path).expanduser()
+    if not transcribe_audio.is_available():
+        return {
+            "ok": False,
+            "code": "no_transcriber",
+            "error": (
+                "No environment with basic-pitch was found. Create one with a Python "
+                "between 3.7 and 3.11, install basic-pitch into it, and point "
+                f"{transcribe_audio.ENV_VAR} at its interpreter."
+            ),
+        }
+    try:
+        heard = transcribe_audio.transcribe(source)
+    except transcribe_audio.TranscriberError as exc:
+        return {"ok": False, "code": exc.code, "error": exc.error, "path": str(source)}
+
+    kept = transcription.clean(heard, monophonic=monophonic, merge=sustained)
+    notes = transcription.to_notes(kept, tempo)
+
+    # Cross-check against the recording's own onsets. A pitch transcriber hears a
+    # fundamental, and percussion has none, so a drum kit comes back as a handful of
+    # notes from cymbal and shell resonances and reports success. Comparing what the
+    # audio does in one busy window with what the transcription put there is the one
+    # check available from inside this server.
+    suspect: dict[str, Any] | None = None
+    unchecked: str | None = None
+    if not audio_decode.tool_available():
+        samples = []
+        unchecked = (
+            f"{audio_decode.TOOL} is not on this machine, so the recording could not be "
+            "read back and the transcription was not checked against it."
+        )
+    else:
+        try:
+            samples = audio_decode.decode_to_samples(source)
+        except audio_decode.DecodeError as exc:
+            samples = []
+            unchecked = (
+                f"The recording could not be decoded ({exc.code}), so the transcription "
+                "was not checked against it."
+            )
+    if samples:
+        rate = descriptor_module.SAMPLE_RATE
+        # Busiest and not loudest: the comparison is about how often something is
+        # struck, and a stem's loudest stretch is often a chord ringing out.
+        first, last = descriptor_module.busiest_window(samples, _CHECK_WINDOW_S)
+        heard_here = descriptor_module.describe(samples[first:last])
+        from_beat = first / rate * tempo / 60.0
+        to_beat = last / rate * tempo / 60.0
+        suspect = _onset_disagreement(
+            heard_here,
+            written=_attacks_between(notes, from_beat, to_beat, tempo),
+            window=(first / rate, last / rate),
+        )
+    if not notes:
+        return {
+            "ok": False,
+            "code": "nothing_heard",
+            "error": f"{source.name} produced no notes at all.",
+            "path": str(source),
+            "heard": len(heard),
+        }
+
+    pitches = [n.pitch for n in notes]
+    span = max(n.start_time + n.duration for n in notes)
+    answer: dict[str, Any] = {
+        "ok": True,
+        "path": str(source),
+        "tempo": tempo,
+        "monophonic": monophonic,
+        "heard": len(heard),
+        "kept": len(notes),
+        "removed_as_overtones": len(heard) - len(kept),
+        "pitch_range": [min(pitches), max(pitches)],
+        "median_pitch": sorted(pitches)[len(pitches) // 2],
+        "span_beats": round(span, 3),
+        "notes_preview": [
+            {
+                "pitch": n.pitch,
+                "start_time": n.start_time,
+                "duration": n.duration,
+                "velocity": n.velocity,
+            }
+            for n in notes[:preview]
+        ],
+        "caveat": (
+            "The pitches are measured and the timing is not checked against anything. "
+            "A transcription is a starting point: listen to it against the recording "
+            "before building on it."
+        ),
+    }
+    if suspect is not None:
+        answer["transcription_suspect"] = suspect
+    answer["transcription_checked"] = unchecked is None
+    if unchecked is not None:
+        answer["transcription_not_checked_why"] = unchecked
+
+    if track < 0:
+        answer["written"] = False
+        answer["next_step"] = (
+            f"{len(notes)} notes are ready. Call again with track= and slot= and "
+            f"confirm=True to write them, which replaces every note in that clip."
+        )
+        if suspect is not None:
+            answer["next_step"] = (
+                f"{len(notes)} notes came back and they do not match what the recording "
+                f"does. See transcription_suspect before writing anything."
+            )
+        return answer
+
+    clip_path = f"song.tracks[{track}].clip_slots[{slot}].clip"
+    if not confirm:
+        answer["written"] = False
+        answer["would_write"] = {"path": clip_path, "notes": len(notes), "mode": "replace"}
+        answer["next_step"] = (
+            f"Call again with confirm=True to replace every note in {clip_path} with "
+            f"these {len(notes)}."
+        )
+        return answer
+
+    try:
+        result = _client_instance().send(
+            "notes_set",
+            {
+                "path": clip_path,
+                "notes": note_ops.to_dicts(notes),
+                "mode": "replace",
+            },
+        )
+    except LiveError as exc:
+        failed = _live_error(exc)
+        failed["transcription"] = {"kept": len(notes), "path": str(source)}
+        failed["note"] = (
+            "The notes were transcribed and not written. Nothing in the clip changed "
+            "unless the removal had already run, which this cannot tell from here."
+        )
+        return failed
+
+    answer["written"] = True
+    answer["write"] = {
+        "path": clip_path,
+        "sent": len(notes),
+        "before_count": result.get("before_count"),
+        "after_count": result.get("after_count"),
+    }
+    answer["notes"] = [NOTES_REPLACE_NOTE, STORED_NOT_AUDIBLE]
+    return answer
+
+
+@mcp.tool(annotations=READS)
+def sound_index_status() -> dict[str, Any]:
+    """Is there an index of how this installation's library sounds, and what is in it?
+
+    Call this before ``match_sound``. Without an index that tool has nothing to rank
+    against, and a fresh session has no way of knowing whether one was ever built.
+
+    Returns:
+        Dictionary with whether an index exists, where it is, when it was built, how
+        many items of each kind it carries, which libraries they came from, and what
+        was skipped when it was built.
+
+    Note:
+        The index is built from the audio Ableton renders for its own browser previews,
+        which sits beside the content under ``Ableton Folder Info/Previews``. It is not
+        committed and it describes one machine: rebuild it by running
+        ``live-maestro-index`` after installing or removing packs.
+    """
+    path = sound_index.default_index_path()
+    try:
+        index = sound_index.load_index(path)
+    except sound_index.SoundIndexError as exc:
+        return {
+            "ok": False,
+            "code": exc.code,
+            "error": exc.error,
+            "path": str(path),
+            "next_step": (
+                "Run live-maestro-index, which is installed alongside this server. "
+                "It decodes the preview audio Ableton ships beside its own library, "
+                "needs no network, and takes about a quarter of an hour."
+            ),
+        }
+
+    kinds: dict[str, int] = {}
+    libraries: dict[str, int] = {}
+    for item in index.items:
+        kinds[item.kind] = kinds.get(item.kind, 0) + 1
+        libraries[item.library] = libraries.get(item.library, 0) + 1
+    loadable = kinds.get(".adg", 0) + kinds.get(".adv", 0)
+    top = sorted(libraries.items(), key=lambda pair: (-pair[1], pair[0]))[:10]
+    return {
+        "ok": True,
+        "path": str(path),
+        "built_on": index.built_on,
+        "descriptor_version": index.version,
+        "count": len(index.items),
+        "loadable_presets": loadable,
+        "by_kind": kinds,
+        "libraries": len(libraries),
+        "largest_libraries": [{"name": name, "items": n} for name, n in top],
+        "roots": index.roots,
+        "skipped_when_built": index.skipped,
+        "caveat": sound_index.CAVEAT,
+    }
+
+
+@mcp.tool(annotations=READS)
+def match_sound(
+    path: Annotated[
+        str,
+        Field(
+            description=(
+                "Absolute path to the audio to match: a stem, a loop, a one shot. Any "
+                "format the system decoder reads, which is WAVE, AIFF, MP3, Ogg, FLAC "
+                "and ALAC. Not an Ableton factory sample: those are encrypted and "
+                "nothing outside Live reads them."
+            )
+        ),
+    ],
+    limit: Annotated[
+        int, Field(ge=1, le=30, description="How many candidates to return.")
+    ] = 8,
+    kinds: Annotated[
+        Literal["loadable", "presets", "racks", "clips", "any"],
+        Field(
+            description=(
+                "What to rank. 'loadable' is the default and means presets and racks, "
+                "the things that go on a track. 'clips' ranks loops instead."
+            )
+        ),
+    ] = "loadable",
+    instrument: Annotated[
+        Literal[
+            "",
+            "bass",
+            "brass",
+            "drum_hit",
+            "drum_kit",
+            "fx",
+            "guitar",
+            "keys",
+            "lead",
+            "mallets",
+            "pad",
+            "strings",
+            "voice",
+            "winds",
+        ],
+        Field(
+            description=(
+                "What kind of instrument this is, when you know. Set it whenever you "
+                "do: a stem is usually named or obvious, and telling the tool is worth "
+                "far more than any ranking. 'drum_kit' is a whole kit and 'drum_hit' "
+                "is one cymbal or snare, which are never interchangeable. Empty ranks "
+                "the whole library and is measurably the worse answer."
+            )
+        ),
+    ] = "",
+    category_contains: Annotated[
+        str,
+        Field(
+            description=(
+                "Narrow further inside the family by browser category text, case "
+                "insensitive. Empty keeps the whole family."
+            )
+        ),
+    ] = "",
+    window: Annotated[
+        Literal["loudest", "whole", "at"],
+        Field(
+            description=(
+                "Which part of the file to describe. 'loudest' is the default and finds "
+                "the loudest stretch of 'seconds', which is what a stem needs: an "
+                "instrument that plays a verse and rests through the chorus is silent "
+                "for most of its own file. Loudest is not busiest: measured over five "
+                "stems, the loudest window of a pad and of a keys part held no onsets "
+                "at all. 'whole' averages everything, including the rests. 'at' takes "
+                "'seconds' from 'start_s'."
+            )
+        ),
+    ] = "loudest",
+    seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=120.0,
+            description=(
+                "How long a stretch to describe, for 'loudest' and 'at'. Ignored by "
+                "'whole'."
+            ),
+        ),
+    ] = 20.0,
+    start_s: Annotated[
+        float,
+        Field(ge=0.0, description="Where to start, for window='at' only."),
+    ] = 0.0,
+) -> dict[str, Any]:
+    """Rank the library by how close each item sounds to a piece of audio you have.
+
+    Returns:
+        Dictionary with the descriptor taken from the file, the ranked candidates each
+        carrying its name, kind, category, library and score, and the call that loads
+        the one you pick.
+
+    Note:
+        A score orders this one answer, lower being closer: not a percentage or a distance,
+        and scores from two files do not compare. The order inside one answer is weaker than
+        it looks: ``elsewhere_in_the_file`` ranks a second stretch of the same recording to
+        show how weak; ``also_elsewhere`` says a candidate came back in both, the one
+        reading here that is evidence, not ordering. Measured 2026-09-19 over five separated
+        stems in 20 s windows, two windows of one stem shared about one name in ten and the
+        descriptor moved by three to six times the whole width of the top thirty. Ranked
+        over the whole library, the top candidate shared the probe's family 1 time in 7 at
+        20 s and 6 of 20 on 1.5 s slices: a bass stem answers with drum kits and a guitar
+        stem with pads; given ``instrument``, the same audio answers with basses and plucked
+        guitars. Name the family when you know it: this is a shortlist, not a ranking.
+
+        What is compared is Ableton's preview render of each item, so a busy-riff preview
+        describes itself differently from a held-chord one, and nothing here speaks for
+        playable range, velocity response or a single note's attack. The match is timbral
+        with level removed, so a quiet and a loud take of one sound match exactly; pitch is
+        not matched, so a bass line at 50 Hz and the same line at 100 Hz are near
+        neighbours. ``analysed`` says where the window landed, with peak and RMS; a silent
+        stretch answers ``nothing_to_match``, and without an index this answers
+        ``no_index``. To load one, set ``track`` in its ``load_with`` block and call
+        ``load_device``: the handle is a name, not a path, so the browser search can return
+        more than one item. Check before confirming.
+    """
+    target = Path(path).expanduser()
+    if not audio_decode.tool_available():
+        return {
+            "ok": False,
+            "code": "no_decoder",
+            "error": (
+                f"{audio_decode.TOOL} is not on this machine, so no audio can be read."
+            ),
+        }
+    try:
+        index = sound_index.load_index()
+    except sound_index.SoundIndexError as exc:
+        return {
+            "ok": False,
+            "code": exc.code,
+            "error": exc.error,
+            "next_step": "Run live-maestro-index, then call this again.",
+        }
+
+    try:
+        samples = audio_decode.decode_to_samples(target)
+    except audio_decode.DecodeError as exc:
+        answer = {"ok": False, "code": exc.code, "error": exc.error, "path": str(target)}
+        if exc.code == "decoder_refused":
+            answer["note"] = (
+                "An Ableton factory sample reads as refused here. Those carry an 'able' "
+                "compression type, which is encryption: measured against Live 12.4.6, "
+                "neither this decoder nor Max for Live inside Live's own process reads "
+                "them. Match against your own audio instead."
+            )
+        return answer
+
+    rate = descriptor_module.SAMPLE_RATE
+    if window == "whole":
+        first, last = 0, len(samples)
+    elif window == "at":
+        first = min(int(start_s * rate), len(samples))
+        last = min(first + int(seconds * rate), len(samples))
+    else:
+        first, last = descriptor_module.loudest_window(samples, seconds)
+    chosen = samples[first:last]
+    if len(chosen) < descriptor_module.FRAME:
+        return {
+            "ok": False,
+            "code": "too_short",
+            "error": (
+                f"{len(chosen) / rate:.3f} s of audio is less than the "
+                f"{descriptor_module.FRAME / rate:.3f} s this needs for one window."
+            ),
+            "path": str(target),
+        }
+
+    loudest = max((abs(v) for v in chosen), default=0.0)
+    energy = math.sqrt(sum(v * v for v in chosen) / len(chosen))
+    if loudest < _QUIET_PEAK:
+        return {
+            "ok": False,
+            "code": "nothing_to_match",
+            "error": (
+                f"The loudest sample in the stretch that was analysed is {loudest:.4f}, "
+                f"which is silence. There is nothing here to describe."
+            ),
+            "path": str(target),
+            "analysed": {"from_s": round(first / rate, 3), "to_s": round(last / rate, 3)},
+            "next_step": (
+                "With window='loudest' this means the whole file is silent. With 'at' "
+                "or 'whole', try window='loudest'."
+            ),
+        }
+
+    query = descriptor_module.describe(chosen)
+    wanted = {
+        "loadable": (".adg", ".adv"),
+        "presets": (".adv",),
+        "racks": (".adg",),
+        "clips": (".alc",),
+        "any": (),
+    }[kinds]
+    families = (instrument,) if instrument else ()
+    hits = index.rank(
+        query,
+        limit=limit,
+        kinds=wanted,
+        category_contains=category_contains,
+        families=families,
+    )
+
+    # A second window of the same file, ranked the same way. It is not a better answer
+    # and is not merged into the first: it is the measurement of how much this answer
+    # depends on where in the file it was taken.
+    elsewhere: dict[str, Any] | None = None
+    agreed: set[str] = set()
+    if window != "whole" and hits:
+        other_first, other_last = descriptor_module.loudest_window(
+            samples, seconds, avoid=(first, last)
+        )
+        second = samples[other_first:other_last]
+        overlaps = other_first < last and first < other_last
+        if not overlaps and len(second) >= descriptor_module.FRAME:
+            other_query = descriptor_module.describe(second)
+            agreed = {
+                hit.item.name
+                for hit in index.rank(
+                    other_query,
+                    limit=limit,
+                    kinds=wanted,
+                    category_contains=category_contains,
+                    families=families,
+                )
+            }
+            shared = len({hit.item.name for hit in hits} & agreed)
+            moved = descriptor_module.distance(query, other_query)
+            spread = hits[-1].score - hits[0].score
+            elsewhere = {
+                "from_s": round(other_first / rate, 3),
+                "to_s": round(other_last / rate, 3),
+                "shared_names": shared,
+                "of": len(hits),
+                "query_moved": round(moved, 4),
+                "candidate_spread": round(spread, 4),
+                "reading": (
+                    f"Ranking a different stretch of this same file returns {shared} of "
+                    f"these {len(hits)} names. The file's own descriptor moves "
+                    f"{moved:.4f} between the two stretches while the whole answer is "
+                    f"{spread:.4f} wide, so "
+                    + (
+                        "the order here is not a property of the recording. Treat the "
+                        "answer as a shortlist to audition, not as a ranking."
+                        if moved > spread
+                        else "the order holds up across the file."
+                    )
+                ),
+            }
+
+    answer: dict[str, Any] = {
+        "ok": True,
+        "path": str(target),
+        "analysed": {
+            "window": window,
+            "from_s": round(first / rate, 3),
+            "to_s": round(last / rate, 3),
+            "whole_file": first == 0 and last == len(samples),
+            "file_duration_s": round(len(samples) / rate, 3),
+            "peak": round(loudest, 4),
+            "rms": round(energy, 5),
+        },
+        "query_descriptor": query.as_dict(),
+        "index": {
+            "built_on": index.built_on,
+            "items": len(index.items),
+            "instrument": instrument or "not given",
+            "considered": sum(
+                1
+                for item in index.items
+                if (not wanted or item.kind in wanted)
+                and (
+                    not families
+                    or sound_index.family_of(item.category) in families
+                )
+                and (
+                    not category_contains
+                    or category_contains.lower() in item.category.lower()
+                )
+            ),
+        },
+        "candidates": [
+            {
+                "rank": hit.rank,
+                "name": hit.item.name,
+                "kind": hit.item.kind,
+                "family": sound_index.family_of(hit.item.category),
+                "category": hit.item.category,
+                "library": hit.item.library,
+                "score": round(hit.score, 5),
+                "preview_seconds": round(hit.item.descriptor.duration_s, 2),
+                "also_elsewhere": hit.item.name in agreed,
+                "load_with": {"query": hit.item.name, "track": -1, "confirm": False},
+            }
+            for hit in hits
+        ],
+        "caveat": sound_index.CAVEAT,
+        "next_step": (
+            "Call load_device with a candidate's load_with block, after setting its "
+            "track to the track you mean: the block carries track=-1, which is "
+            "whatever track happens to be selected in Live, and loading an instrument "
+            "replaces the one already on that track and discards it. It carries "
+            "confirm=false, so the first call reports what it would do and changes "
+            "nothing; send it again with confirm=true once the report names the right "
+            "track."
+        ),
+    }
+    if elsewhere is not None:
+        answer["elsewhere_in_the_file"] = elsewhere
+    if not instrument:
+        answer["instrument_note"] = (
+            "No instrument was given, so the whole library was ranked. Measured against "
+            "separated stems of a real song, that is where this goes wrong: a bass stem "
+            "answers with drum kits and a guitar stem with pads. Told which family to "
+            "look in, the same audio answers with basses and with guitars. If you know "
+            "what the recording is, and with a named stem you do, pass it."
+        )
+    return answer
 
 
 def _analyzer_target_name(target: str) -> str | None:
@@ -5609,6 +8255,301 @@ def _analyzer_target_name(target: str) -> str | None:
     except LiveError:
         return None
     return None if value is None else str(value)
+
+
+def _transport_unavailable(missing: Mapping[str, Any] | None) -> TransportUnavailable | None:
+    """Return the model form of a :func:`_transport_missing` block, for the report builder.
+
+    The raw dictionary is what the branches that assemble their own answer carry, and the
+    model is what the analyzer report model holds. Both say the same two things.
+    """
+    if missing is None:
+        return None
+    return TransportUnavailable(code=missing["code"], reason=missing["reason"])
+
+
+def _transport_missing(code: str, reason: str) -> dict[str, Any]:
+    """Return the block that stands in the place of a transport state that was not read.
+
+    A null transport carrying no reason cannot be told apart from a transport that was
+    read and found empty, so every null one says in one sentence what stopped the read
+    and carries the machine code beside it.
+    """
+    return {"code": code, "reason": reason}
+
+
+def _track_count_of(row: Mapping[str, Any]) -> int:
+    """Return how many tracks the song.tracks row says the set has, or raise saying why not.
+
+    The count comes from the row's own ``count`` field rather than from the length of its
+    value: the Remote Script stops encoding a collection at its list_cap and reports the
+    real length separately, so len(value) on a large set is a ceiling and not a count.
+    Falling back to len(value) is only safe on a row that is not truncated.
+    """
+    if not _row_ok(row):
+        code = row.get("code") or "error"
+        raise ValueError(f"The song.tracks read failed with code {code}.")
+    count = row.get("count")
+    if isinstance(count, int) and not isinstance(count, bool):
+        return count
+    if row.get("truncated"):
+        raise ValueError(
+            "The song.tracks read stopped at the script's list_cap and carried no 'count', "
+            "so how many tracks the set has is not known here."
+        )
+    value = row.get("value")
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return len(value)
+    raise ValueError("The song.tracks read did not answer with a list of tracks.")
+
+
+#: The per-track properties one transport probe reads, in the order the ops are laid
+#: down for each track. Both come back in the same batch, so the two numbers describe
+#: one moment rather than two reads taken either side of a bar line.
+_TRANSPORT_TRACK_PROPERTIES = ("playing_slot_index", "fired_slot_index")
+
+
+def _transport_track_ops(index: int) -> list[dict[str, Any]]:
+    """Return the per-track transport read ops for one track index, in probe order."""
+    return [
+        {"op": "get", "path": f"song.tracks[{index}].{name}"}
+        for name in _TRANSPORT_TRACK_PROPERTIES
+    ]
+
+
+def _read_transport() -> TransportState:
+    """Read Live's transport state in one speculative batch, or raise saying what stopped it.
+
+    One request carries song.is_playing, song.tracks and, for each of
+    :data:`_TRANSPORT_PROBE_TRACKS` tracks the set may not have, the pair in
+    :data:`_TRANSPORT_TRACK_PROPERTIES`. Ops past the end come back as index_out_of_range
+    rows, which lom_batch reports without aborting, and are sliced away; a larger set costs
+    one further chunked call. A per-track read that fails inside the range raises rather
+    than being skipped: a count over some of the tracks is not smaller, it is wrong.
+
+    Measured 2026-09-16 against Live 12.4.5 (macOS 26.6.2, Ableton's "Patience" demo song,
+    15 tracks, 13 scenes, clip_trigger_quantization 4): playing_slot_index across the 15
+    tracks read ``[2, 2, 2, 2, -2, -2, -2, -2, 2, -2, -2, -2, -2, -2, 2]`` while scene 2 was
+    settling, identically 6 s later once settled, and identically again after
+    song.stop_playing. The nine reading -2 are exactly those holding no clip in the fired
+    scene, so -2 is the standing state "no clip is playing here": it does not decay, does
+    not follow the transport and survives a stop, so in_transition cannot rest on it.
+
+    The transition is fired_slot_index instead. Firing another scene from a running
+    transport, it read 0 or more on 9 tracks for two successive reads with playing slots in
+    {1, -2}, then fell back to -1 on all 15 as the bar line arrived and playing_slot_index
+    moved 1 -> 3. From a stopped transport the same fire applied at once: playing_slot_index
+    read the new slot in the same round trip and fired_slot_index never left -1, so there is
+    no boundary to wait for. It also keeps the slot a track last played after a stop, which
+    counted 8 of 15 tracks as sounding while Live was not playing, so tracks_sounding counts
+    a track only while is_playing is true.
+    """
+    probe = _TRANSPORT_PROBE_TRACKS
+    width = len(_TRANSPORT_TRACK_PROPERTIES)
+    ops: list[dict[str, Any]] = [
+        {"op": "get", "path": "song.is_playing"},
+        {"op": "get", "path": "song.tracks"},
+    ]
+    for index in range(probe):
+        ops.extend(_transport_track_ops(index))
+    run = _batch_chunked(ops, MAX_BATCH_OPS)
+    if run.error is not None:
+        raise run.error
+    rows = run.results
+    if len(rows) < 2:
+        raise ValueError("The transport batch came back with fewer rows than it had operations.")
+    if not _row_ok(rows[0]):
+        code = rows[0].get("code") or "error"
+        raise ValueError(f"The song.is_playing read failed with code {code}.")
+    is_playing = bool(rows[0].get("value"))
+    tracks_total = _track_count_of(rows[1])
+
+    track_rows: list[dict[str, Any]] = list(rows[2 : 2 + width * min(tracks_total, probe)])
+    if tracks_total > probe:
+        rest: list[dict[str, Any]] = []
+        for index in range(probe, tracks_total):
+            rest.extend(_transport_track_ops(index))
+        more = _batch_chunked(rest, MAX_BATCH_OPS)
+        if more.error is not None:
+            raise more.error
+        track_rows.extend(more.results)
+    if len(track_rows) < width * tracks_total:
+        answered = len(track_rows) // width
+        raise ValueError(
+            f"The transport batch answered for {answered} of the set's {tracks_total} "
+            "tracks, so the sounding tracks could only have been counted in part."
+        )
+
+    playing: list[int] = []
+    fired: list[int] = []
+    for index in range(tracks_total):
+        pair = track_rows[width * index : width * (index + 1)]
+        for name, row in zip(_TRANSPORT_TRACK_PROPERTIES, pair, strict=True):
+            if not _row_ok(row):
+                code = row.get("code") or "error"
+                raise ValueError(
+                    f"The {name} read for track {index} failed with code {code}, so "
+                    "the transport state could only have been read in part."
+                )
+            value = row.get("value")
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(
+                    f"The {name} read for track {index} answered with "
+                    f"{value!r} rather than an index."
+                )
+            (playing if name == "playing_slot_index" else fired).append(value)
+
+    return TransportState(
+        is_playing=is_playing,
+        # playing_slot_index still reads the slot a track last played once the transport
+        # has stopped, so counting it there would report tracks that had already fallen
+        # silent. A stopped transport has nothing sounding.
+        tracks_sounding=sum(1 for slot in playing if slot >= 0) if is_playing else 0,
+        tracks_total=tracks_total,
+        in_transition=any(slot >= 0 for slot in fired),
+    )
+
+
+def _query_transport() -> tuple[TransportState | None, dict[str, Any] | None]:
+    """Return Live's transport state, or None beside a code and a sentence saying why not.
+
+    The two halves are exclusive: either the state was read, or the second element says
+    what stopped it. Nothing is guessed at, because a transport state invented beside a
+    real measurement would describe a moment that was never observed.
+    """
+    try:
+        return _read_transport(), None
+    except LiveTimeoutError:
+        logger.debug("transport read timed out", exc_info=True)
+        return None, _transport_missing(
+            "timeout",
+            "Live did not answer the transport read before the client's timeout, so the "
+            "state at the moment of the measurement is not known.",
+        )
+    except LiveConnectionError:
+        logger.debug("transport read could not reach Live", exc_info=True)
+        return None, _transport_missing(
+            "not_connected",
+            "The Remote Script connection was not available, so Live's transport was not read.",
+        )
+    except LiveError as exc:
+        logger.debug("transport read refused by Live", exc_info=True)
+        code = getattr(exc, "code", None)
+        return None, _transport_missing(
+            code if isinstance(code, str) and code else "live_error",
+            f"Live refused the transport read: {exc}.",
+        )
+    except (TypeError, ValueError, KeyError) as exc:
+        logger.debug("transport reply could not be read", exc_info=True)
+        said = str(exc).strip()
+        reason = (
+            said
+            if said.endswith(".")
+            else f"The transport reply could not be read: {said or exc.__class__.__name__}."
+        )
+        return None, _transport_missing("transport_unreadable", reason)
+
+
+class AudioAccumulator:
+    """Periodically samples the analyzer device to accumulate band occupancy and spectrum."""
+
+    def __init__(
+        self,
+        target: str,
+        window_ms: int,
+        threshold_db: float,
+        match_name: str | None = None,
+    ) -> None:
+        self.target = target
+        self.window_ms = window_ms
+        self.threshold_db = threshold_db
+        self.match_name = match_name
+        self.total_windows: int = 0
+        self.occupied_counts: dict[str, int] = {name: 0 for name, _, _ in BANDS}
+        self.band_amplitudes_sum: dict[str, float] = {name: 0.0 for name, _, _ in BANDS}
+        self.last_reply: Any = None
+        # The wall clock the accumulation has been running for, and the audio it
+        # actually reached. The two differ: sampling is periodic and each reply covers
+        # one window, so coverage is what says whether a section was watched throughout
+        # or sampled here and there.
+        self.started_monotonic: float = time.monotonic()
+        self.covered_ms: float = 0.0
+        # How far the first recorded window reached back. A window that ended just
+        # after the accumulation started still holds audio from before it, so the
+        # stretch the windows cover begins here and not at started_monotonic.
+        self.first_window_ms: float | None = None
+        self._stopped: bool = False
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        self._stopped = False
+        self.started_monotonic = time.monotonic()
+        self.first_window_ms = None
+        self._task = asyncio.create_task(self._loop())
+
+    async def _loop(self) -> None:
+        client = AnalyzerClient()
+        interval = max(0.05, self.window_ms / 1000.0)
+        while not self._stopped:
+            try:
+                replies = await client.measure(window_ms=self.window_ms, reset=False)
+                usable = [
+                    r for r in replies if int(r.numbers.get("schema", 0)) == REPLY_SCHEMA
+                ]
+                chosen = None
+                if self.match_name:
+                    wanted = self.match_name.strip().casefold()
+                    for r in usable:
+                        if r.track_name.strip().casefold() == wanted:
+                            chosen = r
+                            break
+                if chosen is None:
+                    for r in usable:
+                        if analyzer_report.matches(r, self.target):
+                            chosen = r
+                            break
+                if chosen is not None:
+                    self.record_sample(chosen)
+            except Exception:
+                # Logged rather than swallowed: a sampling loop that fails silently
+                # reports zero windows with nothing to say about why, and the
+                # accumulation then looks merely idle instead of broken.
+                logger.debug("analyzer sample failed", exc_info=True)
+            await asyncio.sleep(interval)
+
+    def record_sample(self, reply: Any) -> None:
+        self.last_reply = reply
+        self.total_windows += 1
+        numbers = reply.numbers
+        # The stretch this reply really covered, not the window_ms that was asked for:
+        # the device clamps the request against its own buffer, so the requested window
+        # is an upper bound and the sample count is what happened.
+        samplerate = numbers.get("samplerate", 0.0)
+        window_samples = numbers.get("window_samples", 0.0)
+        if samplerate > 0:
+            reached_ms = window_samples / samplerate * 1000.0
+            self.covered_ms += reached_ms
+            if self.first_window_ms is None:
+                self.first_window_ms = reached_ms
+        band_dbs: dict[str, float | None] = {}
+        for name, _, _ in BANDS:
+            amp = numbers.get(name, 0.0)
+            self.band_amplitudes_sum[name] += amp
+            db_val = to_dbfs(amp)
+            band_dbs[name] = db_val if db_val > SILENCE_FLOOR_DB else None
+
+        occ = band_occupancy_window(band_dbs, self.threshold_db)
+        for name, was_occ in occ.items():
+            if was_occ:
+                self.occupied_counts[name] += 1
+
+    def stop(self) -> None:
+        self._stopped = True
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+
+_ACTIVE_ACCUMULATORS: dict[str, AudioAccumulator] = {}
 
 
 @mcp.tool(annotations=READS)
@@ -5655,48 +8596,246 @@ async def analyze_audio(
                 "Restart the integrated loudness and loudness range before "
                 "measuring, to integrate one section rather than everything since "
                 "the audio engine started. The reply that performs the reset "
-                "reports no integrated figure, because it had just begun."
+                "reports no integrated figure, because it had just begun. It applies "
+                "to a call with no 'accumulate' at all: an accumulation samples the "
+                "device on its own schedule, and accumulate='read' reports the windows "
+                "already counted rather than taking a fresh measurement, so a call "
+                "that passes both performs no reset."
             ),
         ),
     ] = False,
+    accumulate: Annotated[
+        Literal["start", "read", "reset"] | None,
+        Field(
+            default=None,
+            description=(
+                "Accumulate band occupancy and levels over multiple analysis windows. "
+                "'start' begins periodic background sampling; 'read' returns the "
+                "accumulated occupancy percentages and averaged levels across all sampled "
+                "windows, together with the span they were taken over; 'reset' stops and "
+                "clears accumulation. Occupancy is a share of time, so it is reported on "
+                "'read' alone: a single call measures one window and reports none."
+            ),
+        ),
+    ] = None,
+    occupancy_threshold_db: Annotated[
+        float,
+        Field(
+            default=12.0,
+            description=(
+                "Threshold in dB relative to the loudest band in each analysis window. "
+                "A band is counted as occupied if its level is within this threshold of "
+                "the loudest band. It takes effect on accumulate='start' alone, because "
+                "that is where the counting happens: an accumulate='read' reports the "
+                "threshold its own accumulation was started with, and a single call "
+                "counts no occupancy at all."
+            ),
+        ),
+    ] = 12.0,
 ) -> dict[str, Any]:
     """Measure the audio itself: loudness, true peak, stereo phase and band balance.
 
-    Reads the LiveMaestro Analyzer Max for Live device over loopback OSC. This
-    is the only tool that needs that device. Without it every other tool works and
-    this one reports device_not_found with the steps to load it.
+    Reads the LiveMaestro Analyzer Max for Live device over loopback OSC; without it this
+    reports device_not_found with the steps to load it.
 
-    What comes back, and what each figure is:
+    - Loudness to EBU R128: momentary 400 ms, short term 3 s, gated integrated since
+      reset, range.
+    - True peak, oversampled, with sample peak, RMS and the crest factor between them.
+    - Stereo correlation full band and below 120 Hz, and low-end survival of a mono sum.
+    - Seven band energies on the mono sum, and their weighted centre, not an FFT centroid.
 
-    - Loudness to EBU R128, from Max's loudness~: momentary (400 ms), short term
-      (3 s), gated integrated since the last reset, and loudness range.
-    - True peak, oversampled, so peaks between two samples count. Sample peak and
-      RMS beside it, and the crest factor between peak and RMS.
-    - Stereo correlation over the whole band and below 120 Hz, and whether the low
-      end survives being summed to mono.
-    - Energy in seven bands on the mono sum, plus their energy weighted centre.
-      That centre is a centre of mass over seven band levels, not an FFT centroid.
+    The device reads at its position in the chain, so it belongs last: an effect
+    after it is not in the reading. A master chain sits before the master fader, so a
+    master reading matches the output only at 0.0 dB. The two peak figures are maxima
+    since the last reset and only rise: to measure one, call with
+    reset=true and no accumulate, let a pass of the material through, then call again.
+    The averaged figures need no reset. What it proves is what the signal measured
+    passing the device, not the room.
 
-    Where it measures matters. The device reads the signal at its own position in
-    the chain, so it belongs last on the track: an effect loaded after it is not
-    in what it reports. A master track's device chain sits before the master
-    fader, so a master reading matches the set's output only while that fader is
-    at 0.0 dB.
-
-    The two peak figures are maxima since the meter was last reset and only rise.
-    To measure a peak, call once with reset=true, let at least one pass of the
-    material through, then call again. The averaged figures need no reset.
-
-    A read-back proves the stored value and never audibility: this proves what the
-    signal measured as it passed the device, which is a different and stronger
-    claim than any parameter value, and still not a claim about the room.
+    Every measurement carries the transport state from immediately after it, so a reading
+    taken mid scene change can be recognised. ``in_transition`` is true while any track
+    reports fired_slot_index 0 or more, a launch waiting for the next quantization boundary,
+    and ``tracks_sounding`` counts tracks whose playing_slot_index is 0 or more while the
+    transport runs, 0 when stopped: clips Live plays, not what is audible. Unreadable state
+    gives ``transport`` null with a code and one sentence in ``transport_unavailable``, or
+    not_queried when the analyzer did not answer.
     """
     target = str(track).strip()
     match_name = _analyzer_target_name(target)
+    # The registry is keyed on the caller's own argument, not on the name it resolved
+    # to. A name can be changed in Live between a start and the read that follows it,
+    # and the Channel A read behind match_name can fail and answer None, either of which
+    # would move the key out from under a poller that is still sampling.
+    acc_key = target
+
+    if accumulate == "start":
+        if acc_key in _ACTIVE_ACCUMULATORS:
+            _ACTIVE_ACCUMULATORS[acc_key].stop()
+        acc = AudioAccumulator(target, window_ms, occupancy_threshold_db, match_name)
+        _ACTIVE_ACCUMULATORS[acc_key] = acc
+        acc.start()
+        # Read here because this is the state the accumulation began in, which is what
+        # says whether the windows about to be counted describe a set that was playing.
+        transport, transport_missing = _query_transport()
+        return {
+            "ok": True,
+            "status": "accumulating",
+            "accumulate": "start",
+            "track": target,
+            "window_ms": window_ms,
+            "occupancy_threshold_db": occupancy_threshold_db,
+            "transport": transport.model_dump() if transport else None,
+            "transport_unavailable": transport_missing,
+            "summary": (
+                f"Started accumulating band occupancy for '{target}' (window: {window_ms}ms, "
+                f"threshold: {occupancy_threshold_db}dB). Call "
+                "analyze_audio(accumulate='read') to retrieve results."
+            ),
+        }
+
+    if accumulate == "reset":
+        # Gated on the removal, not on the request: saying an accumulation was reset
+        # when none was running claims an effect this call did not have.
+        stopped = _ACTIVE_ACCUMULATORS.pop(acc_key, None)
+        if stopped is None:
+            return {
+                "ok": False,
+                "status": "not_accumulating",
+                "code": "not_accumulating",
+                "accumulate": "reset",
+                "track": target,
+                "transport": None,
+                "transport_unavailable": _transport_missing(
+                    "not_queried",
+                    "Nothing was stopped and nothing was measured, so Live's transport "
+                    "was not read.",
+                ),
+                "error": (
+                    f"No accumulation was running for track {target!r}, so nothing was "
+                    "stopped. Name the same track the start call named, or call "
+                    "analyze_audio(accumulate='start') to begin one."
+                ),
+            }
+        stopped.stop()
+        return {
+            "ok": True,
+            "status": "reset",
+            "accumulate": "reset",
+            "track": target,
+            "transport": None,
+            "transport_unavailable": _transport_missing(
+                "not_queried",
+                "Accumulation was stopped and nothing was measured, so Live's transport "
+                "was not read.",
+            ),
+            "summary": f"Reset accumulation for '{target}'.",
+        }
+
+    if accumulate == "read":
+        acc = _ACTIVE_ACCUMULATORS.get(acc_key)
+        if acc is None:
+            return {
+                "ok": False,
+                "status": "not_accumulating",
+                "code": "not_accumulating",
+                "accumulate": "read",
+                "track": target,
+                "transport": None,
+                "transport_unavailable": _transport_missing(
+                    "not_queried",
+                    "No accumulation was running, so nothing was measured and Live's "
+                    "transport was not read.",
+                ),
+                "error": (
+                    f"No active accumulation found for track {target!r}. Call "
+                    "analyze_audio(accumulate='start') first."
+                ),
+            }
+        if acc.total_windows == 0:
+            # A read before the first window is not a measurement of anything. Taking a
+            # fresh single-shot reading here and labelling it an accumulation would
+            # answer a question about a stretch of time with a sample of one moment.
+            return {
+                "ok": False,
+                "status": "accumulating",
+                "code": "no_windows_yet",
+                "accumulate": "read",
+                "track": target,
+                "accumulated_windows": 0,
+                "band_occupancy": None,
+                "spectrum": None,
+                "transport": None,
+                "transport_unavailable": _transport_missing(
+                    "not_queried",
+                    "No analysis window had been classified yet, so there was no "
+                    "measurement to time-stamp and Live's transport was not read.",
+                ),
+                "error": (
+                    f"Accumulation for {target!r} is running but no analysis window has been "
+                    "classified yet, so there is nothing to report. Let the material play "
+                    "and call analyze_audio(accumulate='read') again."
+                ),
+            }
+
+        # Built from the accumulator alone: the analyzer is not asked again, because a
+        # fresh window would describe a different stretch of time than the counts do.
+        pcts = band_occupancy_percentages(acc.occupied_counts, acc.total_windows)
+        band_occupancy = BandOccupancy(
+            sub_pct=pcts.get("band_sub"),
+            bass_pct=pcts.get("band_bass"),
+            low_mid_pct=pcts.get("band_low_mid"),
+            mid_pct=pcts.get("band_mid"),
+            high_mid_pct=pcts.get("band_high_mid"),
+            presence_pct=pcts.get("band_presence"),
+            air_pct=pcts.get("band_air"),
+        )
+        means = band_amplitude_means(acc.band_amplitudes_sum, acc.total_windows)
+        elapsed = time.monotonic() - acc.started_monotonic
+        # elapsed_s is the wall clock between the start and this read, which is what
+        # its own description promises. The coverage is taken against a longer stretch:
+        # the first window looks back over its own length, so audio from before the
+        # start call is among the counted milliseconds and belongs in the denominator.
+        reached_s = elapsed + (acc.first_window_ms or 0.0) / 1000.0
+        span = AccumulationSpan(
+            windows=acc.total_windows,
+            elapsed_s=round(elapsed, 2),
+            window_ms=round(acc.covered_ms / acc.total_windows, 1),
+            coverage_pct=window_coverage_pct(acc.covered_ms, reached_s),
+        )
+        transport, transport_missing = _query_transport()
+        return analyzer_report.build(
+            [acc.last_reply],
+            target,
+            reset=False,
+            match_name=match_name,
+            # The accumulator's own threshold, not the caller's argument: the counting
+            # already happened at the threshold that was in force when it started.
+            occupancy_threshold_db=acc.threshold_db,
+            transport=transport,
+            transport_unavailable=_transport_unavailable(transport_missing),
+            band_occupancy=band_occupancy,
+            accumulated_bands=means,
+            accumulation=span,
+        ).model_dump()
+
+    # Normal single-shot measurement. The analyzer is asked first: a reply that never
+    # came has no measurement to time-stamp, and reading Live's transport beside it
+    # would spend a round trip on a moment nothing was measured at.
     client = AnalyzerClient()
     replies = await client.measure(window_ms=window_ms, reset=reset)
+    transport: TransportState | None = None
+    transport_missing: dict[str, Any] | None = _transport_missing(
+        "not_queried", _TRANSPORT_NO_REPLY
+    )
+    if replies:
+        transport, transport_missing = _query_transport()
     return analyzer_report.build(
-        replies, target, reset=reset, match_name=match_name
+        replies,
+        target,
+        reset=reset,
+        match_name=match_name,
+        transport=transport,
+        transport_unavailable=_transport_unavailable(transport_missing),
     ).model_dump()
 
 
@@ -5883,7 +9022,11 @@ _LIMITS_FALLBACK: list[dict[str, str]] = [
                 "restart. als_write(operation='sidechain') stays for a project Live has "
                 "not got open."},
     {"limit": "Write track automation", "kind": "LOM", "class": "hard",
-     "why": "clip.automation_envelope() returns None for Arrangement clips.",
+     "why": "create_automation_envelope refuses on an Arrangement clip, measured "
+            "2026-08-30 against Live 12.4.5: RuntimeError, 'Not a session clip or "
+            "parameter belongs to another track.' The often quoted reason, that "
+            "automation_envelope() answers None there, was withdrawn on 2026-09-16: a "
+            "Session clip in the same set answered None too, so None separates nothing.",
      "instead": "Write a Session clip, then arrange it. Never the reverse."},
     {"limit": "Unconfigured VST parameters", "kind": "Live", "class": "gui",
      "why": "How much of a plugin the LOM sees is decided by the plugin. Measured "
@@ -5935,7 +9078,9 @@ def limits_resource() -> str:
             SESSION_ONLY_NOTE,
             CONFIGURE_NOTE,
             GROUP_TRACK_NOTE,
+            SESSION_ARRANGEMENT_BOUNDARY_RULE,
         ],
+        "max_batch_ops": MAX_BATCH_OPS,
     }
 
     try:

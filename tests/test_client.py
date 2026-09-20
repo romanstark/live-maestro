@@ -1,18 +1,17 @@
-"""Transport tests for :mod:`live_maestro.client` with mock server.
+"""Transport tests for :mod:`live_maestro.client` against a fake script.
 
-No Live, ever. CI runs on Linux with no Live installed, so what stands in for
-``live-remote-script/__init__.py`` here is :class:`FakeScript`: a thread, a loopback
-socket on an ephemeral port, and the same frameless receive loop the real script runs
-(docs/protocol.md §2). Nothing sleeps. The only waiting in the file is a deliberate
-sub-second timeout in the two tests that are *about* timing out.
+No Live, ever. CI runs on Linux with none installed, so :class:`FakeScript` stands in
+for ``live-remote-script/__init__.py``: a thread, a loopback socket on an ephemeral
+port, and the same frameless receive loop the real script runs (docs/protocol.md §2).
+Nothing sleeps; the only waiting is a deliberate sub-second timeout in the two tests
+about timing out.
 
-The weight of the file sits on §2 and §3, because that is where silent corruption
-lives. A multi-byte character split across a ``recv`` boundary, or a discarded buffer
-remainder, does not raise: it desynchronises the connection and every reply from then
-on answers the *previous* request. Those two are therefore tested by construction
-rather than by luck: the receive chunk size is driven down to one byte so the split is
-guaranteed, and the fake answers a request it was never asked, so a client that threw
-the remainder away has nothing to fall back on.
+The §2 and §3 failures are the silent ones. A multi-byte character split across a
+``recv`` boundary, or a discarded buffer remainder, does not raise: it desynchronises
+the connection, and every reply from then on answers the previous request. Both are
+forced rather than waited for. The receive chunk size is driven down to one byte, and
+the fake answers a request it was never asked, so a client that threw the remainder
+away has nothing to fall back on.
 """
 
 from __future__ import annotations
@@ -674,16 +673,13 @@ def test_timeout_classes_are_the_ones_in_section_8() -> None:
 
 
 def test_browser_walk_stays_in_the_read_class() -> None:
-    """The third row of §8's table (60 s) is deliberately *not* a client floor.
+    """The third row of §8's table (60 s) is deliberately not a client floor.
 
-    §8's own prose settles it: the script gives ``browser_walk`` an 8 s
-    main-thread budget and truncates its walk before that, reporting ``truncated``
-    and ``truncated_by`` with real results. The invariant that matters is that the
-    script always answers before the client gives up, and 8 < 10 holds it: a 60 s
-    client floor would only sit waiting for an answer that already came. A caller
-    who genuinely wants to wait longer passes ``timeout=`` for that one call.
-
-    This test is here so that reinstating the floor is a decision, not a drift.
+    The script gives ``browser_walk`` an 8 s main-thread budget and truncates its
+    walk before that, reporting ``truncated`` and ``truncated_by`` with real
+    results. The script therefore answers before the client gives up, since 8 < 10,
+    and a 60 s client floor would only sit waiting for an answer that already came.
+    A caller who wants to wait longer passes ``timeout=`` for that one call.
     """
     assert client_module.HANDLER_TIMEOUTS == {}
     assert LiveClient().timeout_for("browser_walk") == 10.0
@@ -724,7 +720,7 @@ def test_read_only_set_matches_the_protocol_table() -> None:
 
     A handler outside this set is treated as a write, so it is never retried after
     a dropped connection: the first call after a Live restart meets the dead cached
-    socket and fails there. Deciding the row is not paperwork.
+    socket and fails there.
     """
     assert set(READ_ONLY_HANDLERS) == {
         "ping",
@@ -871,9 +867,10 @@ def test_a_busy_main_thread_is_retried_once_for_a_read(
 ) -> None:
     """A read that ran out of main-thread budget is retried once.
 
-    Measured 2026-09-01: opening a set holding four plugin instances kept Live's
-    main thread past an 8 s ``lom_describe`` budget, and the identical call
-    answered normally a moment later.
+    Measured 2026-09-01 against a running Live: opening a set holding four plugin
+    instances
+    kept the main thread past the 8 s ``lom_describe`` budget, and the identical
+    call answered normally a moment later.
     """
     script = start_script(replies(budget_expired("lom_describe"), success({"class": "Reverb"})))
     client = connect(script)

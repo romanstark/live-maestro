@@ -1,27 +1,17 @@
 """The UDP side of ``analyze_audio``: ask every analyzer in the set, collect answers.
 
-Three properties of Max's own objects shape this module.
+The socket must stay unconnected. ``create_datagram_endpoint(remote_addr=...)`` calls
+``connect`` underneath, and a connected UDP socket drops every datagram whose source
+is not the address it connected to, while Max's ``udpsend`` answers from its own
+ephemeral source port. The reply address travels in the request, so the device sends
+to the port this client bound. A fake that answers over the socket the client connected
+to matches by construction, so a test has to answer from a different one.
 
-The socket must not be connected. ``create_datagram_endpoint(remote_addr=...)`` calls
-``connect`` underneath, and a connected UDP socket drops every datagram whose
-source is not the address it connected to. Max's ``udpsend`` sends from its own
-ephemeral source port, so a connected socket never sees the reply. A mock that
-answers over the socket the client connected to matches by construction and
-proves nothing, which is why ``tests/test_analyzer_client.py`` answers from a
-different one.
-
-The reply address is carried in the request. The device sets its sender from it,
-so the answer arrives at the port this client actually bound.
-
-Every reply is collected, not the first one. A set can hold the device on several
-tracks, they all bind the same port and they all answer. Choosing among them is
-:mod:`live_maestro.analyzer.report`'s job, and collecting them all is what
-makes "which tracks can measure?" a question with an answer.
-
-Nothing here waits for audio. The device reports rolling averages of audio that
-has already played, so a request is answered as fast as Max's scheduler runs it.
-The timeout therefore covers a round trip and nothing else, and sizing it against
-a capture window would be sizing it against something this protocol never does.
+Every reply is collected, not the first one: the device can sit on several tracks,
+they all bind the same port and they all answer, and choosing among them is
+:mod:`live_maestro.analyzer.report`'s job. Nothing here waits for audio, because the
+device reports rolling averages of audio that has already played, so the timeout
+covers one round trip and nothing else.
 """
 
 from __future__ import annotations
@@ -57,10 +47,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_ANALYZER_HOST = "127.0.0.1"
 DEFAULT_ANALYZER_PORT = DEFAULT_DEVICE_PORT
 
-#: How long to wait for the first answer. Generous on purpose: Max answers a
-#: request in the low milliseconds, and the only thing that makes this long is a
-#: machine under load. A caller that gets nothing back within it is told the
-#: device was not found, and being slow to say so is better than being wrong.
+#: How long to wait for the first answer. Max answers in the low milliseconds, so
+#: the margin covers a machine under load. Nothing received within it is reported
+#: to the caller as the device not being found.
 DEFAULT_TIMEOUT_SECONDS = 1.5
 
 #: How much longer to listen once the first answer is in, so a second and third
@@ -68,9 +57,8 @@ DEFAULT_TIMEOUT_SECONDS = 1.5
 #: the same time, so this only has to cover the spread between them.
 DEFAULT_SETTLE_SECONDS = 0.15
 
-#: Request ids only have to distinguish one in-flight request from the previous
-#: one, so that a late answer to an abandoned request is not read as an answer to
-#: this one. A counter does that. A random number would too, with no advantage.
+#: Request ids only have to tell one in-flight request from the previous one, so
+#: that a late answer to an abandoned request is not read as an answer to this one.
 _REQUEST_IDS = itertools.count(1)
 
 
@@ -115,13 +103,11 @@ class _Collector(asyncio.DatagramProtocol):
 def parse_reply(data: bytes) -> Reply | None:
     """Turn one datagram into a :class:`Reply`, or ``None`` if it is not one.
 
-    Anything that is not this project's reply address is dropped rather than
-    guessed at, because port 9882 is not reserved and another OSC sender on the
-    same machine is entitled to use it.
+    A datagram on another OSC address is dropped rather than guessed at: port 9882 is
+    not reserved and another sender on the machine may use it.
 
-    A track name holding spaces may reach here split across several string
-    arguments. The numbers come first precisely so the tail can be rejoined
-    without losing them.
+    A track name holding spaces may arrive split across several string arguments. The
+    numbers come first, so the tail can be rejoined without losing them.
     """
     try:
         address, args = decode(data)
@@ -172,9 +158,8 @@ class AnalyzerClient:
     async def measure(self, *, window_ms: int = 400, reset: bool = False) -> list[Reply]:
         """Ask every analyzer in the open set and return the replies that arrived.
 
-        An empty list means nothing answered. That is one fact with several
-        causes, all of which need the same first step from the user, so the
-        distinction is left to the report rather than guessed at here.
+        An empty list means nothing answered, whatever the cause. Wording the causes
+        is :mod:`live_maestro.analyzer.report`'s job.
         """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[bytes] = asyncio.Queue()

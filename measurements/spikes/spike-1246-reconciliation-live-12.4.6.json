@@ -1,0 +1,234 @@
+{
+  "record": "spike-measurement",
+  "schema_version": 1,
+  "id": "1246-reconciliation",
+  "title": "Live 12.4.6 did not move the object model, as far as two recordings taken against different sets can show",
+  "measured_on": "2026-09-17",
+  "live_version": "12.4.6",
+  "script_version": "0.1.2",
+  "protocol_version": 1,
+  "host": "macOS 26.6.2",
+  "set": "the open demo song, not the specimen set the upgrade runbook asks for",
+  "question": "Did the 12.4.5 to 12.4.6 upgrade add or remove anything in Live's object model that the catalog would have to follow?",
+  "result": {
+    "verdict": "negative, and weaker than a runbook re-verification",
+    "means": "Nothing was added and nothing removed by 12.4.6 that these two recordings can see. This is not a substitute for step 2 of the upgrade runbook, and it does not license skipping one."
+  },
+  "readings": [
+    {
+      "reading": "scripts/sync_catalog.py --report against the open set",
+      "observed": {
+        "examined_rows": 1166,
+        "confirmed": 925,
+        "missing": 80,
+        "refused_by_live": 3,
+        "mis_shaped": 0,
+        "not_reached": 158,
+        "proposals": {
+          "new_rows": 108,
+          "deletions": 80,
+          "status_changes": 0
+        }
+      },
+      "weight": "none on its own. The run was taken against the open demo song rather than the specimen set, so every proposal is a set artefact. The deletion proposals are visibly so: they read 'song.tracks[11].clip_slots[0].clip.<member> is None here', which is an empty clip slot and not a missing property."
+    },
+    {
+      "reading": "class-by-class diff of the two describe recordings, computed offline 2026-09-17",
+      "method": "Every object each recording describes was grouped by its Live class, and the union of its properties, children and methods was compared per class.",
+      "inputs": [
+        {
+          "file": "sync-run3.json",
+          "recorded": "2026-08-30T11:51:28+02:00",
+          "live_version": "12.4.5",
+          "script_version": "0.4.0",
+          "protocol_version": 2,
+          "set": "the specimen set"
+        },
+        {
+          "file": "sync-12.4.6.json",
+          "recorded": "2026-09-17T09:11:14+02:00",
+          "live_version": "12.4.6",
+          "script_version": "0.1.2",
+          "protocol_version": 1,
+          "set": "the open demo song"
+        }
+      ],
+      "observed": {
+        "classes_in_august_recording": 26,
+        "classes_in_today_recording": 19,
+        "classes_in_both": 18,
+        "classes_that_differ": 1,
+        "differing_class": "View",
+        "direction": "the August recording had more members; today's had none the August one lacked",
+        "members_only_in_august": [
+          "sample_start",
+          "sample_end",
+          "sample_loop_start",
+          "sample_loop_end",
+          "sample_loop_fade",
+          "sample_env_fade_in",
+          "sample_env_fade_out",
+          "selected_band",
+          "selected_slice",
+          "and the add/remove/has listener triplet of each of those nine"
+        ],
+        "classes_only_in_august_recording": [
+          "Device",
+          "DrumChain",
+          "DrumPad",
+          "Groove",
+          "HybridReverbDevice",
+          "LooperDevice",
+          "SimplerDevice",
+          "WavetableDevice"
+        ],
+        "classes_only_in_todays_recording": [
+          "WarpMarker"
+        ]
+      },
+      "interpretation": "View is polymorphic per device. The nine properties come from a Simpler and an Eq8 that the specimen set held and the demo song does not, so that is a set difference and not a Live change. The classes reached by only one recording are the same story: each of the eight only in the August recording is a device class, a drum pad or chain inside one, or the Groove in the pool, all of which that set held; WarpMarker is reached only in today's recording, at song.tracks[10].arrangement_clips[0].warp_markers[0]; the specimen set also carried a warped clip, so why the August run reached no marker is not established here and is a recorder or path question rather than a Live change."
+    }
+  ],
+  "verification_notes": [
+    "The class-by-class diff was recomputed independently on 2026-09-17 and the verdict reproduces: of the 17 classes both recordings reach, exactly one differs, and only in the direction of the 2026-08-30 recording having more members. Nothing appears under 12.4.6 that the earlier recording lacks, which is the direction a Live addition would show in.",
+    "An earlier draft of this record said 18 shared classes. That counted NoneType, which the recorder files for a member that resolved to nothing on the specimen; the real figure is 17.",
+    "It reproduces only when a member is counted regardless of which bucket the recorder put it in: the recorder files a member under 'children' when it resolves on the specimen and under 'properties' when it does not, so the three lists have to be unioned per class before they are compared."
+  ],
+  "reproducibility": {
+    "specimen_set": "none exists",
+    "detail": "No saved set on this machine carries a matching name; the seven non-factory sets are music projects. measurements/catalog-live-12.4.5.json records live_version, script_version and rows, and no field naming the set the run was taken against, although step 2 of docs/upgrading_live.md asks for exactly that.",
+    "consequence": "The 2026-08-30 run is not reproducible. The next upgrade cannot re-measure against what this one measured against, and has to build a specimen set from the runbook's table first.",
+    "recordings_are_not_in_the_repository": "sync-run3.json and sync-12.4.6.json both sit outside version control, so the diff above cannot be re-run from a clone either."
+  },
+  "recorded_also_in": [
+    "docs/limits.md, section 5, 'Did Live 12.4.6 move the object model?'"
+  ],
+  "still_owed": [
+    "docs/upgrading_live.md has to carry the finding that no saved specimen set exists and that a report records no set identity. That file is owned elsewhere and the sentences for it were handed over rather than written here."
+  ],
+  "class_inventory": {
+    "why": "Both raw recordings are unavailable to a later reader: sync-run*.json is gitignored and the 12.4.6 recording lived only in a session scratchpad. This inventory is what the comparison actually rests on, so the verdict can be checked without them.",
+    "member_counts_12_4_5": {
+      "Application": 37,
+      "Browser": 30,
+      "BrowserItem": 9,
+      "Chain": 40,
+      "ChainMixerDevice": 7,
+      "Clip": 189,
+      "ClipSlot": 40,
+      "CuePoint": 9,
+      "Device": 34,
+      "DeviceParameter": 32,
+      "DrumChain": 52,
+      "DrumPad": 18,
+      "Eq8Device": 46,
+      "Groove": 21,
+      "GroovePool": 4,
+      "HybridReverbDevice": 63,
+      "LooperDevice": 62,
+      "MixerDevice": 22,
+      "RackDevice": 86,
+      "Scene": 44,
+      "SimplerDevice": 97,
+      "Song": 244,
+      "Track": 209,
+      "View": 128,
+      "WavetableDevice": 99
+    },
+    "member_counts_12_4_6": {
+      "Application": 37,
+      "Browser": 30,
+      "BrowserItem": 9,
+      "Chain": 40,
+      "ChainMixerDevice": 7,
+      "Clip": 189,
+      "ClipSlot": 40,
+      "CuePoint": 9,
+      "DeviceParameter": 32,
+      "Eq8Device": 46,
+      "GroovePool": 4,
+      "MixerDevice": 22,
+      "RackDevice": 86,
+      "Scene": 44,
+      "Song": 244,
+      "Track": 209,
+      "View": 92,
+      "WarpMarker": 2
+    },
+    "reached_by_both": [
+      "Application",
+      "Browser",
+      "BrowserItem",
+      "Chain",
+      "ChainMixerDevice",
+      "Clip",
+      "ClipSlot",
+      "CuePoint",
+      "DeviceParameter",
+      "Eq8Device",
+      "GroovePool",
+      "MixerDevice",
+      "RackDevice",
+      "Scene",
+      "Song",
+      "Track",
+      "View"
+    ],
+    "only_in_12_4_5": [
+      "Device",
+      "DrumChain",
+      "DrumPad",
+      "Groove",
+      "HybridReverbDevice",
+      "LooperDevice",
+      "SimplerDevice",
+      "WavetableDevice"
+    ],
+    "only_in_12_4_6": [
+      "WarpMarker"
+    ],
+    "differing_members": {
+      "View": {
+        "only_in_12_4_5": [
+          "add_sample_end_listener",
+          "add_sample_env_fade_in_listener",
+          "add_sample_env_fade_out_listener",
+          "add_sample_loop_end_listener",
+          "add_sample_loop_fade_listener",
+          "add_sample_loop_start_listener",
+          "add_sample_start_listener",
+          "add_selected_band_listener",
+          "add_selected_slice_listener",
+          "remove_sample_end_listener",
+          "remove_sample_env_fade_in_listener",
+          "remove_sample_env_fade_out_listener",
+          "remove_sample_loop_end_listener",
+          "remove_sample_loop_fade_listener",
+          "remove_sample_loop_start_listener",
+          "remove_sample_start_listener",
+          "remove_selected_band_listener",
+          "remove_selected_slice_listener",
+          "sample_end",
+          "sample_end_has_listener",
+          "sample_env_fade_in",
+          "sample_env_fade_in_has_listener",
+          "sample_env_fade_out",
+          "sample_env_fade_out_has_listener",
+          "sample_loop_end",
+          "sample_loop_end_has_listener",
+          "sample_loop_fade",
+          "sample_loop_fade_has_listener",
+          "sample_loop_start",
+          "sample_loop_start_has_listener",
+          "sample_start",
+          "sample_start_has_listener",
+          "selected_band",
+          "selected_band_has_listener",
+          "selected_slice",
+          "selected_slice_has_listener"
+        ],
+        "only_in_12_4_6": []
+      }
+    }
+  }
+}

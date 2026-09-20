@@ -1,0 +1,101 @@
+{
+ "record": "spike-measurement",
+ "schema_version": 1,
+ "id": "browser-uri-stability",
+ "title": "A browser uri and its positional item_path survive a Live restart and a point upgrade",
+ "measured_on": "2026-09-17",
+ "recorded_on": "2026-09-16",
+ "live_version": "12.4.6",
+ "live_version_when_recorded": "12.4.5",
+ "script_version": "0.1.2",
+ "protocol_version": 1,
+ "host": "macOS 26.6.2",
+ "set": "empty four-track set",
+ "question": "Does the uri of a browser position stay stable across Live restarts, so that a Phase 4 cache can key on it?",
+ "answers": {
+  "item": "validation 3",
+  "state_before_this_record": "open question",
+  "answered_in": "A question raised in working notes kept outside the repository, under \"9. Zuerst validieren\". This record is the published answer."
+ },
+ "method": [
+  "A uri and an item_path were recorded 2026-09-16 against Live 12.4.5 for a device in the User Library.",
+  "Live was quit, upgraded from 12.4.5 to 12.4.6 and started again. The Control Surface selection survived the upgrade and the script answered without being reinstalled.",
+  "The same uri was looked up again 2026-09-17 against Live 12.4.6, three times: scoped to the root it lives under, scoped to a root it does not live under, and unscoped.",
+  "The recorded item_path was read back directly with lom_get."
+ ],
+ "subject": {
+  "uri": "query:UserLibrary#Presets:Audio%20Effects:Max%20Audio%20Effect:LiveMaestro%20Analyzer.amxd",
+  "item_path": "app.browser.user_library.children[5].children[0].children[32].children[0]",
+  "name": "LiveMaestro Analyzer"
+ },
+ "readings": [
+  {
+   "reading": "uri lookup scoped to the root the item lives under",
+   "input": {
+    "uri": "query:UserLibrary#Presets:Audio%20Effects:Max%20Audio%20Effect:LiveMaestro%20Analyzer.amxd",
+    "root": "user_library"
+   },
+   "observed": {
+    "found": true,
+    "status": "complete",
+    "name": "LiveMaestro Analyzer",
+    "item_path": "app.browser.user_library.children[5].children[0].children[32].children[0]",
+    "item_path_identical_to_recorded": true
+   },
+   "note": "The positional item_path came back byte for byte as recorded the day before against the previous Live version."
+  },
+  {
+   "reading": "the recorded positional item_path read directly",
+   "input": {
+    "lom_get": "app.browser.user_library.children[5].children[0].children[32].children[0]"
+   },
+   "observed": {
+    "name": "LiveMaestro Analyzer"
+   },
+   "note": "The positions did not shift under the upgrade either."
+  },
+  {
+   "reading": "uri lookup scoped to a root the item does not live under",
+   "input": {
+    "uri": "query:UserLibrary#Presets:Audio%20Effects:Max%20Audio%20Effect:LiveMaestro%20Analyzer.amxd",
+    "root": "max_for_live"
+   },
+   "observed": {
+    "found": false,
+    "status": "complete"
+   },
+   "note": "A walk that finished and genuinely did not find it there, which is the correct negative for a device that lives elsewhere."
+  },
+  {
+   "reading": "uri lookup with no root",
+   "input": {
+    "uri": "query:UserLibrary#Presets:Audio%20Effects:Max%20Audio%20Effect:LiveMaestro%20Analyzer.amxd",
+    "root": null
+   },
+   "observed": {
+    "found": false,
+    "status": "incomplete",
+    "truncated_by": "node_budget",
+    "budget_left": 0,
+    "unreached_roots_count": 12
+   },
+   "note": "All twelve browser roots were listed as unreached. The uri did not fail to resolve; the walk never reached it."
+  }
+ ],
+ "result": {
+  "verdict": "stable",
+  "means": "A uri survives a Live restart and a 12.4.5 to 12.4.6 upgrade, and so does the positional item_path beside it. A cache keyed on either is viable.",
+  "condition": "A cached entry has to carry the browser root beside the uri. Resolving a uri walks the browser again, and an unscoped walk exhausts the node budget before it arrives, which answers found: false with status: incomplete rather than an error.",
+  "reading_the_negative": "found: false is only evidence of absence when status is complete. The unscoped reading here is the case that field exists for: without it the reply would have read as 'the uri is unstable across restarts', and the Phase 4 cache would have been designed around a defect that does not exist."
+ },
+ "scope_and_weakness": [
+  "One item, in one root, over one restart and one point upgrade. It does not show that a uri survives a major Live version, a Pack being moved, or the item being renamed.",
+  "The item is a user-library device installed by this project, so it is not evidence about factory content whose browser position Ableton controls."
+ ],
+ "provenance": {
+  "twelve_roots": "The count of twelve is from the reading. The root names are not: they are read off _BROWSER_ROOTS in live-remote-script/__init__.py at commit 2b19d8b, which lists instruments, sounds, drums, audio_effects, midi_effects, plugins, max_for_live, packs, user_library, clips, samples, current_project."
+ },
+ "recorded_also_in": [
+  "docs/limits.md, section 4, 'A browser uri survives a restart, and needs its root to resolve'"
+ ]
+}

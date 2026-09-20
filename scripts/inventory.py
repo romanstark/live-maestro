@@ -1,23 +1,18 @@
 """Survey this Ableton Live session and this Live Maestro installation.
 
-The report has two halves:
-1. Live session survey (requires running Live + active script): tracks, routing,
-   devices, clips, return tracks, master chain, and scene topology.
-2. Installation survey (runs offline): installed Live versions, User Library paths,
-   Remote Script presence, log diagnostics, and listening port status.
+The session survey needs Live running with the script active: tracks, routing, devices,
+clips, return tracks, master chain and scenes. The installation survey runs offline:
+installed Live versions, User Library paths, Remote Script presence, log diagnostics and
+port state. Its findings walk the causes of a silent port (Live's process state, the
+Control Surface dropdown, a restart owed since the script was written, the library folder
+picked), name VSTs exposing only ``Device On`` because their parameter strips are
+unconfigured, and report when :class:`CountingClient` had to walk indices for a Remote
+Script that reports a collection as an uncounted ``Vector``.
 
 Usage:
-    python scripts/inventory.py                    # complete session and install inventory
-    python scripts/inventory.py --json             # machine-readable JSON output
-    python scripts/inventory.py --installation-only # inspect local setup without Live running
-
-Key diagnostic checks:
-- Connection troubleshooting: validates Live process state, Control Surface dropdown
-  configuration, restart currency, and library directory selection.
-- Parameter configuration advice: identifies VSTs exposing only ``Device On`` due
-  to unconfigured parameter strips.
-- Vector collection fallback: supports legacy Remote Script collection indexing via
-  :class:`CountingClient`.
+    python scripts/inventory.py                     # session and installation
+    python scripts/inventory.py --json              # machine-readable JSON
+    python scripts/inventory.py --installation-only # no running Live needed
 """
 
 from __future__ import annotations
@@ -458,33 +453,26 @@ def probe_collection(
 ) -> dict[str, list[Any]]:
     """Count and read several LOM collections by walking their indices.
 
-    Why the walk exists
-    -------------------
-    Live's collections are not Python lists. ``song.tracks``,
-    ``track.devices`` and ``device.parameters`` are Live's own ``Vector``
-    objects, and an ``isinstance`` against ``(list, tuple)`` catches none of
-    them. A Remote Script that asks that question instead of
-    ``is_lom_collection`` answers a ``lom_get`` on a collection with a bare
-    *handle* (``{"__lom__": "Vector", ...}``) and lists it in ``lom_describe``
-    as a child of type ``Vector`` with no count.
+    Live's collections are not Python lists: ``song.tracks``, ``track.devices``
+    and ``device.parameters`` are Live's own ``Vector`` objects, which an
+    ``isinstance`` against ``(list, tuple)`` does not catch. A Remote Script that
+    asks that question instead of ``is_lom_collection`` answers a ``lom_get`` on
+    a collection with a bare *handle* (``{"__lom__": "Vector", ...}``) and lists
+    it in ``lom_describe`` as a child of type ``Vector`` with no count.
 
-    *Measured 2026-08-29, Live 12.4.5, on a 53-track set:* against such a script,
-    ``lom_get("song.tracks")`` gave ``{"__lom__": "Vector"}``. ``lom_describe("song")``
+    *Measured 2026-08-29, Live 12.4.5, on a 53-track set,* against such a script:
+    ``lom_get("song.tracks")`` gave ``{"__lom__": "Vector"}``, ``lom_describe("song")``
     gave ``{"name": "tracks", "type": "Vector"}`` with no ``count``, and
-    ``song.tracks[0].name`` answered ``'01 SC Trigger'``. Anything that counts a
-    collection from those two replies reports zero tracks for a set with 53: a
-    confident, wrong, silent answer.
+    ``song.tracks[0].name`` answered ``'01 SC Trigger'``. Counting from those two
+    replies reports zero tracks for a set with 53.
 
     The script in this repository encodes a collection as a list of element
-    handles and gives a describe child a real ``count``
-    (``docs/protocol.md`` §5.3, §5.6). This walk remains for an installation
-    running an older script, and for the device and parameter surveys,
-    which want the element handles anyway. It indexes upwards until
-    ``index_out_of_range``.
-
-    It is cheap because it is batched and because the handles carry names:
-    walking ``<track>.devices`` names every device in the same round trip that
-    counts them. *Measured on that set:* 59 device collections in one round
+    handles and gives a describe child a real ``count`` (``docs/protocol.md``
+    §5.3, §5.6), so this walk remains for an installation running an older script
+    and for the device and parameter surveys, which want the handles anyway. It
+    indexes upwards until ``index_out_of_range``, batched, and the handles carry
+    names, so walking ``<track>.devices`` names every device in the round trip
+    that counts them. *Measured on that set:* 59 device collections in one round
     (1.8 s), 85 parameter collections in one round (1.4 s).
 
     Args:
@@ -836,9 +824,8 @@ def _finding(severity: str, what: str, fix: str) -> dict[str, str]:
 def _connection_findings(install: dict[str, Any], session: dict[str, Any]) -> list[dict[str, str]]:
     """The cold-start walk-through: four causes, each already checked on disk.
 
-    Written as a numbered list rather than a guess, because every one of the
-    four produces the same symptom (silence on the port) and three of them
-    produce no error message anywhere in Live.
+    A numbered list rather than a guess: all four produce the same symptom,
+    silence on the port, and three produce no error message anywhere in Live.
     """
     ours = install.get("ours")
     log = install.get("log", {})

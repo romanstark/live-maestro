@@ -1,22 +1,17 @@
 """The repository's claims about itself, checked against the repository.
 
-Prose goes stale in a way code does not. A number written into a sentence is
-correct on the day it is written and silently wrong from the next commit onward.
-A citation to a section survives the section being renamed. A path pasted out of
-a terminal carries the account name of whoever ran it. None of that fails a test
-that only exercises behaviour, and all of it reaches a reader as fact.
-
-Each test here closes one class of that:
+Prose goes stale in a way code does not: a number is right on the day it is written
+and wrong from the next commit onward, a citation survives the section it names
+being renamed, and a pasted path carries somebody's account name. A test that only
+exercises behaviour sees none of it. Each test here closes one class:
 
 * a count in prose that the code contradicts, such as an allowlist size or a row
-  total that moved after the sentence was written,
+  total,
 * a citation that does not resolve: a document that is not tracked, a filename that
   does not exist, or a section-numbering form the cited document does not use,
 * a local path or account name pasted into a shipped file.
 
-They are deliberately narrow. A test that tried to check every number in the
-repository would be a test nobody trusts. These check the sentence shapes this
-repository actually writes and the citation forms it actually uses.
+They are deliberately narrow: they match the sentence shapes this repository writes.
 """
 
 from __future__ import annotations
@@ -25,6 +20,7 @@ import ast
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -37,11 +33,19 @@ SERVER = ROOT / "src" / "live_maestro" / "server.py"
 
 
 def tracked_files(*suffixes: str) -> list[Path]:
-    """Files git actually tracks. Anything else is not published and not our problem."""
-    out = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True
-    ).stdout.split()
-    return [ROOT / f for f in out if f.endswith(suffixes)]
+    """Files git actually tracks. Anything else is not published.
+
+    These guards police what the repository publishes, so they ask git rather than the
+    filesystem. An unpacked sdist is not a repository, which a packager running the
+    suite will hit: there the question cannot be asked at all, so the test skips rather
+    than crashing on ``git ls-files``.
+    """
+    probe = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=False
+    )
+    if probe.returncode != 0:
+        pytest.skip("not a git checkout, so there is nothing to ask git about")
+    return [ROOT / f for f in probe.stdout.split() if f.endswith(suffixes)]
 
 
 def read(path: Path) -> str:
@@ -93,13 +97,10 @@ def allowlist_entries() -> set[str]:
 def test_counts_in_prose_match_what_the_code_holds() -> None:
     """Every number the repository states about itself, recomputed.
 
-    The patterns below are sentence shapes, not expected numbers: each finds where
-    a count is being asserted and the test then compares whatever number is there
-    against the code. That way a figure only has to be wrong once to fail, and a
-    correct figure in a sentence nobody predicted does not have to be listed here.
-
-    The set is narrow by design. A test that claimed to check every number in the
-    repository would be a test nobody could trust.
+    The patterns below are sentence shapes, not expected numbers: each finds where a
+    count is being asserted and the test then compares whatever number is there
+    against the code. A correct figure in a sentence nobody predicted therefore does
+    not have to be listed here. The set is narrow by design.
     """
     registry = default_registry()
     rows = len(registry.all())
@@ -139,6 +140,10 @@ def test_counts_in_prose_match_what_the_code_holds() -> None:
         (re.compile(r"\ball (\d[\d,]*)\s+rows\b", re.IGNORECASE), rows, "catalog rows"),
         (re.compile(r"\bin (\d[\d,]*)\s+rows\b", re.IGNORECASE), rows, "catalog rows"),
         (re.compile(r"(\d[\d,]*)\s+entries covering"), len(allow), "allowlist entries"),
+        # The handshake example in protocol.md quotes the real size. Section 5.1 marks
+        # script_version in the same examples as a placeholder and says nothing about
+        # this one, so it reads as fact and has to be one.
+        (re.compile(r'"allowlist_size":\s*(\d[\d,]*)'), len(allow), "allowlist entries"),
         (re.compile(r"\*\*(\d[\d,]*) tools\b"), tools, "MCP tools"),
     ]
 
@@ -181,22 +186,68 @@ _SECTION_NAME_REF = re.compile(
 _PLACEHOLDER = re.compile(r"[<>]")
 
 
+#: Working documents that live in the tree and are deliberately kept out of the
+#: repository: planning notes, private specifications, and the assistant's own brief.
+#: Using an assistant is not part of what this server does, and a half-finished
+#: specification is not something a reader should be sent to. They are named here
+#: rather than read from .git/info/exclude, because that file is local to one
+#: checkout and this guard has to mean the same thing everywhere.
+DELIBERATELY_UNTRACKED = (
+    "CLAUDE.md",
+    "Tasks.md",
+    "docs/PRD.md",
+    "docs/audio_perception_spec.md",
+    "docs/implementation_plan.md",
+    "docs/live-maestro-contract-hardening-spec.md",
+    "docs/live-maestro-instrument-sweep-spec.md",
+    "docs/live-maestro-sound-rebuild-spec.md",
+)
+
+#: Files that name a deliberately untracked document in order to keep it out, and are
+#: therefore not citing it. The build configuration has to spell the names, because the
+#: sdist include list names directories and hatchling fills them from the filesystem.
+NAMES_THEM_TO_KEEP_THEM_OUT = ("pyproject.toml",)
+
+#: Suffixes a citation can hide in. JSON is here because the measurement records are
+#: JSON and cite the prose they went into, which is a contract their own README makes.
+CITING_SUFFIXES = (".md", ".py", ".yaml", ".toml", ".yml", ".json")
+
+
+def test_the_sdist_does_not_ship_a_working_document() -> None:
+    """A document kept out of the repository must not reach the package either.
+
+    The sdist include list names directories, and hatchling fills them from the
+    filesystem rather than from git, so a file that is untracked is still packaged.
+    The build has to exclude them by name, and this fails when a name is added to
+    :data:`DELIBERATELY_UNTRACKED` and not to that list.
+    """
+    config = tomllib.loads(read(ROOT / "pyproject.toml"))
+    sdist = config["tool"]["hatch"]["build"]["targets"]["sdist"]
+    included = {entry.split("/")[0] for entry in sdist["include"]}
+    excluded = set(sdist.get("exclude", []))
+    offences = [
+        f"{name} is deliberately untracked, sits under the packaged {name.split('/')[0]}/ "
+        "directory, and is not in the sdist exclude list"
+        for name in DELIBERATELY_UNTRACKED
+        if "/" in name and name.split("/")[0] in included and name not in excluded
+    ]
+    fail("working document(s) the sdist would ship", offences)
+
+
 def test_every_cited_document_is_tracked() -> None:
     """Verify cited documentation files are tracked in version control.
 
-    Existing on this disk is not the test. ``CLAUDE.md`` and ``docs/PRD.md`` are
-    deliberately untracked: they are working notes, and using an assistant is not
-    part of what this server does, so they sit in the working tree and would
-    never reach a clone. A tracked file citing one of them is a broken link for
-    everybody but the author, and checking the filesystem cannot see it.
+    Existing on this disk is not the test. The documents in
+    :data:`DELIBERATELY_UNTRACKED` sit in the working tree and would never reach a
+    clone. A tracked file citing one of them is a broken link for everybody but the
+    author, and checking the filesystem cannot see it.
     """
     tracked = {
-        p.relative_to(ROOT).as_posix()
-        for p in tracked_files(".md", ".py", ".yaml", ".toml", ".yml")
+        p.relative_to(ROOT).as_posix() for p in tracked_files(*CITING_SUFFIXES)
     }
     offences = []
-    for path in tracked_files(".md", ".py", ".yaml", ".toml", ".yml"):
-        if path.name == Path(__file__).name:
+    for path in tracked_files(*CITING_SUFFIXES):
+        if path.name in (Path(__file__).name, *NAMES_THEM_TO_KEEP_THEM_OUT):
             continue
         text = read(path)
         for m in _DOC_REF.finditer(text):
@@ -204,7 +255,7 @@ def test_every_cited_document_is_tracked() -> None:
             if cited not in tracked:
                 why = "is not tracked" if (ROOT / cited).exists() else "does not exist"
                 offences.append(f"{path.relative_to(ROOT).as_posix()}: cites {cited}, which {why}")
-        for name in ("CLAUDE.md", "docs/PRD.md"):
+        for name in DELIBERATELY_UNTRACKED:
             if name in text:
                 offences.append(
                     f"{path.relative_to(ROOT).as_posix()}: mentions {name}, which is "
@@ -352,10 +403,10 @@ def test_delete_track_measures_both_places_a_clip_can_live() -> None:
 def test_no_tool_reports_an_unqualified_clip_count() -> None:
     """``clip_count`` is a total, and this server never surveys the Arrangement.
 
-    The snapshot sweeps Session slots. Reporting that as ``clip_count`` invites
-    the reader to treat it as every clip in the set. In a project whose
-    arrangement holds material across twenty tracks, it is not close. The field
-    is ``session_clip_count`` and the qualifier is the whole point of it.
+    The snapshot sweeps Session slots. Reporting that as ``clip_count`` invites the
+    reader to treat it as every clip in the set, which it is not once the Arrangement
+    holds material. The field is ``session_clip_count`` and the qualifier is the whole
+    point of it.
     """
     offences = []
     for path in tracked_files(".py"):
@@ -373,10 +424,10 @@ def test_no_tool_reports_an_unqualified_clip_count() -> None:
 def test_read_clip_notes_can_be_asked_a_narrow_question() -> None:
     """Reading one bar must not mean transferring the clip.
 
-    Measured 2026-08-30: surveying note density across 59 drum clips meant a full
-    read of each, and a single 384-note clip came back as 57k characters: past
-    the tool-result cap. Live has taken a time window since Live 9 and the LOM
-    has no ``note_count`` at all, so both of these are ours to offer.
+    A single 384-note clip comes back as 57k characters, past the tool-result cap,
+    and a survey of many clips reads each one in full. Live has taken a time window
+    since Live 9 and the LOM has no ``note_count`` at all, so both of these are ours
+    to offer.
     """
     arguments = {arg.arg for arg in _function("read_clip_notes").args.args}
     missing = sorted({"from_time", "time_span", "count_only"} - arguments)
@@ -387,10 +438,9 @@ def test_a_group_tracks_loss_report_does_not_read_as_empty() -> None:
     """A group holds no clips of its own, and four tracks.
 
     ``delete_track`` on a group answered "0 device(s), 0 Session clip(s), no
-    Arrangement clip(s)": every count honest, the whole reading false, because
-    all of them describe the container. The numbers below are the real ones:
-    measured 2026-08-30 against Live 12.4.5, group "Vocal Bridge" at index 28
-    with tracks 29–32 inside it and track 33 outside.
+    Arrangement clip(s)": every count honest, the whole reading false, because all of
+    them describe the container. The fixture below is a real reading from Live 12.4.5:
+    group "Vocal Bridge" at index 28, tracks 29-32 inside it, track 33 outside.
     """
     from live_maestro import server
 
@@ -421,15 +471,13 @@ def test_load_device_says_what_aims_a_load_and_what_does_not() -> None:
     """A tool that cannot be aimed owes the caller the truth about that.
 
     ``Browser.load_item`` takes no target and follows Live's selection.
-    ``song.view.selected_track`` moves that selection and the docstring must
-    name it.
+    ``song.view.selected_track`` moves that selection and the docstring must name it.
 
-    ``rack.view.selected_chain`` does not, and this test used to demand the
-    opposite. Measured 2026-09-07 against Live 12.4.5: the write reads back as
-    the chain that was asked for, and a device loaded afterwards still lands on
-    the track, leaving the chain's device count untouched. The docstring has to
-    say so, because a caller who believes it can aim into a rack will replace an
-    instrument instead (docs/limits.md section 2).
+    ``rack.view.selected_chain`` does not. On Live 12.4.5 the write reads back as the
+    chain that was asked for, and a device loaded afterwards still lands on the track,
+    leaving the chain's device count untouched. The docstring has to say so, because a
+    caller who believes it can aim into a rack will replace an instrument instead
+    (docs/limits.md section 2).
     """
     doc = ast.get_docstring(_function("load_device")) or ""
     offences = []
@@ -481,6 +529,18 @@ def script_handlers() -> set[str]:
 #: section used to say X, and that was wrong" is a different sentence: it tells a
 #: reader about a revision they never saw, it dates instantly, and the place for
 #: it is the commit message that made the change.
+#: Prose about this repository's own files and past, which no exemption covers. A test
+#: may name the defect it guards; it may not name the file that used to hold it.
+_REPOSITORY_NARRATIVE = re.compile(
+    r"\bused\s+to\s+live\s+in\b"
+    r"|\breplaces?\s+the\s+(?:pair|tests?|fake|module|helper)\s+(?:that|which|above)\b"
+    r"|\bthe\s+old\s+(?:fake|test|version|code|module)\b"
+    r"|\bthe\s+first\s+test\s+in\s+this\s+repository\b"
+    r"|\bdefects?\s+shipped\b"
+    r"|\bwhy\s+this\s+module\s+exists\b",
+    re.IGNORECASE,
+)
+
 _EDIT_HISTORY = re.compile(
     r"\b(?:this|the)\s+(?:row|docstring|document|section|module|page|file|paragraph|line|"
     r"list|catalog|project)\s+(?:used\s+to|said|claimed|briefly|got\s+(?:it\s+)?wrong|"
@@ -506,12 +566,20 @@ def test_no_shipped_prose_narrates_its_own_edit_history() -> None:
     the measurement". The history goes in the commit that made the change, where it
     is exact and where it does not age into a puzzle.
 
-    ``tests/`` is exempt. A test docstring naming the defect it guards is stating
-    the test's purpose, and that is the one place the earlier bug is the point.
+    ``tests/`` may name the defect a test guards, which is the test's purpose. It may
+    not narrate this repository: a file that used to hold these tests, a fake that was
+    replaced, a sprint the work belonged to. Those patterns are in
+    :data:`_REPOSITORY_NARRATIVE` and apply everywhere.
     """
     offences = []
     for path in tracked_files(".md", ".py", ".yaml", ".yml"):
         relative = path.relative_to(ROOT).as_posix()
+        if relative == Path(__file__).relative_to(ROOT).as_posix():
+            continue
+        for i, line in enumerate(read(path).splitlines(), 1):
+            hit = _REPOSITORY_NARRATIVE.search(_INLINE_CODE.sub("", line))
+            if hit:
+                offences.append(f"{relative}:{i}: {hit.group(0)!r} (narrates the repository)")
         if relative.startswith("tests/"):
             continue
         for i, line in enumerate(read(path).splitlines(), 1):
@@ -608,23 +676,15 @@ def test_the_package_version_is_stated_once_and_agrees_with_itself() -> None:
     something compares them.
 
     The Remote Script is in the group on purpose. It cannot import the package, so it
-    holds a literal, and the reason to keep that literal equal is diagnostic: the script
-    inside Live only reloads when Live restarts, so a handshake reporting a number below
-    the installed package says the script is stale and nothing else. Two independent
-    series cannot say that. What the number cannot do is prove the file is current,
-    because an edit without a bump looks identical, and
-    ``python scripts/install_script.py --diff`` compares the bytes.
+    holds a literal, and keeping that literal equal is diagnostic: the script inside
+    Live only reloads when Live restarts, so a handshake reporting a number below the
+    installed package says the script is stale and nothing else. What the number
+    cannot do is prove the file is current, because an edit without a bump looks
+    identical, and ``python scripts/install_script.py --diff`` compares the bytes.
 
-    The better fix is to state it once: hatchling reads a version out of a source
-    file with ``dynamic = ["version"]`` and ``[tool.hatch.version] path = ...``,
-    and it is not applied here because the build backend is not installed in this
-    environment, so the change could not be verified by building. A build config
-    edited blind is a worse trade than a duplication with a test on it.
-
-    Note for anyone confused by a third number: ``importlib.metadata.version``
-    reports whatever was last installed, which lags the source until the package
-    is reinstalled. Nothing in this repository reads it, and it is not checked
-    here for that reason.
+    A third number is not checked here: ``importlib.metadata.version`` reports
+    whatever was last installed, which lags the source until the package is
+    reinstalled, and nothing in this repository reads it.
     """
     import tomllib
 
@@ -669,8 +729,7 @@ def test_the_remote_script_compiles() -> None:
     test imports it, because importing it needs Live's own ``Live`` and
     ``_Framework`` modules. So a syntax error here survives the whole suite and
     surfaces as Live failing to load the Control Surface, after an install, a
-    ``__pycache__`` delete and a restart, which is the most expensive way in this
-    project to learn about a typo.
+    ``__pycache__`` delete and a restart.
 
     ``compile`` rather than ``ast.parse``: a ``continue`` outside a loop parses
     cleanly and only fails at compile time, which is exactly the kind of edit a
@@ -687,10 +746,9 @@ def test_the_remote_script_avoids_syntax_lives_interpreter_may_not_have() -> Non
 
     The script says so itself: "no type annotations, no f-strings -- the
     interpreter is Live's, and its history is long". Every other file in the
-    repository is Python 3.11+ with full type hints, so both are what a
-    reformatter reaches for by reflex, and neither is caught by anything else.
-    This file compiles fine under 3.12 and would still be refused by an older
-    embedded interpreter.
+    repository is Python 3.11+ with full type hints, so both are what a reformatter
+    reaches for by reflex, and neither is caught by anything else. This file compiles
+    fine under 3.12 and would still be refused by an older embedded interpreter.
     """
     offences = []
     for node in ast.walk(_script_tree()):

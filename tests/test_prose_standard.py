@@ -7,6 +7,7 @@ These checks cover formatting and scope rules:
 
 from __future__ import annotations
 
+import ast
 import io
 import re
 import tokenize
@@ -37,15 +38,22 @@ LIVE_FACING = (
     "src/live_maestro/music/humanize.py",
     "src/live_maestro/automation.py",
     "scripts/",
+    "live-remote-script/",
+    # A test that pins a value Live produced states where the value came from. That is
+    # provenance for a fixture, not a claim about Live made by code that cannot see it.
+    "tests/",
 )
 
 DATED = re.compile(r"[Mm]easured 20\d{2}-\d{2}-\d{2}")
 
 
 def python_files() -> list[Path]:
-    """Return every Python file under src/ and scripts/, caches excluded."""
+    """Return every Python file this repository publishes, caches excluded.
+
+    tests/ and live-remote-script/ are in the set: both ship and both are read.
+    """
     out: list[Path] = []
-    for root in ("src", "scripts"):
+    for root in ("src", "scripts", "tests", "live-remote-script"):
         out.extend(
             p for p in sorted((ROOT / root).rglob("*.py")) if "__pycache__" not in p.parts
         )
@@ -105,6 +113,8 @@ def test_no_docstring_or_comment_uses_an_em_dash() -> None:
     """
     offences = []
     for path in python_files():
+        if path.name == Path(__file__).name:
+            continue
         for line, text in prose_tokens(read_source(path)):
             if EM_DASH in text:
                 offences.append(f"{relative(path)}:{line}")
@@ -121,11 +131,137 @@ def test_a_live_dated_measurement_sits_in_a_module_that_reaches_live() -> None:
     offences = []
     for path in python_files():
         module = relative(path)
-        if DATED.search(read_source(path)) and not module.startswith(LIVE_FACING):
-            offences.append(f"{module}: dates a finding against Live but never reaches it")
+        if module.startswith(LIVE_FACING) or path.name == Path(__file__).name:
+            continue
+        for line, text in prose_tokens(read_source(path)):
+            if DATED.search(text):
+                offences.append(
+                    f"{module}:{line}: dates a finding against Live but never reaches it"
+                )
     fail("Live-dated measurement outside a Live-facing module", offences)
 
 
 def read_source(path: Path) -> str:
     """Return the text of a Python file."""
     return path.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------------
+# Length. The only rule here that cannot be written around.
+# --------------------------------------------------------------------------------
+
+#: Lines a module docstring may spend on prose. Taken from this repository's own
+#: earlier files, whose module docstrings run to a median of twelve lines: a summary
+#: line, a blank, and a paragraph of what the module does and where it stops. The cap
+#: exists because every other rule in this file names a phrase, and a phrase can be
+#: avoided while the essay it belonged to stays. A line count cannot be avoided.
+MODULE_DOCSTRING_LINES = 15
+
+#: Lines a function, method or class docstring may spend on prose. Structured sections
+#: do not count: Args grows with the signature and Returns with the shape, and neither
+#: is where narrative collects. What is counted is the summary, the free paragraphs and
+#: the Note section, which is where it does.
+PROSE_DOCSTRING_LINES = 25
+
+#: Section headings whose contents are structure rather than prose. Args grows with the
+#: signature, Usage with the command line, and neither can hide an essay. Note: is
+#: deliberately absent: that is where narrative collects, so it counts.
+STRUCTURED_SECTIONS = (
+    "Args:", "Returns:", "Raises:", "Yields:", "Attributes:",
+    "Usage:", "Usage::", "Example:", "Examples:",
+)
+
+
+def prose_lines(docstring: str) -> list[str]:
+    """Return the docstring's free prose, without structured sections or doctests.
+
+    A structured section runs from its heading until a line comes back to the heading's
+    own indentation, which is what the next paragraph or heading does.
+    """
+    out: list[str] = []
+    section_indent: int | None = None
+    for raw in docstring.split("\n"):
+        line = raw.strip()
+        indent = len(raw) - len(raw.lstrip())
+        if section_indent is not None:
+            if not line or indent > section_indent:
+                continue
+            section_indent = None
+        if line in STRUCTURED_SECTIONS:
+            section_indent = indent
+            continue
+        if line.startswith((">>>", "...")):
+            continue
+        if line:
+            out.append(line)
+    return out
+
+
+def docstrings_of(source: str) -> list[tuple[int, str, str]]:
+    """Return (line, what, docstring) for the module and every def and class in it."""
+    tree = ast.parse(source)
+    found: list[tuple[int, str, str]] = []
+    module = ast.get_docstring(tree, clean=False)
+    if module:
+        found.append((1, "module", module))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            doc = ast.get_docstring(node, clean=False)
+            if doc:
+                found.append((node.lineno, node.name, doc))
+    return found
+
+
+def test_a_module_docstring_says_what_the_module_is_and_stops() -> None:
+    """A module docstring is an orientation, not an essay about its own making."""
+    offences = []
+    for path in python_files():
+        for line, what, doc in docstrings_of(read_source(path)):
+            if what != "module":
+                continue
+            body = prose_lines(doc)
+            if len(body) > MODULE_DOCSTRING_LINES:
+                offences.append(
+                    f"{relative(path)}:{line}: module docstring spends "
+                    f"{len(body)} lines of prose, the cap is {MODULE_DOCSTRING_LINES}"
+                )
+    fail("module docstring(s) over the prose cap", offences)
+
+
+def test_a_docstring_does_not_grow_an_essay_around_its_signature() -> None:
+    """Args and Returns may grow with the code. The prose around them may not."""
+    offences = []
+    for path in python_files():
+        for line, what, doc in docstrings_of(read_source(path)):
+            if what == "module":
+                continue
+            body = prose_lines(doc)
+            if len(body) > PROSE_DOCSTRING_LINES:
+                offences.append(
+                    f"{relative(path)}:{line}: {what} spends {len(body)} lines of "
+                    f"prose outside Args/Returns, the cap is {PROSE_DOCSTRING_LINES}"
+                )
+    fail("docstring(s) over the prose cap", offences)
+
+
+#: Labels from this project's own planning. A reader outside the repository cannot
+#: resolve them and a reader inside does not need them in the source: what a test guards
+#: is the behaviour it asserts, not the sprint it was written in.
+INTERNAL_LABEL = re.compile(
+    r"\bPhase\s+(?:[0-9]|[A-E])\b"
+    r"|\bSpike\s+[0-9]\b"
+    r"|\b[A-E][0-9]\s+acceptance\b",
+)
+
+
+def test_no_prose_names_an_internal_phase_or_ticket() -> None:
+    """Planning labels do not survive into the source."""
+    offences = []
+    for path in python_files():
+        if path.name == Path(__file__).name:
+            continue
+        for line, text in prose_tokens(read_source(path)):
+            found = INTERNAL_LABEL.search(text)
+            if found:
+                offences.append(f"{relative(path)}:{line}: names {found.group(0)!r}")
+    fail("internal planning label in shipped prose", offences)

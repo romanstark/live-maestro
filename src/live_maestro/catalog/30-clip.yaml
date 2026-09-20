@@ -279,9 +279,14 @@
   proven: [get]
   doc: >-
     Slot colour as 0x00RRGGBB. On an occupied slot this mirrors the clip's colour; on an empty
-    one it is the stop-button colour. Whether it is writable on an empty slot is not measured.
-    Live 11 and later accept arbitrary RGB; older versions snap to the 70-entry palette, which
-    this installation cannot show, and the lom_set read-back is what will reveal the snap.
+    one it is the stop-button colour. An empty slot is not writable here. Measured 2026-09-16
+    against Live 12.4.5, on Ableton's "Patience" demo song: track 0 slot 3 was empty and read
+    None, and lom_set on its colour through the raw tool, which does not consult this row's access
+    list, answered not_settable. No value was stored, so nothing needed restoring. That probe
+    covers the empty slot only; what an occupied slot does with the write this row's access list
+    offers is still not measured. Live 11 and later accept arbitrary RGB; older versions snap to
+    the 70-entry palette, which this installation cannot show, and the lom_set read-back is what
+    will reveal the snap.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -511,10 +516,10 @@
   proven: [get]
   doc: >-
     Clip colour as a packed integer, 0x00RRGGBB. Live 11 and later accept arbitrary RGB; earlier
-    versions snap to the 70-entry palette, which this installation cannot show, and the lom_set
-    read-back is what exposes a snap, since Live reports no error for one. Setting the colour
-    does not touch the clip slot's own colour property independently; they are expected to track
-    each other.
+    versions snap to the 70-entry palette, which this installation cannot show, so the snap is not
+    measured here, and the lom_set read-back is what exposes a snap, since Live reports no error for
+    one. Setting the colour does not touch the clip slot's own colour property independently; they
+    are expected to track each other.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -532,8 +537,12 @@
   doc: >-
     Clip colour as an index into Live's palette rather than raw RGB. Prefer this over clip.color
     when the intent is "one of Live's colours" - it cannot land on a shade Live will silently
-    round. The upper bound of 69 is the documented palette size; no write has probed what
-    happens past it.
+    round. The upper bound of 69 is the documented palette size, and Live guards it by raising
+    rather than by clamping. Measured 2026-09-16 against Live 12.4.5, on Ableton's "Patience"
+    demo song: writing 70, then -1, answered live_error "Color index out of range." both times
+    and the stored value stayed 32 throughout, so nothing needed restoring. An out-of-range index
+    is therefore an error to handle, not a clamped value to read back, and the range field here
+    is the real bound at both ends.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -807,8 +816,11 @@
   proven: [get, set]
   doc: >-
     Whether the clip loops. Switching it changes what clip.length means - loop brace when true,
-    start/end markers when false - so read length again after writing this, not before. An
-    unwarped audio clip cannot loop meaningfully; Live is expected to allow the flag anyway.
+    start/end markers when false - so read length again after writing this, not before. An unwarped
+    audio clip cannot loop meaningfully, and Live allows the flag anyway. Measured 2026-09-19
+    against Live 12.4.6 on a one-shot sample dropped onto an audio track, warping set to false
+    first: looping took true, answered applied and changed, and read back true. So the flag is not
+    a guard, and a clip carrying it is not evidence that anything loops.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -2005,12 +2017,20 @@
   status: verified
   proven: []
   doc: >-
-    Read specific notes by their note ids. Note ids are stable for the lifetime of a note and
-    are what makes a targeted edit possible without a window query. Live 11 and later. Call
-    verified 2026-08-30 against Live 12.4.5: invoked and it answered "1". The call only reads;
-    nothing in the set was changed. Takes a list of note ids, not a single id (passing a bare
-    int answers live_error "'int' object has no attribute '__iter__'"). Note IDs come from
-    notes_get.
+    Read specific notes by their note ids. Note ids are stable for the lifetime of a note and are
+    what makes a targeted edit possible without a window query. Live 11 and later. Call verified
+    2026-08-30 against Live 12.4.5: invoked and it answered "1". The call only reads; nothing in
+    the set was changed. Takes a list of note ids, not a single id (passing a bare int answers
+    live_error "'int' object has no attribute '__iter__'"). Note ids come from notes_get. Pass
+    only ids read from this clip. Whether Live enforces that is untested: the one-clip rule was
+    observed on the ACE Studio note API, a different product, whose INVALID_ARG code Live does not
+    have, and the only note ids on record
+    here are 1, 2 and 3 read from one clip holding three notes (docs/protocol.md section 5.8), so
+    an id from another clip may not be distinguishable from a local one by value. The probe that
+    settles it: notes in two Session clips, ids read from both with notes_get, then this call on
+    the first clip with one id from each. A live_error proves the rule holds for Live; an answer
+    covering only the local note proves Live drops the foreign id silently, which is the worse
+    case and the one that belongs here dated.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -2026,12 +2046,21 @@
   status: verified
   proven: []
   doc: >-
-    Delete specific notes by note id. The precise counterpart to remove_notes_extended's window:
-    it removes exactly the listed notes and nothing adjacent. This is what a real repair looks
-    like - without it the same job has to be done offline in the .als by tuple comparison; one
-    measured repair removed 23 stray notes from 14 clips that way. Live 11 and later. Call
-    verified 2026-08-30 against Live 12.4.5, on a scratch track created and deleted for the
-    purpose.
+    Delete specific notes by note id. The precise counterpart to remove_notes_extended's window: it
+    removes exactly the listed notes and nothing adjacent. This is what a real repair looks like -
+    without it the same job has to be done offline in the .als by tuple comparison; one measured
+    repair removed 23 stray notes from 14 clips that way. Live 11 and later. Call verified
+    2026-08-30 against Live 12.4.5, on a scratch track created and deleted for the purpose. Pass
+    only ids read from this clip. Whether Live enforces that is untested: the one-clip rule was
+    observed on the ACE Studio note API, a different product, whose INVALID_ARG code Live does not
+    have, and the only note ids on record
+    here are 1, 2 and 3 read from one clip holding three notes (docs/protocol.md section 5.8), so an
+    id from another clip may not be distinguishable from a local one by value. The probe that
+    settles it: notes in two Session clips, ids read from both with notes_get, then this call on the
+    first clip with one id from each, and notes_get on both clips afterwards. A live_error proves
+    the rule holds for Live; no error, with only the local note changed and the second clip
+    untouched, proves Live drops the foreign id silently, which is the worse case and the one that
+    belongs here dated; the second clip changed too proves ids are set-wide.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -2047,10 +2076,20 @@
   status: verified
   proven: []
   doc: >-
-    Duplicate specific notes by id, optionally to a new time and with a transposition. Live 11
-    and later; the argument list beyond the id list has not been passed here, so call
-    lom_describe before relying on the optional ones. Call verified 2026-08-30 against Live
-    12.4.5, on a scratch track created and deleted for the purpose.
+    Duplicate specific notes by id, optionally to a new time and with a transposition. Live 11 and
+    later; the argument list beyond the id list has not been passed here, so call lom_describe
+    before relying on the optional ones. Call verified 2026-08-30 against Live 12.4.5, on a scratch
+    track created and deleted for the purpose. Pass only ids read from this clip. Whether Live
+    enforces that is untested: the one-clip rule was observed on the ACE Studio note API, a
+    different product, whose INVALID_ARG code Live does not have, and the only note ids on
+    record here are 1, 2 and 3 read from one
+    clip holding three notes (docs/protocol.md section 5.8), so an id from another clip may not be
+    distinguishable from a local one by value. The probe that settles it: notes in two Session
+    clips, ids read from both with notes_get, then this call on the first clip with one id from
+    each, and notes_get on both clips afterwards. A live_error proves the rule holds for Live; no
+    error, with only the local note changed and the second clip untouched, proves Live drops the
+    foreign id silently, which is the worse case and the one that belongs here dated; the second
+    clip changed too proves ids are set-wide.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -2077,15 +2116,27 @@
   doc: >-
     Get the automation envelope for one device parameter, given as a parameter handle, or None
     when the clip has no curve for it. Measured trap, and it is the reason the Session and
-    Arrangement routes are separate areas in this file - quoting the Live Object Model: it
-    returns None for Arrangement clips, and None for parameters belonging to a different track.
-    So: write automation into a session clip, then duplicate the clip into the Arrangement.
-    Never the reverse. The envelope object it returns is not path-addressable (it comes from a
-    call, not an attribute), so its own members - value_at_time(), insert_step() - are reached
-    through the automation_* handlers, which sample it because Live cannot enumerate
-    breakpoints. Second measured trap for anyone sampling by hand: at time 0 Live returns the
-    parameter's default value, not the curve, so verify at t greater than 0. Call verified
-    2026-08-30 against Live 12.4.5, on a scratch track created and deleted for the purpose.
+    Arrangement routes are separate areas in this file - quoting the Live Object Model: it returns
+    None for Arrangement clips, and None for parameters belonging to a different track. So: write
+    automation into a session clip, then duplicate the clip into the Arrangement. Never the
+    reverse. The envelope object it returns is not path-addressable (it comes from a call, not an
+    attribute), so its own members - value_at_time(), insert_step() - are reached through the
+    automation_* handlers, which sample it because Live cannot enumerate breakpoints.
+    insert_step() is the only envelope write this bridge makes, and the only member measured to
+    place a value at a time: measured 2026-09-08 against Live 12.4.5, Envelope carries no
+    properties and just create_event, delete_events_in_range, events_in_range, insert_step and
+    value_at_time (docs/limits.md), none of them on the Remote Script allowlist. What
+    create_event does is not measured here, and delete_events_in_range is the removal the clear
+    path falls back to when Clip.clear_envelope is absent. No bulk or curve call is measured
+    here, so every ramp is a staircase built before the write from write_automation's
+    interpolation and resolution arguments, and it is write_automation, not Live, that extends the
+    last breakpoint to the end of the clip. What Live reads between two steps that do not touch is
+    not measured here, and the finding that raised the question was taken on a different product:
+    write two insert_steps with a gap,
+    then automation_read inside the gap, and the answer settles it. Second measured trap for
+    anyone sampling by hand: at time 0 Live returns the parameter's default value, not the curve,
+    so verify at t greater than 0. Call verified 2026-08-30 against Live 12.4.5, on a scratch
+    track created and deleted for the purpose.
   params:
     - {name: track, kind: int, required: true}
     - {name: slot, kind: int, required: true}
@@ -2122,8 +2173,11 @@
   status: verified
   proven: []
   doc: >-
-    Delete the envelope for one device parameter. Destructive and the only way to remove a curve
-    - there is no Envelope.clear(); the method lives on the clip, not on the envelope. Measured
+    Delete the envelope for one device parameter. Destructive and the only removal a caller can
+    reach - there is no Envelope.clear(), the method lives on the clip, and no Envelope member is
+    on the Remote Script allowlist. The script's own fallback, used when Clip.clear_envelope is
+    absent, removes through Envelope.delete_events_in_range, which is not reachable from here.
+    Measured
     context for why this matters more than it looks: writing a second sweep onto a parameter
     that already has one does not merge them, the second replaces the first, and an un-cleared
     leftover from an earlier run is indistinguishable from an intentional curve. Clear first,
@@ -2609,10 +2663,14 @@
   status: verified
   proven: [get, set]
   doc: >-
-    Clip-local beat at which playback of this timeline clip ends. Together with start_marker
-    this is what clip length is derived from on a non-looping clip, so writing it is the closest
-    thing the LOM offers to trimming an Arrangement clip - whether the timeline footprint
-    follows is not measured.
+    Clip-local beat at which playback of this timeline clip ends. Together with start_marker this
+    is what clip length is derived from on a non-looping clip, so writing it is the closest thing
+    the LOM offers to trimming an Arrangement clip - whether the timeline footprint follows is not
+    measured. The MCP tools refuse a write here: lom_set and lom_batch reject
+    arrangement_clips[i].end_marker on a single producer-session observation that the write was
+    accepted and end_time did not move, which is unproven as a general rule; docs/limits.md
+    section 5
+    carries the probe. This row's proven field records that the value stores, and nothing more.
   params:
     - {name: track, kind: int, required: true}
     - {name: clip, kind: int, required: true}
@@ -3636,9 +3694,18 @@
   status: verified
   proven: []
   doc: >-
-    Read specific notes of a timeline clip by note id. Live 11 and later. Call verified
-    2026-08-30 against Live 12.4.5: invoked and it answered "1". The call only reads; nothing in
-    the set was changed. Takes a list of note ids; ids come from notes_get.
+    Read specific notes of a timeline clip by note id. Live 11 and later. Call verified 2026-08-30
+    against Live 12.4.5: invoked and it answered "1". The call only reads; nothing in the set was
+    changed. Takes a list of note ids; ids come from notes_get. Pass only ids read from this clip.
+    Whether Live enforces that is untested: the one-clip rule was observed on the ACE Studio note
+    API, a different product, whose INVALID_ARG code Live does not have,
+    and the only note ids on record here
+    are 1, 2 and 3 read from one clip holding three notes (docs/protocol.md section 5.8), so an id
+    from another clip may not be distinguishable from a local one by value. The probe that settles
+    it: notes in two Arrangement clips on the same track, ids read from both with notes_get, then
+    this call on the first clip with one id from each. A live_error proves the rule holds for
+    Live; an answer covering only the local note proves Live drops the foreign id silently, which
+    is the worse case and the one that belongs here dated.
   params:
     - {name: track, kind: int, required: true}
     - {name: clip, kind: int, required: true}
@@ -3654,14 +3721,24 @@
   status: verified
   proven: []
   doc: >-
-    Delete exactly the listed notes from a timeline clip, leaving everything adjacent alone.
-    This is what a surgical repair looks like on the Arrangement - without it the equivalent has
-    to be done offline in the .als by tuple comparison; one measured repair removed 23 stray
-    notes from 14 clips per track that way. Live 11 and later. Call verified 2026-08-30 against
-    Live 12.4.5: signature remove_notes_by_id(object). Note ids come from the notes_get handler,
-    which takes any clip path; the read_clip_notes MCP tool builds a Session path from track and
-    slot and so cannot reach an Arrangement clip. Called with one id on a clip of four notes;
-    notes_get read back three, the addressed pitch gone.
+    Delete exactly the listed notes from a timeline clip, leaving everything adjacent alone. This is
+    what a surgical repair looks like on the Arrangement - without it the equivalent has to be done
+    offline in the .als by tuple comparison; one measured repair removed 23 stray notes from 14
+    clips per track that way. Live 11 and later. Call verified 2026-08-30 against Live 12.4.5:
+    signature remove_notes_by_id(object). Note ids come from the notes_get handler, which takes any
+    clip path; the read_clip_notes MCP tool builds a Session path from track and slot and so cannot
+    reach an Arrangement clip. Called with one id on a clip of four notes; notes_get read back
+    three, the addressed pitch gone. Pass only ids read from this clip. Whether Live enforces that
+    is untested: the one-clip rule was observed on the ACE Studio note API, a different product,
+    whose INVALID_ARG code Live does not have, and the only note ids on record here are 1, 2 and
+    3 read from one clip holding three notes
+    (docs/protocol.md section 5.8), so an id from another clip may not be distinguishable from a
+    local one by value. The probe that settles it: notes in two Arrangement clips on the same track,
+    ids read from both with notes_get, then this call on the first clip with one id from each, and
+    notes_get on both clips afterwards. A live_error proves the rule holds for Live; no error, with
+    only the local note changed and the second clip untouched, proves Live drops the foreign id
+    silently, which is the worse case and the one that belongs here dated; the second clip changed
+    too proves ids are set-wide.
   params:
     - {name: track, kind: int, required: true}
     - {name: clip, kind: int, required: true}
@@ -3677,11 +3754,21 @@
   status: verified
   proven: []
   doc: >-
-    Duplicate specific notes of a timeline clip by id, optionally to a new time and transposed.
-    Live 11 and later. Call verified 2026-08-30 against Live 12.4.5: signature
+    Duplicate specific notes of a timeline clip by id, optionally to a new time and transposed. Live
+    11 and later. Call verified 2026-08-30 against Live 12.4.5: signature
     duplicate_notes_by_id(object note_ids, object destination_time=None, int
-    transposition_amount=0). Called with ([id], 8.0, 12) on a clip of three notes; notes_get
-    read back four, the copy twelve semitones above the original.
+    transposition_amount=0). Called with ([id], 8.0, 12) on a clip of three notes; notes_get read
+    back four, the copy twelve semitones above the original. Pass only ids read from this clip.
+    Whether Live enforces that is untested: the one-clip rule was observed on the ACE Studio note
+    API, a different product, whose INVALID_ARG code Live does not have, and the only note ids
+    on record here are 1, 2 and 3 read from one
+    clip holding three notes (docs/protocol.md section 5.8), so an id from another clip may not be
+    distinguishable from a local one by value. The probe that settles it: notes in two Arrangement
+    clips on the same track, ids read from both with notes_get, then this call on the first clip
+    with one id from each, and notes_get on both clips afterwards. A live_error proves the rule
+    holds for Live; no error, with only the local note changed and the second clip untouched, proves
+    Live drops the foreign id silently, which is the worse case and the one that belongs here dated;
+    the second clip changed too proves ids are set-wide.
   params:
     - {name: track, kind: int, required: true}
     - {name: clip, kind: int, required: true}
@@ -3699,18 +3786,26 @@
   status: verified
   proven: []
   doc: >-
-    measured limit, and the single most important row in this area. On an Arrangement clip this
-    returns None. Always. Quoting the Live Object Model directly - it returns the envelope for
-    the given parameter, None if the envelope does not exist, None for Arrangement clips, and
-    None for parameters from a different track. There is no way to write clip automation here,
-    and no argument or Live version changes that. The working order is therefore fixed: create
-    the Session clip, write its notes, write its automation, and only then duplicate it to the
-    Arrangement, where the envelope travels with the copy. Never the reverse. The trap that
-    follows from getting the order wrong is silent - automation_read on the Session clip still
-    reports has_envelope true and is_flat false, so the verification passes while every
+    A measured reading and a documented limit, and the single most important row in this area. On
+    an Arrangement clip this returns None. Always. Quoting the Live Object Model directly - it
+    returns the envelope for the given parameter, None if the envelope does not exist, None for
+    Arrangement clips, and None for parameters from a different track. There is no way to write
+    clip automation here, and no argument or Live version changes that. The working order is
+    therefore fixed: create the Session clip, write its notes, write its automation, and only then
+    duplicate it to the Arrangement, where the envelope travels with the copy. Never the reverse.
+    The trap that follows from getting the order wrong is silent - automation_read on the Session
+    clip still reports has_envelope true and is_flat false, so the verification passes while every
     Arrangement clip is empty. Checking that requires the saved project file: Channel B,
-    docs/limits.md. Call verified 2026-08-30 against Live 12.4.5, on a scratch track created and
-    deleted for the purpose.
+    docs/limits.md. What the None answer does not prove on its own is which of two things it
+    means. Measured 2026-09-16 against Live 12.4.5, on Ableton's "Patience" demo song: a Session
+    clip in the same set answered None for mixer_device.volume as well, so on that evidence None
+    reads equally as "no envelope exists for that parameter yet" and as "envelopes are unreachable
+    on this clip", and the probe discriminated nothing. The claim above therefore still rests on
+    the Live Object Model quote and not on a write measured here. The probe that would
+    discriminate is a Session clip that already carries an envelope for the parameter being asked
+    about: ask that parameter of the Session clip and of an Arrangement copy of it, and only an
+    envelope from the one against None from the other settles it. Call verified 2026-08-30 against
+    Live 12.4.5, on a scratch track created and deleted for the purpose.
   params:
     - {name: track, kind: int, required: true}
     - {name: clip, kind: int, required: true}

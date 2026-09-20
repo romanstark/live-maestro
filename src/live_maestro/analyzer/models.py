@@ -1,14 +1,12 @@
 """What ``analyze_audio`` returns.
 
-Every metric is optional, and that is the point. A silent track has no
-correlation, a reply that just reset the integration has no integrated loudness,
-and a device that was never loaded has nothing at all. A metric that was not
-measured is absent here and never zero, because zero reads as "perfectly
-decorrelated at digital silence" where the truth is "nothing played".
+Every metric is optional: a silent track has no correlation, a reply that just reset
+the integration has no integrated loudness, and a device that was never loaded has
+nothing at all. A metric that was not measured is absent and never zero, because zero
+reads as "perfectly decorrelated at digital silence" where the truth is "nothing
+played".
 
-``status`` is a Literal, so pydantic refuses any value this documentation does
-not list. A status described in prose but not in the type is a status that can be
-returned without being documented.
+``status`` is a Literal, so pydantic refuses any value ``MeasurementStatus`` omits.
 """
 
 from __future__ import annotations
@@ -18,7 +16,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 __all__ = [
+    "AccumulationSpan",
     "AudioMeasurementResult",
+    "BandOccupancy",
     "Calibration",
     "DynamicsMetrics",
     "LoudnessMetrics",
@@ -26,18 +26,32 @@ __all__ = [
     "SpectralBalance",
     "StereoMetrics",
     "TrackAnswer",
+    "TransportState",
+    "TransportUnavailable",
 ]
 
 #: Every outcome this tool can report.
 #:
 #: ``ok``                the measurement stands
 #: ``clipping``          the same, and the true peak is above 0 dBFS
-#: ``silent``            the device answered and there was no signal to measure
+#: ``silent``            the device answered and there was no signal to measure,
+#:                       and on accumulate='read' none in any counted window
 #: ``device_not_found``  nothing answered on the analyzer port
 #: ``track_not_found``   analyzers answered, none of them on the track asked for
 #: ``schema_mismatch``   an analyzer answered with a reply layout this build cannot read
+#: ``accumulating``      background accumulation started
+#: ``reset``             accumulation reset
+#: ``not_accumulating``  read requested but no accumulation was active
 MeasurementStatus = Literal[
-    "ok", "clipping", "silent", "device_not_found", "track_not_found", "schema_mismatch"
+    "ok",
+    "clipping",
+    "silent",
+    "device_not_found",
+    "track_not_found",
+    "schema_mismatch",
+    "accumulating",
+    "reset",
+    "not_accumulating",
 ]
 
 
@@ -174,12 +188,11 @@ class SpectralBalance(BaseModel):
 class Calibration(BaseModel):
     """What the meter reports for a signal whose peak is known exactly.
 
-    The device generates a sine of fixed amplitude, feeds it to a second meter of
-    the same kind, and reports what came back. Because the reference peak is known
-    from the amplitude alone, the two error figures say what this build of Max
-    does to a peak reading, on this machine, at this sample rate. A peak figure
-    beside a calibration is a measurement. Without one, a meter error cannot be
-    told from the signal.
+    The device generates a sine of fixed amplitude, feeds it to a second meter of the
+    same kind, and reports what came back. The reference peak follows from the
+    amplitude alone, so the two error figures say what this build of Max does to a peak
+    reading, on this machine, at this sample rate. Read a peak figure against them: on
+    its own it cannot be told apart from a meter error.
     """
 
     reference_peak_dbfs: float = Field(
@@ -234,10 +247,152 @@ class TrackAnswer(BaseModel):
     )
 
 
+class BandOccupancy(BaseModel):
+    """Share of the accumulated windows in which each band carried energy, in %.
+
+    Two bands can average to the same level while one plays through the section and the
+    other answers twice a bar; this is what tells them apart.
+
+    It is an estimator over sampled windows and not a measurement of the whole span:
+    each figure is a share of the windows that were recorded, and
+    'accumulation.coverage_pct' says how much of the elapsed span those windows reach.
+
+    A band counts for a window when it is above the silence floor and within
+    occupancy_threshold_db of that window's own loudest band, so the comparison is
+    relative to the material rather than to an absolute level.
+    """
+
+    sub_pct: float | None = Field(
+        default=None,
+        description="20 Hz to 60 Hz occupancy percentage.",
+    )
+    bass_pct: float | None = Field(
+        default=None,
+        description="60 Hz to 250 Hz occupancy percentage.",
+    )
+    low_mid_pct: float | None = Field(
+        default=None,
+        description="250 Hz to 500 Hz occupancy percentage.",
+    )
+    mid_pct: float | None = Field(
+        default=None,
+        description="500 Hz to 2 kHz occupancy percentage.",
+    )
+    high_mid_pct: float | None = Field(
+        default=None,
+        description="2 kHz to 6 kHz occupancy percentage.",
+    )
+    presence_pct: float | None = Field(
+        default=None,
+        description="6 kHz to 10 kHz occupancy percentage.",
+    )
+    air_pct: float | None = Field(
+        default=None,
+        description="Above 10 kHz occupancy percentage.",
+    )
+
+
+class AccumulationSpan(BaseModel):
+    """What an accumulated read counted, and what stretch of time it reached.
+
+    Occupancy and the averaged spectrum are taken over these windows, so this says
+    whether they describe a bar or a whole section, and how much of that stretch was
+    sampled.
+    """
+
+    windows: int = Field(
+        description="How many analysis windows were recorded and counted."
+    )
+    elapsed_s: float = Field(
+        description=(
+            "Seconds between the start of the accumulation and this read. It is "
+            "wall clock time and includes whatever the transport did in it, "
+            "stopping included."
+        )
+    )
+    window_ms: float | None = Field(
+        default=None,
+        description=(
+            "How far back a single recorded window reached, in milliseconds. Null "
+            "where no window was recorded to report it."
+        ),
+    )
+    coverage_pct: float | None = Field(
+        default=None,
+        description=(
+            "What share of 'elapsed_s' the recorded windows add up to, in %. "
+            "Under 100 the windows sampled the span rather than covering it. "
+            "Over 100 they add up to more time than has elapsed, which the first "
+            "window does on its own: it reaches back to the audio before the "
+            "accumulation started. That is up to one window more than the span "
+            "holds, so a short accumulation reads well above 100 without any two "
+            "windows counting the same audio. Null while nothing has been "
+            "recorded."
+        ),
+    )
+
+
+class TransportUnavailable(BaseModel):
+    """Why no transport state was read, standing in the place of one.
+
+    A null transport with no reason cannot be told apart from a transport that was read
+    and found empty, so a state that could not be taken says so here.
+    """
+
+    code: str = Field(description="Machine readable reason the transport was not read.")
+    reason: str = Field(description="One sentence saying what stopped the read.")
+
+
+class TransportState(BaseModel):
+    """Transport and playback state during measurement.
+
+    Every field is derived from what Live answered in one batch, and each description
+    says what its number counts and what it leaves out.
+    """
+
+    is_playing: bool = Field(description="Whether Live's transport is currently running.")
+    tracks_sounding: int = Field(
+        description=(
+            "How many tracks hold a Session clip playing: the count of tracks whose "
+            "playing_slot_index is 0 or more while is_playing is true, and 0 whenever the "
+            "transport is stopped. It is not a count of what can be heard. A muted track, "
+            "a track under an active solo elsewhere, a track whose clip is silent and a "
+            "track routed away from the master are each counted the same as any other. It "
+            "is read from Session slots only, so Arrangement playback is outside what it "
+            "counts. It is forced to 0 on a stopped transport on purpose: "
+            "playing_slot_index keeps the slot a track last played after the transport "
+            "stops, so counting it there would report tracks that had already fallen "
+            "silent."
+        )
+    )
+    tracks_total: int = Field(description="Total number of tracks in the song.")
+    in_transition: bool = Field(
+        description=(
+            "True while at least one track reports a fired_slot_index of 0 or more, which "
+            "is a clip launch accepted and still waiting for the next quantization "
+            "boundary. It falls back to false as the boundary passes and the fired slot "
+            "becomes the playing slot, so a measurement taken while it is true spans a "
+            "scene change rather than one settled arrangement of clips. A launch fired "
+            "with the transport stopped applies immediately, has no boundary to wait for, "
+            "and reports no transition. It is not derived from playing_slot_index: the "
+            "value -2 there is the standing state \"no clip is playing on this track\", "
+            "which survives a stop and is not a moment in a transition."
+        )
+    )
+
+
 class AudioMeasurementResult(BaseModel):
     """The whole answer to one ``analyze_audio`` call."""
 
-    status: MeasurementStatus = Field(description="What kind of answer this is.")
+    status: MeasurementStatus = Field(
+        description=(
+            "What kind of answer this is. On accumulate='read' it is taken over "
+            "the whole accumulation, the same span as 'spectrum' and "
+            "'band_occupancy', and not over the last recorded window: a section "
+            "whose last window fell in a gap is not a silent section. Everywhere "
+            "else it covers 'window_ms'."
+        )
+    )
     track: str = Field(description="The track that was asked for.")
     measured_track: str | None = Field(
         default=None, description="The track the reported numbers came from."
@@ -247,7 +402,10 @@ class AudioMeasurementResult(BaseModel):
         description=(
             "What the averaged measurements actually cover, which is the "
             "requested window clamped to what the device's buffers hold at the "
-            "current sample rate. Loudness figures keep their own EBU windows."
+            "current sample rate. Loudness figures keep their own EBU windows. "
+            "On accumulate='read' this is the last recorded window and it governs "
+            "the loudness, dynamics and stereo figures alone: 'spectrum' and "
+            "'band_occupancy' cover 'accumulation' instead."
         ),
     )
     samplerate: float | None = Field(
@@ -256,7 +414,69 @@ class AudioMeasurementResult(BaseModel):
     loudness: LoudnessMetrics | None = None
     dynamics: DynamicsMetrics | None = None
     stereo: StereoMetrics | None = None
-    spectrum: SpectralBalance | None = None
+    spectrum: SpectralBalance | None = Field(
+        default=None,
+        description=(
+            "Energy per band. On a single measurement it covers 'window_ms', the "
+            "same span as the other averaged figures. On accumulate='read' it is "
+            "the mean of the recorded windows' band amplitudes, so it describes "
+            "the same windows the occupancy was counted over."
+        ),
+    )
+    band_occupancy: BandOccupancy | None = Field(
+        default=None,
+        description=(
+            "Share of the accumulated windows in which each band carried energy "
+            "within occupancy_threshold_db of that window's loudest band, in %. "
+            "Present on accumulate='read' alone. On any other measured result it "
+            "is null and 'band_occupancy_note' says why. A result that measured "
+            "nothing (device_not_found, schema_mismatch, track_not_found) carries "
+            "neither: its 'summary' and 'recommendations' say what went wrong."
+        ),
+    )
+    band_occupancy_note: str | None = Field(
+        default=None,
+        description=(
+            "Why 'band_occupancy' is null, and how to get one. Null whenever the "
+            "occupancy is present, and on a result that measured nothing, where "
+            "no accumulation would produce one either."
+        ),
+    )
+    occupancy_threshold_db: float | None = Field(
+        default=None,
+        description=(
+            "Threshold in dB below each window's loudest band inside which a band "
+            "counted as occupied. Null wherever 'band_occupancy' is null, because "
+            "a threshold nothing was compared against describes no measurement."
+        ),
+    )
+    accumulated_windows: int | None = Field(
+        default=None,
+        description=(
+            "How many windows the accumulation counted. The same number as "
+            "'accumulation.windows', kept for callers that read it, and null on a "
+            "single measurement."
+        ),
+    )
+    accumulation: AccumulationSpan | None = Field(
+        default=None,
+        description=(
+            "What the accumulated windows counted and what stretch of time they "
+            "reach. Present on accumulate='read' alone and null on a single "
+            "measurement."
+        ),
+    )
+    transport: TransportState | None = Field(
+        default=None,
+        description="Transport state (playback, sounding tracks, transition).",
+    )
+    transport_unavailable: TransportUnavailable | None = Field(
+        default=None,
+        description=(
+            "Why 'transport' is null, as a machine code and a sentence. Null "
+            "whenever the transport state is present."
+        ),
+    )
     calibration: Calibration | None = Field(
         default=None,
         description=(
@@ -272,7 +492,14 @@ class AudioMeasurementResult(BaseModel):
             "measured by name."
         ),
     )
-    summary: str = Field(description="One line stating what was measured.")
+    summary: str = Field(
+        description=(
+            "One line stating what was measured. On accumulate='read' it says "
+            "which span each half of the answer covers: the level figures come "
+            "from the last recorded window and the spectrum and the occupancy "
+            "from every counted window."
+        )
+    )
     recommendations: list[str] = Field(
         default_factory=list,
         description="What the numbers suggest doing, each naming the number it rests on.",

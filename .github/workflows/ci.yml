@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,3 +47,41 @@ jobs:
         run: pyrefly check
       - name: Test (pytest)
         run: pytest -q
+
+  # The gates above run against the working tree, where src/ and devices/ are
+  # simply there. installer.py falls back to the checkout when the packaged
+  # assets are missing, so a wheel that ships neither still reports green from
+  # the repository. This job builds the artefact that actually gets published
+  # and installs it somewhere else, which is the only place that fallback cannot
+  # hide. Two releases had to be repaired by hand for want of it.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: pipx run build
+      - name: Install the wheel somewhere else
+        run: |
+          python -m venv /tmp/probe
+          /tmp/probe/bin/pip install dist/*.whl
+      - name: The wheel carries the files it promises
+        working-directory: /tmp
+        run: |
+          /tmp/probe/bin/python - <<'PY'
+          from live_maestro.installer import DEFAULT_SOURCE, DEVICE_SOURCE
+          from live_maestro.registry import default_registry
+          import live_maestro.server  # noqa: F401
+          assert DEFAULT_SOURCE.is_file(), f"Remote Script missing: {DEFAULT_SOURCE}"
+          assert DEVICE_SOURCE.is_file(), f"analyzer device missing: {DEVICE_SOURCE}"
+          rows = default_registry().all()
+          assert len(rows) > 1000, f"catalog did not ship: {len(rows)} rows"
+          print(f"wheel is self contained: {len(rows)} catalog rows")
+          PY
+      - name: The sdist passes its own test suite
+        run: |
+          mkdir -p /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist --strip-components=1
+          /tmp/probe/bin/pip install -e /tmp/sdist pytest
+          cd /tmp/sdist && /tmp/probe/bin/pytest -q

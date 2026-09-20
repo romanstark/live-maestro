@@ -10,6 +10,7 @@ import ast
 import asyncio
 import json
 import pathlib
+import re
 from typing import Any, get_args
 
 import pytest
@@ -104,9 +105,8 @@ def test_the_exemption_list_stays_a_list_of_real_arguments() -> None:
 def test_every_published_argument_says_what_it_means() -> None:
     """A declared type without a description still leaves the units unstated.
 
-    The same reasoning that put a description on every ``NoteIn`` field applies to
-    every tool argument: a client reads ``inputSchema`` before it reads any prose,
-    and ``{"type": "integer", "title": "Track"}`` does not say which collection the
+    A client reads ``inputSchema`` before it reads any prose, and
+    ``{"type": "integer", "title": "Track"}`` does not say which collection the
     number indexes or where the counting starts. Shared meanings are declared once
     in ``live_maestro.toolargs``, and a bespoke argument carries its own.
     """
@@ -542,3 +542,63 @@ def test_a_stringified_note_reaches_live_as_numbers_through_the_real_tool_call(
     assert isinstance(written["start_time"], float)
     assert written["pitch"] == 36
     assert written["velocity"] == 100.0
+
+
+#: Tools whose ``root`` argument names a browser root the Remote Script has to walk.
+_BROWSER_ROOT_TOOLS = ("load_device", "find_sound")
+
+
+def _script_browser_roots() -> tuple[str, ...]:
+    """The roots the Remote Script actually walks, read out of the script itself."""
+    block = re.search(
+        r"_BROWSER_ROOTS = \((.*?)\)", REMOTE_SCRIPT.read_text(encoding="utf-8"), re.DOTALL
+    )
+    assert block is not None, "the Remote Script no longer declares _BROWSER_ROOTS"
+    return tuple(re.findall(r'"([a-z_]+)"', block.group(1)))
+
+
+def test_no_tool_offers_a_browser_root_the_script_cannot_walk() -> None:
+    """A root in a published enum is a promise, and the walk is what has to keep it.
+
+    Measured 2026-09-17 against Live 12.4.6, ``root="user_folders"`` answers
+    ``no_such_path``, "unknown
+    browser root 'user_folders'", while the catalog carries verified rows for
+    ``browser.user_folders`` and ``browser.legacy_libraries``. The two lists genuinely
+    differ, so the schema has to follow the walk rather than the catalog.
+    """
+    walkable = set(_script_browser_roots())
+    offenders: list[str] = []
+    for tool in _tools():
+        if tool.name not in _BROWSER_ROOT_TOOLS:
+            continue
+        schema = tool.inputSchema.get("properties", {}).get("root", {})
+        offered = {value for value in schema.get("enum", []) if value}
+        assert offered, f"{tool.name} no longer publishes a root enum"
+        for root in sorted(offered - walkable):
+            offenders.append(f"{tool.name} offers root {root!r}, which the walk refuses")
+    assert not offenders, (
+        "browser roots promised to clients that the Remote Script does not walk:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_finder_and_the_loader_agree_on_which_roots_exist() -> None:
+    """A candidate found under one tool's root has to be loadable through the other's.
+
+    ``find_sound`` puts the root it searched into every candidate's ``load_with`` block,
+    so a root one tool offers and the other refuses breaks the chain from finding to
+    loading at the point the caller copies the block across.
+    """
+    enums = {}
+    for tool in _tools():
+        if tool.name in _BROWSER_ROOT_TOOLS:
+            enums[tool.name] = {
+                value
+                for value in tool.inputSchema["properties"]["root"].get("enum", [])
+                if value
+            }
+    assert set(enums) == set(_BROWSER_ROOT_TOOLS), enums
+    assert enums["find_sound"] <= enums["load_device"], (
+        "find_sound can search roots load_device cannot be pointed at: "
+        f"{sorted(enums['find_sound'] - enums['load_device'])}"
+    )

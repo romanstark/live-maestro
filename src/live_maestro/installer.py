@@ -9,13 +9,10 @@ Reached two ways, and they run the same code:
     --diff       compare the shipped script against the installed one
     --uninstall  stop Live loading it, keeping a timestamped backup
 
-Key installation mechanics:
-- User Library discovery: parses ``Preferences/Library.cfg`` to resolve target directories,
-  ranking candidates using the ``Ableton Folder Info`` marker.
-- Control Surface registration: the folder name under ``Remote Scripts/`` determines
-  the dropdown identifier in Live Preferences (``Remote Scripts/LiveMaestro/``).
-- Cache invalidation: removes stale ``__pycache__`` artifacts to ensure Live loads updated source.
-- Bytecode verification: compares PEP 552 ``.pyc`` headers against source mtime and size.
+The User Library is read from Live's own ``Library.cfg`` and candidates are ranked by the
+``Ableton Folder Info`` marker; the folder name under ``Remote Scripts/`` is the entry in
+Live's Control Surface dropdown; a stale ``__pycache__`` is deleted, because Live prefers
+the compiled copy and reports nothing.
 """
 
 from __future__ import annotations
@@ -46,6 +43,7 @@ __all__ = [
     "SetupError",
     "asset",
     "candidates_for",
+    "device_target_name",
     "discover_user_libraries",
     "find_live_installs",
     "library_score",
@@ -93,7 +91,30 @@ DEFAULT_SOURCE = asset("live-remote-script") / "__init__.py"
 #: nothing about that.
 DEVICE_SOURCE = asset("devices") / "LiveMaestro_Analyzer.amxd"
 DEVICE_SUBFOLDER = Path("Presets") / "Audio Effects" / "Max Audio Effect"
-DEVICE_TARGET_NAME = "LiveMaestro Analyzer.amxd"
+
+#: The only suffix Live's browser lists in that folder. A ``.maxpat``, a ``.py`` or
+#: anything else copied in beside the devices is simply not shown, without an error,
+#: so the installer refuses it rather than reporting a success nobody can see.
+DEVICE_SUFFIX = ".amxd"
+
+
+def device_target_name(source: Path) -> str:
+    """Return the file name ``source`` takes in the User Library.
+
+    Live's browser shows the file name without its suffix, so it is the device's
+    user-visible identity, and underscores read badly there: the shipped
+    ``LiveMaestro_Analyzer.amxd`` lands as ``LiveMaestro Analyzer.amxd``, the name
+    ``query:UserLibrary#Presets:Audio%20Effects:Max%20Audio%20Effect:LiveMaestro%20Analyzer.amxd``
+    resolves to. The name comes from the source and from nothing else, so a second device
+    cannot land on the first one's name.
+    """
+    return f"{source.stem.replace('_', ' ')}{source.suffix}"
+
+
+#: Where the shipped analyzer lands. Derived, not asserted: this is exactly what
+#: ``device_target_name`` makes of ``DEVICE_SOURCE``, and it reads
+#: "LiveMaestro Analyzer.amxd".
+DEVICE_TARGET_NAME = device_target_name(DEVICE_SOURCE)
 
 #: Backups are ``__init__.py.bak-<YYYYmmdd-HHMMSS>`` beside the file they
 #: replace. Never deleted by this script, including on ``--uninstall``.
@@ -180,9 +201,8 @@ class LiveInstall:
 class LibraryCandidate:
     """A folder that might be the User Library, with the evidence for it.
 
-    Kept as a candidate rather than a decision so that the reasoning survives
-    into the output: when this script picks a folder, it can say why, and when
-    it asks, the human sees the same evidence it saw.
+    A candidate rather than a decision, so the reasoning reaches the output: the script
+    can say why it picked a folder, and when it asks, the human sees the same evidence.
     """
 
     path: Path
@@ -204,9 +224,8 @@ class LibraryCandidate:
     def describe(self) -> str:
         """Return two lines for a list the user reads.
 
-        The version list is capped at :data:`_VERSIONS_SHOWN`: dozens of Live
-        versions can name the same library, and the evidence line has to stay
-        short enough to read.
+        The version list is capped at :data:`_VERSIONS_SHOWN`, because dozens of Live
+        versions can name the same library.
         """
         shown = list(self.from_versions[:_VERSIONS_SHOWN])
         extra = len(self.from_versions) - len(shown)
@@ -219,12 +238,9 @@ class LibraryCandidate:
 def preferences_roots() -> list[Path]:
     """Where Live keeps its per-version preferences folders on this platform.
 
-    Both platforms are *measured*. Linux returns nothing, because Live does not
-    run there, and an invented path would only produce a confusing error later.
-
-    What differs between them is not this root but what sits *inside* a version
-    folder, which is why :func:`preferences_dir` exists rather than a second
-    hard-coded segment at every call site.
+    Linux returns nothing, because Live does not run there and an invented path would
+    only produce a confusing error later. What differs between Windows and macOS is not
+    this root but what sits inside a version folder, which :func:`preferences_dir` holds.
     """
     if sys.platform.startswith("win"):
         appdata = os.environ.get("APPDATA")
@@ -238,21 +254,17 @@ def preferences_roots() -> list[Path]:
 def preferences_dir(version_folder: Path) -> Path:
     """The folder holding ``Library.cfg`` and ``Log.txt`` for one Live version.
 
-    Windows nests both files under a ``Preferences`` subfolder of the version
-    folder: ``%APPDATA%/Ableton/Live 12.1.10/Preferences/Library.cfg``
-    (measured 2026-08-29).
+    Windows nests both files under a ``Preferences`` subfolder of the version folder:
+    ``%APPDATA%/Ableton/Live 12.1.10/Preferences/Library.cfg`` (measured 2026-08-29).
 
-    macOS does not. There the version folder already sits inside
-    ``~/Library/Preferences``, and the files lie directly in it:
-    ``~/Library/Preferences/Ableton/Live 12.4.5/Library.cfg`` (measured
-    2026-09-09, Live 12.4.5 on macOS 15). A nested ``Preferences`` never
-    exists, so appending the segment there pointed one level too deep and the
-    installer reported the User Library as missing on every Mac.
+    macOS does not. There the version folder already sits inside ``~/Library/Preferences``
+    and the files lie directly in it: ``~/Library/Preferences/Ableton/Live 12.4.5/Library.cfg``
+    (measured 2026-09-09, Live 12.4.5 on macOS 15). A nested ``Preferences`` never exists
+    there, so appending the segment points one level too deep.
 
-    Kept as a function beside :func:`preferences_roots` so that the platform
-    layout is described in exactly one place. Two callers depend on it -
-    ``Library.cfg`` for discovery here, and ``Log.txt`` for the Control Surface
-    readout in ``scripts/inventory.py`` - and they were wrong together.
+    A function rather than a segment at each call site, so the layout is written once for
+    both callers: ``Library.cfg`` for discovery here, ``Log.txt`` for the Control Surface
+    readout in ``scripts/inventory.py``.
     """
     if sys.platform.startswith("win"):
         return version_folder / "Preferences"
@@ -263,10 +275,9 @@ def invocation() -> str:
     """How this program was started, so that hints can be copied back verbatim.
 
     ``live-maestro-install`` for the console script the wheel installs,
-    ``python scripts/install_script.py`` from a checkout. Not cosmetic: a user
-    who ran ``uv tool install`` has no ``scripts/`` directory, and a hint
-    naming one sends them looking for a file that is not on their disk. That is
-    the exact case this entry point exists for.
+    ``python scripts/install_script.py`` from a checkout. A user who ran
+    ``uv tool install`` has no ``scripts/`` directory, and a hint naming one sends them
+    looking for a file that is not on their disk.
     """
     if Path(sys.argv[0]).name.startswith("live-maestro-install"):
         return "live-maestro-install"
@@ -288,11 +299,9 @@ def library_cfg_hint() -> str:
     """Where ``Library.cfg`` sits inside a version folder, spelled for this platform.
 
     ``Live <version>\\Preferences\\Library.cfg`` on Windows and
-    ``Live <version>/Library.cfg`` on macOS, separator included, because the Path
-    is rendered by the platform that is actually running. Naming the layout and
-    not just the filename is the difference between a reader who can go and look
-    and one who has to guess, and spelling it wrong for the platform is how this
-    message misled every Mac user before.
+    ``Live <version>/Library.cfg`` on macOS, separator included, because the Path is
+    rendered by the platform that is actually running. The layout is named and not just
+    the filename, so a reader can go and look rather than guess.
     """
     return str(preferences_dir(Path("Live <version>")) / "Library.cfg")
 
@@ -391,9 +400,8 @@ def _value_of(parent: ET.Element, tag: str) -> str | None:
 def library_score(path: Path) -> tuple[int, str]:
     """Rate how much a folder looks like a User Library, and say why.
 
-    Higher is more certain. The evidence string goes straight into the output,
-    because a path chosen for a reason the user can check beats a path chosen
-    by a rule they have to trust.
+    Higher is more certain. The evidence string goes straight into the output, so the
+    choice is one the user can check rather than one they have to trust.
     """
     if not path.is_dir():
         return -1, "does not exist"
@@ -410,10 +418,9 @@ def library_score(path: Path) -> tuple[int, str]:
 def candidates_for(install: LiveInstall) -> list[LibraryCandidate]:
     """Return the folders this Live version's ``Library.cfg`` could be pointing at.
 
-    Two, not one, and that is the measured part: ``<ProjectPath>`` and
-    ``<ProjectPath>/<ProjectName>``. On the reference machine the second was the
-    folder Live read, while the first held a ``Remote Scripts`` folder Live never
-    looked at.
+    Two, not one: ``<ProjectPath>`` and ``<ProjectPath>/<ProjectName>``. On the reference
+    machine the second was the folder Live read, while the first held a ``Remote Scripts``
+    folder Live never looked at.
     """
     if install.project_path is None:
         return []
@@ -456,10 +463,9 @@ def _scored(candidate: LibraryCandidate) -> LibraryCandidate:
 def discover_user_libraries(installs: Sequence[LiveInstall]) -> list[LibraryCandidate]:
     """Distinct User Library candidates across every Live version, best first.
 
-    Deduplicated by resolved path, because forty version folders normally name
-    the same library and forty identical lines help nobody. Ordering is by
-    evidence first and by Live version second: a newer Live is a tiebreaker, not
-    an argument.
+    Deduplicated by resolved path, because forty version folders normally name the same
+    library. Ordering is by evidence first and by Live version second: a newer Live is a
+    tiebreaker, not an argument.
     """
     merged: dict[Path, LibraryCandidate] = {}
     order: dict[Path, int] = {}
@@ -514,8 +520,7 @@ class InstalledScript:
     def is_foreign(self) -> bool:
         """True for a folder belonging to another Remote Script, never to ours.
 
-        Reported so that the survey is complete, and never written to by this
-        file under any flag.
+        Reported so that the survey is complete, and never written to under any flag.
         """
         return self.name.lower() in FOREIGN_FOLDER_NAMES
 
@@ -527,12 +532,10 @@ class InstalledScript:
     def is_port_rival(self, ours: str) -> bool:
         """A folder that is not ours by name yet binds the very port we bind.
 
-        Matched on what the file declares, never on what it is called. An
-        earlier release of this project installed under a different folder name
-        is the case this catches, and it catches it without needing to know that
-        name: the port is the collision, so the port is the evidence. Live loads
-        every folder in the dropdown it has a slot for, and two servers on one
-        port fail in a way neither of them reports (see ``OUR_PORT``).
+        Matched on what the file declares, never on what it is called, which catches an
+        earlier install of this script under a folder name nothing here knows. Live loads
+        every folder in the dropdown it has a slot for, and two servers on one port fail
+        in a way neither of them reports (see ``OUR_PORT``).
         """
         if self.name.lower() == ours.lower() or self.is_foreign:
             return False
@@ -558,11 +561,10 @@ _PORT_BINDING_RE = re.compile(rf"=\s*{OUR_PORT}(?![0-9])")
 
 
 def _declares_our_port(init_file: Path) -> bool | None:
-    """Does this ``__init__.py`` bind our port? ``None`` when it cannot be read.
+    """Whether this ``__init__.py`` binds our port, or ``None`` when it cannot be read.
 
-    Read-only and never raises: a folder that cannot be opened is reported as
-    unknown rather than as safe, because "could not tell" and "does not clash"
-    are different answers and only one of them is a measurement.
+    Read-only and never raises. A folder that cannot be opened is reported as unknown
+    rather than as safe: "could not tell" and "does not clash" are different answers.
     """
     try:
         text = init_file.read_text(encoding="utf-8", errors="replace")
@@ -574,9 +576,8 @@ def _declares_our_port(init_file: Path) -> bool | None:
 def scan_remote_scripts(user_library: Path) -> list[InstalledScript]:
     """Survey ``<User Library>/Remote Scripts``: every folder, ours and not.
 
-    Read-only. Foreign folders are reported rather than filtered out: what else
-    Live loads from the same place is part of the answer, and the listing is
-    also the evidence that this installer left those folders alone.
+    Read-only. Foreign folders are reported rather than filtered out, because what else
+    Live loads from the same place is part of the answer.
     """
     base = user_library / "Remote Scripts"
     if not base.is_dir():
@@ -624,18 +625,16 @@ def scan_remote_scripts(user_library: Path) -> list[InstalledScript]:
 
 
 def pyc_matches_source(pyc: Path, source: Path) -> bool | None:
-    """Was this ``.pyc`` compiled from *this* ``__init__.py``? Exactly, not by mtime.
+    """Whether this ``.pyc`` was compiled from this ``__init__.py``, exactly, not by mtime.
 
-    A timestamp-based ``.pyc`` carries the source's mtime and size in its
-    16-byte PEP 552 header, so the question has a real answer instead of a
-    heuristic. Returns ``None`` for a hash-based ``.pyc`` (PEP 552 flag bit 0)
-    or an unreadable file: cases where there is nothing to compare, and saying
-    "stale" would be a claim rather than a reading.
+    A timestamp-based ``.pyc`` carries the source's mtime and size in its 16-byte PEP 552
+    header, so the question has a real answer instead of a heuristic. Returns ``None`` for
+    a hash-based ``.pyc`` (PEP 552 flag bit 0) or an unreadable file, where there is
+    nothing to compare and "stale" would be a claim rather than a reading.
 
-    *Measured 2026-08-29* against both scripts installed on the reference
-    machine: Live's ``cpython-311`` ``.pyc`` files were timestamp-based
-    (flags 0) and their embedded values equalled the sources' ``st_mtime`` and
-    ``st_size`` exactly.
+    Measured 2026-08-29 against both scripts installed on the reference machine: Live's
+    ``cpython-311`` ``.pyc`` files were timestamp-based (flags 0) and their embedded
+    values equalled the sources' ``st_mtime`` and ``st_size`` exactly.
     """
     try:
         head = pyc.read_bytes()[:16]
@@ -668,9 +667,9 @@ def _choose_user_library(
 ) -> LibraryCandidate:
     """Pick the User Library, asking when there is more than one honest answer.
 
-    The brief is literal about this: several candidates means list them and ask.
-    A wrong guess here is the most expensive failure this script has, because it
-    produces an installation that looks perfect and that Live never reads.
+    Several candidates means list them and ask. A wrong guess here is the most expensive
+    failure this script has, because it produces an installation that looks perfect and
+    that Live never reads.
     """
     roots = ", ".join(str(root) for root in preferences_roots()) or "(no known root)"
     if not candidates:
@@ -823,10 +822,9 @@ def _backup_path(target: Path) -> Path:
 def _clear_pycache(folder: Path, *, dry_run: bool) -> list[str]:
     """Delete ``__pycache__`` in the target folder. Part of the install, not tidying.
 
-    *Measured, and in the docs in two places* (``docs/protocol.md`` §9 and
-    ``docs/limits.md`` §4): Live loads the compiled version if
-    one is there, so a fresh ``__init__.py`` beside a stale ``__pycache__``
-    means the change did not happen, and Live reports nothing.
+    Live loads the compiled version if one is there, so a fresh ``__init__.py`` beside a
+    stale ``__pycache__`` means the change did not happen, and Live reports nothing
+    (``docs/protocol.md`` section 9).
     """
     pycache = folder / "__pycache__"
     if not pycache.is_dir():
@@ -865,12 +863,10 @@ def _note_foreign_scripts(scripts: Sequence[InstalledScript]) -> None:
 def _note_port_rivals(scripts: Sequence[InstalledScript], ours: str) -> None:
     """Report a folder that binds our port under another name, and refuse to be quiet.
 
-    This is the upgrade case. A release installed under a different folder name
-    is still sitting in the same Remote Scripts directory, and Live loads every
-    folder that has a Control Surface slot pointing at it. Both then bind
-    ``OUR_PORT``, and as that constant records, two servers on one port fail
-    without either of them saying so. Copying the new folder in does not
-    disturb the old one, which is exactly why it has to be said out loud.
+    The upgrade case: an install under a different folder name still sits in the same
+    Remote Scripts directory, and Live loads every folder a Control Surface slot points
+    at. Both then bind ``OUR_PORT``, and two servers on one port fail without either of
+    them saying so. Copying the new folder in does not disturb the old one.
     """
     rivals = [script for script in scripts if script.is_port_rival(ours)]
     if not rivals:
@@ -916,36 +912,64 @@ def _print_manual_steps(target_folder: Path, name: str) -> None:
     _say()
     _say("Then check that Live is answering:")
     _say()
-    _say("  python -m live_maestro.client ping")
+    _say("  ask your assistant for get_session, which reports the handshake")
+    _say("  or, from a checkout: .venv/bin/python -m live_maestro.client ping")
     _say()
     _say("From a checkout, python scripts/inventory.py surveys the whole installation.")
     _say()
 
 
+def _devices_beside(folder: Path, target: Path) -> list[str]:
+    """Return the names of the devices already in ``folder``, except ``target``."""
+    if not folder.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() == DEVICE_SUFFIX and path.name != target.name
+    )
+
+
 def install_device(user_library: Path, source: Path, *, dry_run: bool) -> bool:
-    """Copy the analyzer device into the User Library. Returns True if it is there.
+    """Copy one Max for Live device into the User Library. Returns True if it is there.
 
-    Only ``analyze_audio`` needs this device, and every other tool works without
-    it, so a missing source file is reported and not raised: an installation that
-    cannot measure audio is still a working installation.
+    The device lands under the name ``device_target_name`` makes of the source, so two
+    different sources are two different files and neither arrives on top of the other.
+    The collision left is a source replacing what an earlier run of the same source put
+    there: identical bytes are reported as already current and nothing is written,
+    differing bytes are copied over a timestamped backup after a line naming what is
+    replaced. The devices already in the folder are listed either way.
 
-    Live does not reload a changed ``.amxd`` in a set that already holds one. An
-    instance loaded before this ran keeps the version it was loaded with, which
-    the tool reports as ``schema_mismatch`` rather than reading it wrongly.
+    Only ``analyze_audio`` needs the analyzer, so a missing source file is reported and
+    not raised: an installation that cannot measure audio is still a working one.
+
+    Live does not reload a changed ``.amxd`` in a set that already holds one. An instance
+    loaded before this ran keeps the version it was loaded with, which the tool reports as
+    ``schema_mismatch`` rather than reading it wrongly.
     """
     target_folder = user_library / DEVICE_SUBFOLDER
-    target = target_folder / DEVICE_TARGET_NAME
 
     _say()
-    _say("Analyzer device (optional, only analyze_audio uses it)")
+    _say(f"Device {source.name} (optional, only analyze_audio uses the analyzer)")
     if not source.is_file():
         _say(f"  not found      {source}")
         _say("                 Run this from a clone of the repository to install it,")
         _say("                 or generate it with scripts/build_analyzer_device.py.")
         return False
 
+    if source.suffix.lower() != DEVICE_SUFFIX:
+        _say(f"  not a device   {source}")
+        _say(f"                 Live's browser lists only {DEVICE_SUFFIX} files in that")
+        _say("                 folder. Anything else copied there is invisible, and")
+        _say("                 Live reports nothing about it.")
+        return False
+
+    target = target_folder / device_target_name(source)
     data = source.read_bytes()
     unchanged = target.is_file() and target.read_bytes() == data
+    beside = _devices_beside(target_folder, target)
+    if beside:
+        _say(f"  already there  {', '.join(beside)}  (left alone)")
 
     if dry_run:
         if not target_folder.is_dir():
@@ -953,6 +977,7 @@ def install_device(user_library: Path, source: Path, *, dry_run: bool) -> bool:
         if unchanged:
             _say(f"  identical      {target}")
         elif target.is_file():
+            _say(f"  would replace  {target.name}  ({target.stat().st_size:,} bytes, different)")
             _say(f"  would back up  {target.name}  ->  {BACKUP_PREFIX}<timestamp>")
             _say(f"  would copy     {source}  ->  {target}")
         else:
@@ -964,15 +989,17 @@ def install_device(user_library: Path, source: Path, *, dry_run: bool) -> bool:
         _say(f"  already current  {target}")
         return True
     if target.is_file():
+        _say(f"  replacing      {target.name}  ({target.stat().st_size:,} bytes, different)")
         backup = _backup_path(target)
         shutil.copy2(target, backup)
         _say(f"  backed up      {target.name}  ->  {backup.name}")
     shutil.copy2(source, target)
     _say(f"  copied         {len(data):,} bytes  ->  {target}")
     _say("                 Live's browser lists it under Presets > Audio Effects >")
-    _say("                 Max Audio Effect. Drop it on the track to measure, last")
-    _say("                 in the chain. Replace any copy already loaded in a set:")
+    _say("                 Max Audio Effect. Replace any copy already loaded in a set:")
     _say("                 Live does not reload a changed device.")
+    if target.name == DEVICE_TARGET_NAME:
+        _say("                 Drop it on the track to measure, last in the chain.")
     return True
 
 
@@ -1072,11 +1099,10 @@ def do_install(args: argparse.Namespace) -> int:
 def do_uninstall(args: argparse.Namespace) -> int:
     """Make Live stop loading the script, without deleting anything irreversibly.
 
-    ``__init__.py`` is *renamed* to a timestamped backup rather than removed: a
-    folder without ``__init__.py`` no longer appears in Live's dropdown, which
-    is what uninstalling means here, and nothing the user might want back is
-    destroyed. Removing the folder outright stays a deliberate manual step, and
-    the exact command is printed.
+    ``__init__.py`` is renamed to a timestamped backup rather than removed: a folder
+    without ``__init__.py`` no longer appears in Live's dropdown, which is what
+    uninstalling means here. Removing the folder outright stays a manual step, and the
+    exact command is printed.
     """
     name = _validate_folder_name(args.name)
     user_library, _ = _resolve_user_library(args)
@@ -1136,9 +1162,8 @@ def do_uninstall(args: argparse.Namespace) -> int:
 def do_diff(args: argparse.Namespace) -> int:
     """Unified diff of the repo's script against the installed one.
 
-    Exit code is the answer: 0 identical, 1 different or not installed. That
-    makes it usable as a check ("is Live's copy the one in this checkout?")
-    and not only as something to read.
+    The exit code is the answer, 0 identical and 1 different or not installed, so this is
+    usable as a check and not only as something to read.
     """
     name = _validate_folder_name(args.name)
     source = Path(args.source).expanduser()
@@ -1294,8 +1319,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--device-source",
         default=str(DEVICE_SOURCE),
         metavar="PATH",
-        help="the analyzer .amxd to install (default: "
-        "devices/LiveMaestro_Analyzer.amxd in this checkout).",
+        help="the .amxd to install (default: devices/LiveMaestro_Analyzer.amxd in "
+        "this checkout). It lands under its own name, with '_' read as a space, so "
+        "a second device goes beside the analyzer and not over it.",
     )
     parser.add_argument(
         "--no-device",

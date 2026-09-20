@@ -42,8 +42,15 @@ Sidechain routing is configured directly on the receiving device rather than at 
 
 Routing types must be assigned by object reference (using `{"__path__": "<path>"}`) rather than by string name.
 
+### The Session / Arrangement boundary (LOM)
+The Arrangement timeline is not writable, it can only be populated. All content originates in a Session clip and is duplicated. The Session slot is not an optional intermediate step, but the sole write target.
+
+Arrangement clips cannot receive note writes via `add_new_notes` or `replace_selected_notes` over the JSON bridge, and clip envelopes cannot be created directly on Arrangement clips. `end_marker` is a narrower case: `lom_set` and `lom_batch` refuse a write to it, but what was observed there is not the same as what has been proven, and section 5 carries the open question and the probe. Always build musical content and automation in Session clips first and duplicate them onto the Arrangement timeline via `arrange`.
+
 ### Track automation vs. clip envelopes (LOM)
 Arrangement track automation envelopes are not directly writable via the live LOM API (`clip.automation_envelope()` returns `None` for arrangement clips). Automation must be written into Session clips first and then duplicated to the Arrangement timeline via `Track.duplicate_clip_to_arrangement()`.
+
+That parenthesis is weaker evidence than it looks, and it is not what the claim rests on. Measured 2026-09-16 against Live 12.4.5 on Ableton's "Patience" demo song: a Session clip in the same set answered `None` for `mixer_device.volume` too. A `None` answer therefore does not separate "no envelope exists for that parameter yet" from "envelopes are unreachable on this clip", and that probe settled nothing. The claim above stands on Ableton's published Object Model, which says the call returns `None` for Arrangement clips, and on the measured refusal of `create_automation_envelope` there (2026-08-30 against Live 12.4.5, `RuntimeError: Not a session clip or parameter belongs to another track.`). The probe that would settle the reading half is a Session clip that already carries an envelope for the parameter being asked about: ask that parameter of the Session clip and of an Arrangement copy of it, and an envelope from the one against `None` from the other is the only answer that discriminates.
 
 When both layers target the same parameter over the same stretch, the **clip envelope is what plays**. Measured 2026-09-01 against Live 12.4.5 on a 51-track arrangement: sampling a filter cutoff during playback returned the clip envelope's value wherever one existed (573 Hz, then 402, 335 and 199 Hz across a later section) and the track automation's value only where none did (10.0 kHz). Read this before deleting either layer: the only one reachable from here is the clip envelope, which is the audible one. Removing it does not tidy a redundant curve. It uncovers the track automation underneath, which in that measured case would have opened a drone from around 200 Hz to 10 kHz.
 
@@ -53,6 +60,51 @@ A Session clip envelope drives its parameter while the clip plays and lets go wh
 Measured 2026-09-08 against Live 12.4.5: firing one scene and stopping left three track volumes at -5.00, -1.72 and +1.50 dB rather than at the 0.0 dB they were set to, and a second pass that stopped at a different point in the same envelope left one of them at -0.72 dB. The parked value is wherever the curve happened to be, so it differs from one playthrough to the next and no two runs leave the same mixer.
 
 The defence is to record the statics before the first playthrough and write them back afterwards. `read_automation` samples the curve, never the value beneath it, so a comparison against what you set is the only way to see the damage.
+
+---
+
+### Sparse automation layers and interpolation behavior (LOM)
+`Envelope.insert_step(time, length, value)` is the one measured write primitive a clip envelope has, and the only one this bridge writes through. The measurement behind that is dated 2026-09-08 and sits further down under 'A clip's envelopes can be listed, its breakpoints cannot': it lists what an `Envelope` publishes and records that none of those members is on the Remote Script allowlist, so it is cited here rather than restated. What it does not settle is whether `create_event` can place a breakpoint, which is not measured; and `Envelope.delete_events_in_range` does write, because the Remote Script empties an envelope with it when `Clip.clear_envelope` is absent. No member that takes a bezier breakpoint or a continuous curve appears in that list.
+
+When writing automation via `write_automation`:
+- The client-side curve model interpolates between sparse breakpoints according to the selected `interpolation` mode (`linear`, `hold`, `exponential`, `ease_in`, `ease_out`) using `resolution` (default 1/16th beat = 0.0625 beats) to create a staircase of discrete `insert_step` calls.
+- When `interpolation="hold"` is selected, step values stay flat between breakpoints without intermediate sampling steps.
+- If raw sparse points are placed directly without densification, Live treats each point as a discrete step holding that value over its length. What Live reads in the gap between two `insert_step` calls that do not touch is not measured. The finding that raised the question was taken on a different product. The probe: write two steps with a gap between them, then `read_automation` at a time inside the gap.
+- Beyond the final breakpoint the last value is held to the end of the clip because `write_automation` writes it there: `build_automation_steps` in the Remote Script appends a closing step of length `clip_length` minus the last breakpoint time. That is this server's behaviour, not something Live does on its own.
+
+---
+
+### Note ids across two clips: an untested rule (LOM)
+`get_notes_by_id`, `remove_notes_by_id` and `duplicate_notes_by_id`, on Session and on Arrangement clips alike, take a list of note ids. Pass only ids read from the clip the call is made on.
+
+That rule is not measured against Live. It was observed on the ACE Studio note API, a different product, where a list mixing ids from two clips answers `INVALID_ARG`. Live has no `INVALID_ARG` code; a refusal from Live would arrive as `live_error` carrying Live's own message.
+
+What is measured here is narrower, and it is the reason to keep the rule anyway: the only note ids on record are 1, 2 and 3, read from a single clip holding three notes (docs/protocol.md section 5.8). Whether Live numbers ids per clip or across the whole set is unknown, and an id from another clip may be indistinguishable by value from a local one.
+
+To settle it: put notes in two clips, read both id sets with `notes_get`, then call `get_notes_by_id` on the first clip with one id from each. A `live_error` proves Live enforces the rule and the sentence above can be dated against Live. An answer carrying only the local note proves Live drops the foreign id silently, which is the worse outcome and the one that has to be written down. An answer carrying both notes proves ids are set-wide and the rule is ACE Studio's alone.
+
+---
+
+### song.current_song_time write boundary vs. Session playback (LOM)
+Measured 2026-09-10 to 2026-09-13 against Live 12.4.5. Writing `song.current_song_time` is bounded by `song.song_length`. Attempting to set a position past `song_length` fails with Live error `"Cannot set the Songtime behind the Songlength"`.
+
+In contrast, transport playback in Session view advances freely past `song_length` (e.g. reading 626.95 with `song_length` at 232). Consequently, in a pure Session set or a set with little Arrangement content, positions reached during Session playback cannot be navigated to by writing `current_song_time`.
+
+---
+
+### song.back_to_arranger is writable asynchronously (LOM)
+`song.back_to_arranger` reports whether Session clips currently override Arrangement playback (the lit Back to Arrangement button in Live). Setting it to `False` hands playback back to the Arrangement.
+
+Live applies this write asynchronously on its main thread, like `song.current_song_time`. Measured 2026-09-10 to 2026-09-13 against Live 12.4.5: writing `False` answers `changed: true`, `read_back: "applied"` at `read_back_attempts: 2`, so a single read taken straight after the write reports `not_observed` and that is the write pending, not the write refused. Measured 2026-09-06 against Live 12.4.5: writing `True` afterwards answers `not_observed` and the value stays `False`. The write travels one way, and nothing is lost by it, because Live raises the flag itself when a Session clip is launched.
+
+---
+
+### A time signature denominator that is not a power of two is accepted and does nothing (Live)
+`song.signature_denominator` holds powers of two only (1, 2, 4, 8, 16). A value that is not one of them is neither refused nor rounded to the nearest one that is. Live takes the write, the result is `ok`, and the signature does not move.
+
+Measured 2026-09-16 against Live 12.4.5 on Ableton's "Patience" demo song: writing `3` answered `ok` with `read_back: "not_observed"`, and a re-read 1.5 s after the write still returned `4`. Writing `8` in the same round answered `read_back: "applied"` and read back `8`, which is what rules out a read taken too early: when Live accepts the value, this path applies inside one round trip. Restored to `4`.
+
+Read `not_observed` here as the write having done nothing, not as the write still travelling, which is the opposite of what the same field means on `song.back_to_arranger` above. This is the failure shape section 6 exists for: a caller who plans a bar in 4/3 on the strength of an `ok` gets 4/4, and nothing in the result says so.
 
 ---
 
@@ -185,17 +237,35 @@ Set values in the internal range and read `display` back to confirm what was sto
 
 ## 4. Protocol limits: ours, and therefore fixable
 
-### Non-transactional batch operations
+### Non-transactional batch operations (Protocol)
 `lom_batch` executes operations sequentially. The LOM does not support atomic database-style rollbacks. When `atomic: true` is passed, execution stops at the first error, but previously executed steps remain in effect.
+
+### Batch size limit (Protocol)
+`lom_batch` accepts at most 1000 operations per call (`max_ops=1000`). A request above that is rejected upfront with `code: "batch_too_large"` and nothing is sent to Live. A batch is never silently truncated.
+
+1000 is a chosen ceiling with a measured basis, not the point at which Live struggles. Measured 2026-09-16 against Live 12.4.5 (macOS 26.6.2, four-track set): one request costs about 400 ms fixed regardless of its size. 200 operations took 500 ms, 1600 mixed reads (track name, mixer volume and panning value, `playing_slot_index`) 1506 ms and 3200 `song.tempo` gets 1718 ms, with `error_count` 0 throughout. The marginal cost is read between the 200-operation point and the largest one of each kind, which is where the fixed cost has stopped dominating: about 0.72 ms per mixed real read and about 0.44 ms per `song.tempo` get. Taken instead against the single-request cost the same points give 0.69 ms and 0.41 ms, which is the same measurement fitted from a different anchor and not a second one. The Remote Script gives a single `lom_batch` `min(18 s, 4 s + 0.4 s per op)` on Live's main thread, itself inside the client's 20 s write timeout, so read batches at this size finish with an order of magnitude of headroom.
+
+Write and call operations were not measured. Measuring them would have mutated the open set, and each costs more than a read, by how much nobody here knows. The ceiling sits where a batch of the most expensive plausible operations still has room, not where reads were seen to fail. If a batch of writes ever times out below 1000 operations, that is the measurement this entry is missing and the number should move to fit it.
+
+Raising the cap needs no Remote Script change: `_handle_lom_batch` imposes no op count limit of its own, so no Live restart is involved.
 
 ### Write timeouts and retry policy
 Write operations that encounter socket timeouts are not retried automatically, because a timed-out write may have succeeded in Live. Repeating the write could result in duplicate actions (such as duplicate notes). Clients should verify state using a read operation following a timeout.
 
 ### Round-trip cost
-One round trip costs about 450 ms (measured 2026-08-29 against Live 12.4.5). That is the reason `lom_batch` exists: a twenty-track mixer pass is twenty round trips without it and one with it.
+One round trip costs about 450 ms (measured 2026-08-29 against Live 12.4.5). That is the reason `lom_batch` exists: a twenty-track mixer pass is twenty round trips without it and one with it. A second measurement, 2026-09-16 against Live 12.4.5, put the fixed cost of a `lom_batch` request at about 400 ms regardless of the number of operations in it, so treat 400 to 450 ms as the range rather than 450 ms as the figure.
 
 ### Strictly serial transport
 The socket protocol processes one request at a time per connection without multiplexing. Multi-operation tasks should use `lom_batch` to execute within a single round trip.
+
+### A browser uri survives a restart, and needs its root to resolve (Protocol)
+A `uri` from a browser search is stable enough to cache. Resolving one is not: the walk that resolves it shares the search step's node budget, and an unscoped walk runs out before it arrives. A cached entry therefore has to carry the browser root beside the uri, or the cache stores a key that only works by luck.
+
+Measured 2026-09-17 against Live 12.4.6, on a device installed into the User Library by this project. The uri and the positional `item_path` beside it were recorded 2026-09-16 against Live 12.4.5; Live was then quit, upgraded to 12.4.6 and started again, and the same uri was looked up three ways. With `root=user_library`: `found: true`, `status: "complete"`, the same name, and the same positional `item_path` byte for byte. That recorded `item_path`, read directly with `lom_get`, still named the same device, so the positions did not shift under the upgrade either. With `root=max_for_live`: `found: false` with `status: "complete"`, a walk that finished and correctly did not find it in a category it does not live in. With no root at all: `found: false`, `status: "incomplete"`, `truncated_by: "node_budget"`, `budget_left: 0`, and all twelve browser roots reported in `unreached_roots`. The uri did not fail to resolve. The walk never reached it.
+
+Read the third case as the reason `status` exists. `found: false` licenses the conclusion "not installed" only when `status` is `complete`; here it means "not searched". Without that field the same reply would read as a uri that had gone stale over the restart, which is a defect this browser does not have.
+
+What the measurement does not cover: one item, one root, one restart and one point upgrade. It says nothing about a major version, about an item whose Pack is moved or renamed, or about factory content whose browser position Ableton controls rather than this project. The raw readings are in `measurements/spikes/spike-browser-uri-stability-live-12.4.6.json`.
 
 ---
 
@@ -229,6 +299,23 @@ Measured 2026-09-05 against Live 12.4.5 on a scratch audio track holding a copy 
   `{"__path__": ...}` form resolves an existing object and cannot build a new one. So warp
   markers can be read, moved and (mostly) removed from here, and not created.
 
+### `end_marker` on an Arrangement clip: ineffective, or ineffective only while the clip does not loop?
+Observed once, 2026-09-10 against Live 12.4.5, in a producer session rather than by a probe: the write was accepted, reported success, and `end_time` did not move. In that same session the clip was also one Live would not let loop, and the two were never separated, so the broad reading and the narrow one both still fit. Either the write is ineffective on an Arrangement clip, or it is ineffective only while the clip does not loop. One sighting in a working session is not a probe run, which is why this says observed rather than measured.
+
+The catalog row `arrangement_clip.end_marker` carries `status: verified`. What earned that is a read-back proving the value stores, which is a smaller claim than the value taking effect, and the row must not be read as the larger one.
+
+`lom_set` and `lom_batch` refuse the write anyway, and the refusal is deliberate rather than provisional: a write that reports success and changes nothing is the worst failure shape in the set, because a caller plans around it and nothing tells them to stop. The price is that the refusal blocks the very write that would settle the question.
+
+To settle it, use `scripts/probe_paths.py`, which reaches the executor and is not behind the refusal:
+
+1. Run `--id arrangement_clip.end_marker --track N --clip K` without `--go`, to see which clip the row resolves to.
+2. Read `looping`, `start_marker`, `end_marker`, `end_time` and `length` on that clip in one `lom_batch`.
+3. With `looping` false, write `end_marker` two beats below what it reads, then read all five back.
+4. Write `looping` true and read it back. A refusal here is a result and belongs in the report: a clip Live will not let loop is the other half of the pair.
+5. If `looping` took, repeat step 3 in that state and compare the two outcomes.
+
+If `end_time` follows the write in one looping state and not in the other, the refusal narrows to the state that fails and the row says which. If it fails to follow in both, the refusal stands as written, the question is answered, and this entry moves into section 2 as a limit.
+
 ### Concurrent Control Surfaces
 Live holds several Control Surfaces at once, and Maestro listens on port 9878 by default so it does not collide with another socket-based script. Whether Live is content with two Control Surfaces each running a socket server of its own is unverified.
 
@@ -240,6 +327,34 @@ Listeners registered through `events_observe` run inside Live's own process, whi
 Properties that fire on every buffer are the ones to watch: `clip.playing_position` and `clip.is_playing` are observable, and a listener on either across many clips means a callback storm rather than an occasional event. Because the cost is unmeasured rather than known to be safe, `events_observe` reports the registration count back to the caller and bounds its event buffer instead of assuming either is free.
 
 To settle it: register listeners in increasing numbers on `clip.playing_position` across a set during playback and watch Live's CPU meter and audio dropout counter. Until that is done, treat a high listener count as an unknown risk and prefer polling a property when a poll will do.
+
+### Did Live 12.4.6 move the object model?
+Two recordings say no, and neither of them is the re-verification the upgrade runbook asks for. The catalog still stands on a 12.4.5 measurement, and this entry records how far that has been checked against 12.4.6 rather than claiming it has been re-measured.
+
+Measured 2026-09-17 against Live 12.4.6, without the specimen set. `scripts/sync_catalog.py --report` was run against the open demo song rather than against the set step 2 of `docs/upgrading_live.md` requires. It examined 1166 rows and proposed 108 new rows and 80 deletions, and none of that counts: with the wrong set under it every proposal is a set artefact, which the deletions show plainly by reading `song.tracks[11].clip_slots[0].clip.<member> is None here`, an empty clip slot rather than a missing property.
+
+What does hold is a comparison of the two describe recordings, class by class. Every object each recording reaches was grouped by its Live class and the union of its properties, children and methods compared per class. Of the 17 classes both recordings reach, exactly one differs: `View`, and only in the direction that the 2026-08-30 recording had more members. Nothing appears under 12.4.6 that the earlier recording lacks, which is the direction in which an addition would show. Those members are the `sample_*`, `selected_band` and `selected_slice` properties with their listener triplets, which come from a Simpler and an Eq8 the August set held and the demo song does not. `View` is polymorphic per device, so that is a set difference. The classes reached by only one of the two recordings are the same story in another form: the August one reaches eight the other does not, and each of the eight is a device class, a drum pad or chain inside one, or the `Groove` in the pool, all of which that set held and the demo song does not; today's recording reaches `WarpMarker`, which the August one did not, and since the specimen set carried a warped clip too, that one is a recorder or path difference rather than anything Live changed.
+
+Three things weaken it, and all three point at running the runbook pass rather than trusting this one. The sets differ. The recorder differs, because the two recordings were taken by different Remote Script builds reporting different names, protocol versions and handler lists, so a difference between them could be the recorder rather than Live. And the comparison only comes out at one differing class when a member is counted whichever bucket the recorder filed it under: the recorder files a member under children when it resolves on the specimen and under properties when it raises, so `ClipSlot.clip` moves bucket between a full slot and an empty one, and `RackDevice.chain_selector`, `drum_pads` and `visible_drum_pads` move bucket between a Drum Rack and an Instrument Rack. Compared bucket by bucket instead, three classes appear to differ and two of those differences are bucketing alone.
+
+So: nothing was added and nothing removed by 12.4.6 that two recordings taken against different sets by different script builds can see. That is a reason to expect a clean re-verification, not a substitute for one.
+
+To settle it: build a specimen set from the table in `docs/upgrading_live.md`, save it under a name of its own, and run the reconciliation and the measurement pass against it. There is no saved specimen set to reuse, so that build is the first cost of the next upgrade rather than a step that can be skipped. The raw readings behind this entry are in `measurements/spikes/spike-1246-reconciliation-live-12.4.6.json`.
+
+### Does a long run of load and delete cycles wear Live down?
+No, up to 425 cycles, which is as far as it was taken. The `instrument_sweep` work can hold one Live process for a long run instead of being designed around process restarts. What stays open is the length: the question was posed at a thousand cycles and a thousand were not run, so nothing here rules out a threshold between 425 and 1000.
+
+Measured 2026-09-17 against Live 12.4.6, against a set built for the purpose and named so it cannot be confused with a music project: `LM-Stress.als`, one MIDI track called LM-STRESS, no clips, no devices. Ableton's Utility was loaded from `app.browser.audio_effects.children[64]` onto `song.tracks[0]` and deleted again, 425 times in one process, in three stages of 25, 100 and 300 cycles run back to back. Every cycle was accepted on read-back evidence and on nothing weaker: the load counted only with `selected_track_same` true, `displaced` empty and `Utility` at index 0 of the chain, the delete only with the chain going from one device to none. All 425 met both, none displaced a device, and four guards ahead of each cycle confirmed the browser item still read `Utility`, the selection was still the sentinel track, the chain was empty and the transport was stopped.
+
+Nothing degraded while the loop ran. A cycle costs about 7.1 s end to end at the harness's own pacing, of which about 2.44 s is the load and 2.38 s the delete. The three stage medians are 7.0788, 7.0881 and 7.0955 s, seventeen milliseconds apart across a twelvefold change in stage length, and inside the 300-cycle stage the first fifty cycles have a median of 7.0817 s against 7.1038 s for the last fifty. That 22 ms sits well inside the per-cycle spread of 6.77 s to 7.70 s. The harness projects 1000 cycles at about 1.97 h from the median, which is arithmetic on a measurement and not a measurement.
+
+Memory has to be read as a shape, and the three stages are why. The 25-cycle stage rises monotonically by 2.0 MiB of RSS with no reclaim in it, and taken alone it reads as a leak. The 100-cycle stage reaches 645.3 MiB at cycle 49, gives 3.2 MiB back at cycle 51, and ends at 645.1 MiB, below its own peak. The 300-cycle stage ends 22.7 MiB **below** where it began, 609.8 MiB down to 587.1 MiB inside a band of 584.0 to 626.7 MiB, having given back 42.8 MiB over two cycles around cycle 220 and then resumed the same slow climb. The macOS footprint moved 4 MiB across those 300 cycles and sat flat at 1288 MiB from cycle 40 to cycle 140. A bounded curve with reclaim in it, not unbounded growth.
+
+That reading is weaker than a subtraction, and the harness says so in its own summary rather than being paraphrased here: "A memory delta over this run cannot be attributed. Nothing in the Live Object Model clears or reports the undo stack, and a thousand cycles push roughly two thousand undo steps. Read the curve's shape, a bounded plateau against unbounded growth, and subtract an idle control arm of the same wall-clock length. A before/after pair says nothing." At the two undo steps per cycle it counts, one for the load and one for the delete, the 425 cycles run push roughly 850 of them. No idle control arm was run, so only the first half of that instruction was carried out. One incidental reading points the same way: in the ten idle minutes between the second and third stage, with the harness running nothing at all, RSS fell 35.3 MiB, a larger movement than any cycle produced. That is one observation on an idle process, not an arm.
+
+What it does not cover: one device, and the cheapest kind. Utility is a native audio effect. An instrument allocates more, a third-party plugin more again, and a sweep loads instruments rather than Utility, so the cost per cycle and the memory curve both belong to the easy case. The set was empty by construction, on one track, one machine, one Live version and one session, with no plugin windows open.
+
+To settle the rest: run the thousand, with an instrument rather than an audio effect, and with an idle Live process of the same wall-clock length sampled alongside it so the memory curve can be subtracted rather than interpreted. The raw readings behind this entry are in `measurements/spikes/spike-load-delete-endurance-live-12.4.6.json`.
 
 ---
 

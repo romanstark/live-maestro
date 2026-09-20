@@ -326,3 +326,30 @@ def test_the_blocked_terms_that_have_to_fire(registry) -> None:
         "fade out the master over the last bars",
     ):
         assert lookup.find(registry, query).route == "blocked", query
+
+
+class TestWhatChoseTheRoute:
+    """A route picked by one incidental word has to say so.
+
+    Measured case: "merge repeated notes of the same pitch into one long sustained
+    chord, legato" is a question about a clip, and the word "sustained" alone sends it
+    to a device envelope. The routing is unchanged; what it reports is not.
+    """
+
+    def test_a_route_names_the_words_that_selected_it(self) -> None:
+        found = lookup.find(default_registry(), "make the attack snappier")
+        assert found.route == "device_parameter"
+        assert found.matched_on
+
+    def test_one_word_out_of_a_long_question_is_called_thin(self) -> None:
+        found = lookup.find(
+            default_registry(),
+            "merge repeated notes of the same pitch into one long sustained chord, legato",
+        )
+        assert found.matched_on == ["sustain"]
+        assert any("chosen by the word" in note for note in found.notes)
+
+    def test_a_short_question_on_its_own_subject_is_not_called_thin(self) -> None:
+        """The caution is about a word lost in a sentence, not about brevity."""
+        found = lookup.find(default_registry(), "filter cutoff")
+        assert not any("chosen by the word" in note for note in found.notes)

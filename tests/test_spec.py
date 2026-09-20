@@ -1,26 +1,18 @@
 """``spec.py``: the path builder, the pre-flight validator, and the grammar.
 
-Everything in ``spec.py`` runs *before* anything reaches the socket, so all of it
-is testable without Live, without a network, and in milliseconds. That is the
-point of the module and the point of this file.
+Everything in ``spec.py`` runs before anything reaches the socket, so all of it is
+testable without Live. The refusals are the substance, and three carry the weight:
 
-The behaviour under test is mostly refusal, and the refusals are not
-interchangeable. Three of them carry the weight:
-
-* An unknown argument is an error. ``build_path(spec, trak=3)`` must not
-  quietly build ``song.tracks[0]...`` from a default. A keyword nobody reads
-  vanishes without a sound and the operation proceeds against someone else's
-  target, with every call still reporting success
-  (docs/architecture.md, 'read-back as a principle'). So the tests here do not
-  stop at "it raised". They assert that the message names the argument, because
-  an error that does not is nearly as bad as no error.
-* Nothing is clamped. Live clamps, and ``lom_set``'s read-back is what makes
-  that visible (``docs/protocol.md`` §5.4). A client that clamped first would
-  turn a caller's mistake into a plausible-looking success.
-* The grammar is a whitelist. No slices, no negative indices, no method
-  calls, no expressions, because the resolver inside Live is a whitelist too,
-  and a path this module accepts that the script rejects is a bug in one of the
-  two ends.
+* An unknown argument is an error, and the message names it. ``build_path(spec,
+  trak=3)`` must not quietly build ``song.tracks[0]...`` from a default: the
+  operation would proceed against someone else's target with every call still
+  reporting success (docs/architecture.md, 'read-back as a principle').
+* Nothing is clamped here. Live clamps, and ``lom_set``'s read-back is what makes
+  that visible (``docs/protocol.md`` §5.4). A client that clamped first would turn
+  a caller's mistake into a plausible-looking success.
+* The grammar is a whitelist: no slices, no negative indices, no method calls, no
+  expressions. The resolver inside Live is a whitelist too, and a path this module
+  accepts that the script rejects is a bug in one of the two ends.
 """
 
 from __future__ import annotations
@@ -184,10 +176,8 @@ def test_build_path_accepts_an_int_enum_member() -> None:
 def test_unknown_argument_is_rejected_and_the_message_names_it() -> None:
     """A misspelt keyword raises, and the message names it.
 
-    A misspelt keyword must not be dropped. It must raise, and the message must
-    contain the offending name: a caller staring at "invalid arguments" still
-    has to guess which one, and guessing is what this whole mechanism exists to
-    remove.
+    A caller staring at "invalid arguments" still has to guess which one, and
+    guessing is what this mechanism exists to remove.
     """
     with pytest.raises(ValueError) as excinfo:
         build_path(volume_spec(), trak=3)
@@ -201,8 +191,8 @@ def test_unknown_argument_is_rejected_and_the_message_names_it() -> None:
 def test_unknown_argument_is_rejected_even_alongside_a_correct_one() -> None:
     """A right argument does not excuse a wrong one.
 
-    This is the realistic shape of the failure: the call looks like it worked
-    because the part the author was thinking about did.
+    The call otherwise looks like it worked, because the part the author was
+    thinking about did.
     """
     with pytest.raises(ValueError, match="slott"):
         build_path(clip_name_spec(), track=1, slot=2, slott=3)
@@ -682,9 +672,7 @@ def test_the_indexed_root_refusal_matches_the_script_and_lom_paths() -> None:
 
     The Remote Script answers ``bad_path: "the root segment takes no index"`` and
     ``lom.paths.parse`` refuses it too. This module is the client-side mirror of
-    that resolver, so it has to refuse it as well: a path accepted here and
-    rejected in Live is the divergence the module docstring calls a bug in one of
-    the two ends.
+    that resolver, so it has to refuse it as well.
     """
     from live_maestro.lom import paths as lom_paths
 
@@ -696,16 +684,12 @@ def test_the_indexed_root_refusal_matches_the_script_and_lom_paths() -> None:
 
 
 def test_a_bad_default_in_a_row_cannot_smuggle_a_malformed_path_out() -> None:
-    """A malformed path never leaves :func:`build_path`.
+    """A malformed path never leaves :func:`build_path`, whoever supplied the value.
 
-    That holds whoever supplied the value. The placeholder here is filled from
-    the parameter's own ``default``, so nothing the caller passed is involved.
-    The guard that fires is the per-parameter coercion, not the whole-path
-    re-check at the end, and it is the better of the two, because it names the
-    parameter rather than complaining about a string the caller never wrote. The
-    re-check is still there as the backstop for any
-    future route that gets past the coercions. Today every route is closed
-    upstream of it.
+    The placeholder here is filled from the parameter's own ``default``, so nothing
+    the caller passed is involved. The guard that fires is the per-parameter
+    coercion, which names the parameter rather than complaining about a string the
+    caller never wrote; the whole-path re-check at the end stays as the backstop.
     """
     spec = PathSpec(
         id="test.bad_default",
@@ -975,10 +959,10 @@ def test_require_access_refuses_what_it_does_not_and_lists_what_it_does() -> Non
 def test_call_access_here_is_not_the_last_word() -> None:
     """The catalog's ``call`` is a request, not the answer.
 
-    The script's allowlist answers it. ``docs/protocol.md`` §6: the allowlist
-    lives inside Live so it cannot be widened from outside, the two must agree,
-    and the script wins. This test exists to pin that ``require_access`` is only
-    the early, cheap refusal: it passes for a row the script may still refuse.
+    The script's allowlist answers it. ``docs/protocol.md`` §6: the allowlist lives
+    inside Live so it cannot be widened from outside, the two must agree, and the
+    script wins. ``require_access`` is only the early, cheap refusal, so it passes
+    for a row the script may still refuse.
     """
     spec = PathSpec(
         id="test.callable",

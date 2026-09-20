@@ -1,31 +1,18 @@
 """Intent to path lookup over the catalog: producer words in, the right mechanism out.
 
-The catalog exists so that this server can expose a handful of tools instead of one per
-Live property (docs/architecture.md). That only works if a caller can find a row without
-reading the catalog: fetching the full catalog resource costs around 134,000 tokens. Scored
-against 444 producer-language queries, a naive substring search over the same catalog chose
-the right mechanism only 17 percent of the time. This module maps studio intent in natural
-language to the right LOM mechanism in around 1.5k tokens.
+Fetching the full catalog resource costs around 134,000 tokens, and over 444
+producer-language queries a naive substring search of the same catalog chose the right
+mechanism 17 percent of the time. This module answers in around 1.5k tokens, in three
+stages, and is pure: no socket, no Live, no I/O beyond the registry it is handed.
 
-Three things do the work here, in this order.
-
-**Routing before ranking.** Not every intent is a row. Exporting audio is impossible
-(docs/limits.md). A filter cutoff is a runtime ``DeviceParameter`` the catalog cannot
-enumerate. Writing notes has a tool that verifies what a raw row cannot. Ranking rows for
-those is worse than useless, because a plausible wrong row reads like an answer. Each is
-answered as its own route with the next call named.
-
-**Family collapse.** ``track``, ``return``, ``master`` and ``chain`` carry the same
-property under four ids, and every ``clip`` row has an ``arrangement_clip`` twin. Without
-collapsing them, the top eight for "mute" is two facts shown four times. Rows sharing an
-id tail collapse into one hit whose ``scopes`` list the places it applies.
-
-**Zone weighting.** A row's own name is evidence. Its prose is context. The path leaf and
-the id tail score high, the doc's first sentence low, the rest of the doc almost nothing.
-A row that merely mentions a word in a caveat therefore does not answer a query about it.
-
-Pure module: no socket, no Live, no I/O beyond the registry it is handed. That keeps it
-testable without a DAW, which is the standing rule for this repository (CONTRIBUTING.md).
+Routing before ranking: an impossible intent (docs/limits.md), a runtime
+``DeviceParameter`` the catalog cannot enumerate, and an intent with a verifying tool
+each get their own route with the next call named, because a plausible wrong row reads
+like an answer. Family collapse: rows sharing an id tail across track, return, master
+and chain, or across clip and arrangement_clip, become one hit whose ``scopes`` say
+where it applies. Zone weighting: the path leaf and the id tail score high, the doc's
+first sentence low and the rest of it almost nothing, so a word that appears only in a
+caveat does not answer a query about it.
 """
 
 from __future__ import annotations
@@ -58,8 +45,8 @@ __all__ = [
     "normalise_query",
 ]
 
-#: How many hits a lookup answers with unless asked otherwise. Six is what fits in about
-#: 1.5k tokens with full docs, which is the budget this whole module exists to defend.
+#: How many hits a lookup answers with unless asked otherwise. Six is what fits in the
+#: roughly 1.5k token budget with full docs.
 DEFAULT_LIMIT = 6
 
 #: Words that carry no target. Dropping them is what lets "turn the bass down" score on
@@ -85,7 +72,12 @@ _INTENT_WORDS = frozenset((
     "raise", "reduce", "slightly", "some", "turn", "tweak", "up",
 ))
 
-_TOKEN = re.compile(r"[a-z0-9]+")
+#: A word, in any alphabet. On lowercased ASCII this matches the same spans as an
+#: ``[a-z0-9]+`` class, so routing accuracy is unaffected. What it changes is a query
+#: that is not English: an ASCII-only class splits a word at every letter it does not
+#: know, so the German "Fläche" reaches the ranker as ('fl', 'che') and the fragment
+#: 'che' goes looking for itself. A fragment of a word nobody typed must not match.
+_TOKEN = re.compile(r"[^\W_]+")
 _INDEX = re.compile(r"\[[^\]]*\]")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
@@ -217,6 +209,7 @@ class Lookup:
     next_call: str = ""
     tool: str = ""
     notes: list[str] = field(default_factory=list)
+    matched_on: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -389,10 +382,10 @@ def _expand(
 ) -> tuple[list[str], dict[str, float]]:
     """Add catalog vocabulary for producer words, discounted against a literal match.
 
-    Both halves matter. Single words carry the plain lookup, and most of the producer
-    vocabulary in the table is phrasal: "turn it down", "how many dB", "make it mono",
-    "pull the fader down". Without the phrase half, "turn the bass down" carries nothing
-    but the word "bass", which names a track rather than a control.
+    Single words are looked up plainly, and phrases are matched as well, because most of
+    the producer vocabulary in the table is phrasal: "turn it down", "how many dB", "make
+    it mono", "pull the fader down". Without the phrase half, "turn the bass down"
+    carries nothing but the word "bass", which names a track rather than a control.
     """
     out = list(terms)
     weights: dict[str, float] = {t: 1.0 for t in terms}
@@ -416,11 +409,10 @@ def _expand(
 def _covers(spoken: list[str], key: str) -> bool:
     """Return True when the query says what a phrasal synonym says, in that order.
 
-    Exact substring matching is too rigid for speech. The table holds "turn it down" and
-    the producer types "turn the bass down", and the two share no substring. Comparing
-    only the phrase's content words as an ordered subsequence bridges that and keeps the
-    order,
-    so "down the send" does not fire an entry meaning "send it down".
+    Substring matching is too rigid for speech: the table holds "turn it down" and the
+    producer types "turn the bass down", which share no substring. The phrase's content
+    words are compared as an ordered subsequence instead, so "down the send" does not
+    fire an entry meaning "send it down".
 
     >>> _covers(["turn", "the", "bass", "down"], "turn it down")
     True
@@ -454,7 +446,7 @@ _ROUTES_BEFORE = ((Route.BLOCKED, BLOCKED),)
 
 #: A hit at or above this is confident enough to answer with instead of falling back to
 #: the ambiguous half of the device-parameter vocabulary. Below it the rows are a guess,
-#: and a guess that reads like an answer is what this module exists to stop.
+#: and a guess that reads like an answer is worse than no answer.
 _CONFIDENT = 78.0
 
 
@@ -496,39 +488,72 @@ def _split_device_terms(registry: Registry) -> _SplitRoutes:
     return tuple(specific), tuple(ambiguous)
 
 
+#: A route selected by this few of the caller's words, in a query carrying at least
+#: :data:`_LONG_QUERY_TERMS` of them, is reported as thin. Measured case: "merge repeated
+#: notes of the same pitch into one long sustained chord, legato" routes to an envelope
+#: parameter, chosen by the single word "sustained".
+_THIN_MATCH = 1
+
+#: Content terms above which a single trigger is a small part of what was asked.
+_LONG_QUERY_TERMS = 5
+
+
 def _route(terms: list[str], phrase: str, tables) -> Lookup | None:
     """Answer an intent that rows cannot answer, using one of the route tables."""
     for route, table in tables:
         for entry in table:
-            if not _entry_matches(entry.terms, terms, phrase):
+            hit_on = _matching_triggers(entry.terms, terms, phrase)
+            if not hit_on:
                 continue
+            notes = [entry.evidence] if entry.evidence else []
+            if len(hit_on) <= _THIN_MATCH and len(terms) >= _LONG_QUERY_TERMS:
+                notes.insert(
+                    0,
+                    "This route was chosen by the word "
+                    + ", ".join(repr(t) for t in hit_on)
+                    + f", and nothing else in the {len(terms)} words asked. Where that "
+                    "word was not the subject of the question, this answer is about "
+                    "something else: ask again in words that carry the subject.",
+                )
             return Lookup(
                 query=phrase,
                 route=route,
                 terms=terms,
                 reason=entry.answer,
                 next_call=entry.next_call,
-                notes=[entry.evidence] if entry.evidence else [],
+                notes=notes,
+                matched_on=hit_on,
             )
     return None
 
 
-def _entry_matches(entry_terms: tuple[str, ...], terms: list[str], phrase: str) -> bool:
-    """Return True when the caller's words carry one of this entry's triggers.
+def _matching_triggers(
+    entry_terms: tuple[str, ...], terms: list[str], phrase: str
+) -> list[str]:
+    """Return the caller's words that carry one of this entry's triggers.
 
     A multi-word trigger has to appear as a phrase. A single word may match a term or its
     stem. Matching a multi-word trigger term by term would fire "export the audio" on any
     sentence containing "audio", which is most of them.
+
+    A list rather than a boolean: how much of a question selected a route is what tells
+    an answer from a coincidence, and only the caller can judge that.
     """
     stems = {_stem(t) for t in terms}
     present = set(terms) | stems
+    found: list[str] = []
     for trigger in entry_terms:
         if " " in trigger:
             if trigger in phrase:
-                return True
+                found.append(trigger)
         elif trigger in present or _stem(trigger) in present:
-            return True
-    return False
+            found.append(trigger)
+    return found
+
+
+def _entry_matches(entry_terms: tuple[str, ...], terms: list[str], phrase: str) -> bool:
+    """Whether the caller's words carry one of this entry's triggers."""
+    return bool(_matching_triggers(entry_terms, terms, phrase))
 
 
 def find(

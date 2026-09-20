@@ -1,0 +1,137 @@
+{
+ "record": "validation",
+ "schema_version": 1,
+ "id": "sound-index-preview-ranking",
+ "title": "Ranking the library by Ableton's own preview audio puts the right neighbours first, with no name read",
+ "measured_on": "2026-09-19",
+ "live_version": "12.4.6",
+ "host": "macOS 25.6.0, Apple silicon, 10 logical cores",
+ "question": "The factory samples cannot be decoded, so the index is built from the preview audio Ableton renders for its own browser. Does a ranking over those previews put semantically right candidates first, or only fast ones?",
+ "why_it_matters": "A ranking that is fast and wrong is worse than no ranking, because it reads like an answer. The failure this guards against is a descriptor that separates nothing and returns whatever happens to sort first.",
+ "method": [
+  "Every previewed item in the installed libraries was decoded with afconvert to mono 32 kHz and reduced to a descriptor: 32 logarithmic bands from a 2048 point transform, plus centroid, rolloff, flatness, onset rate, sustain fraction and crest.",
+  "Self retrieval: an item's own preview was matched back against the index. Rank 0 at distance 0 is trivially true and proves only that the pipeline is wired up. The evidence is what fills ranks 1 to 5.",
+  "Out of index: three samples from the User Library, which have no previews and are therefore not in the index at all, were matched against it. This is the case the tool exists for.",
+  "No name, category or path took any part in the ranking. The descriptor sees samples only."
+ ],
+ "build": {
+  "previewed_items_found": 9986,
+  "indexed": 9979,
+  "skipped": {
+   "too_short": 7
+  },
+  "loadable_presets_and_racks": 6540,
+  "minutes": 12.6,
+  "workers": 10,
+  "index_megabytes": 11.6,
+  "decode_ms_per_file": 33.8,
+  "descriptor_ms_per_file": 186.8
+ },
+ "self_retrieval": [
+  {
+   "probe": "Sub Sine Bass",
+   "category": "Operator/Bass",
+   "neighbours": [
+    "Sub Killer (Sounds/Bass)",
+    "MPE Sinus Drone (Pad)",
+    "Pitch Bass (Sounds/Bass)",
+    "Basic Sub Boom (Instrument Racks)",
+    "Command Boom Kick (Sounds/Booms)"
+   ],
+   "verdict": "every neighbour is low frequency, four of five are named bass or boom"
+  },
+  {
+   "probe": "Analog HiHat Bleep",
+   "category": "Operator/Synth Percussion",
+   "neighbours": [
+    "Timb C L Cascara (Drums/Timbales)",
+    "Cowbell Mid BritishVintage (Drums)",
+    "KICK SR 2217 (Kicks)",
+    "Cowbells BritishVintage MPE (Drums)",
+    "Timb A L Cascara (Drums)"
+   ],
+   "verdict": "every neighbour is a percussion hit"
+  },
+  {
+   "probe": "Noisy Pad",
+   "category": "Collision/Ambient & Evolving",
+   "neighbours": [
+    "Bassoon Section Legato",
+    "Ambient Drops Hold",
+    "MPE Crystal Cove 5ths",
+    "La String Machine",
+    "Elizabethan Gloom"
+   ],
+   "verdict": "every neighbour is a sustained evolving texture"
+  },
+  {
+   "probe": "E-Piano Dreamy",
+   "category": "Collision/Piano & Keys",
+   "neighbours": [
+    "Suitcase Uncle Herbie (Suitcase Piano)",
+    "Pan Party EP (Synth Keys)",
+    "Horizon Ascend (Synth Keys)",
+    "E-Piano Roads (Instrument Racks)",
+    "Clay Flute"
+   ],
+   "verdict": "four of five are electric pianos or keys"
+  }
+ ],
+ "out_of_index": [
+  {
+   "file": "User Library one shot, a kick",
+   "centroid_hz": 220,
+   "flatness": 0.331,
+   "top_five": [
+    "Garage Crisp (Percussive)",
+    "Ride Pluck Bass",
+    "Abel Bass",
+    "Death Kicks",
+    "Sub Sharp Bass"
+   ],
+   "verdict": "low frequency percussive and bass throughout, with a kick preset at rank 3"
+  },
+  {
+   "file": "User Library one shot, an open hi-hat",
+   "centroid_hz": 7752,
+   "flatness": 0.011,
+   "top_five": [
+    "Analog Ride",
+    "Operator Hihat",
+    "Cabasa 2 Long",
+    "Caxixi 8 Open",
+    "Cabasa Long"
+   ],
+   "verdict": "five of five are metallic or shaken percussion, and the second is a hi-hat"
+  },
+  {
+   "file": "User Library loop, shakers",
+   "centroid_hz": 6355,
+   "flatness": 0.08,
+   "top_five": [
+    "Caxixi 7 Open (Shaker)",
+    "EFX Small Cymbals",
+    "Guiro A Down",
+    "Guiro B Down",
+    "Splash 12 BigPunchy"
+   ],
+   "verdict": "the first is a shaker, the rest are shaken, scraped or cymbal"
+  }
+ ],
+ "result": [
+  "The ranking is semantically right on all seven probes, and it reaches that without reading a single name: a file called 'Open Hi-Hat' answers with 'Operator Hihat' and 'Analog Ride' from the audio alone.",
+  "Out of index matching works, which is the case that matters: the three User Library samples have no previews and were never part of the index.",
+  "Ableton's preview renders are therefore a usable substitute for playing every preset, for the question of timbre."
+ ],
+ "scope_and_weakness": [
+  "Seven probes. Enough to show the descriptor separates classes, not enough to state an accuracy. There is no labelled ground truth here, and the verdicts are a reading of the answers rather than a score against a key.",
+  "Every probe is a one shot or a short loop. A full mixed stem, which is the intended input, was not among them.",
+  "A preview is Ableton's chosen demonstration phrase. A preset whose preview is a busy riff describes itself differently from the same preset played as one held note, and the ranking carries that difference as though it were timbre.",
+  "Pitch is not matched and level is removed by construction. A bass line an octave apart from another is a near neighbour here.",
+  "One machine, one set of installed packs. The 2,204 presets with no preview are absent from the index and no answer can name them.",
+  "The self retrieval rank 0 at distance 0 is the same audio compared with itself. It is reported for completeness and is not evidence of anything."
+ ],
+ "recorded_also_in": [
+  "README.md"
+ ]
+}

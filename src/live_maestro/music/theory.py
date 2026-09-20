@@ -1,15 +1,13 @@
 """Music theory calculations and voicing models.
 
-Scales, degrees, chords and progressions. Pure logic over standard data
-structures (no network, socket, or LOM dependencies). Covers scales (modes,
-harmonic/melodic minor, pentatonics, blues), chord qualities, diatonic harmony,
-voicing shapes, voice-leading rules, and frequency conversions.
+Scales, degrees, chords and progressions as pure logic over standard data structures
+(no network, socket or LOM dependency). Covers modes, harmonic and melodic minor,
+pentatonics and blues, chord qualities, diatonic harmony, voicing shapes, voice-leading
+rules and frequency conversions.
 
-Key principles:
-- Diatonic voice construction: harmony voices must follow scale intervals rather than
-  constant semitone offsets (e.g. major vs. minor thirds).
-- Voicing models: provides empirical voicing shapes, degree pool distributions, and
-  voice-leading progression generators with register and pitch-range constraints.
+Harmony voices follow scale intervals, never a constant semitone offset: a diatonic third
+is major or minor by degree. The voicing models carry empirical shapes, degree pools and
+voice-leading generators constrained by register and pitch range.
 
 Examples:
 >>> note_name(69)
@@ -406,33 +404,29 @@ def check_sections(sections: Sequence[tuple[str, int, int]], total_bars: int) ->
 # --------------------------------------------------------------------------- #
 # Voicing models and empirical degree pools
 #
-# Voicing shapes and degree distributions derived from empirical analysis of
-# chord-melody structures across reference templates: 896 notes, 328 attacks,
-# 65 harmony blocks, and 221 multi-voice attacks.
+# Voicing shapes and degree distributions from an analysis of chord-melody
+# structures across reference templates: 896 notes, 328 attacks, 65 harmony
+# blocks, 221 multi-voice attacks.
 #
-# What that sample is, and is not. The templates are seven MIDI files from a
-# single vendor, and they are teaching material rather than released tracks
-# (docs/limits.md section 9). Seven files from one source describe that source.
-# They are a description of a house style, not of a repertoire, and nothing here
-# establishes how often any of it occurs in music at large.
+# The sample is seven MIDI files from a single vendor, teaching material rather
+# than released tracks (docs/limits.md section 9). It describes one house style,
+# not a repertoire, and nothing here establishes how often any of it occurs in
+# music at large.
 #
-# The counter-example, kept here so the six rules below are not read as six laws:
-# one real commercial project - a big-room track at 122 BPM, its 'Chords' track,
-# clip 'Minor Prog 1 (VI-vi-i-VII)' - carries FIVE voices, puts its bass on MIDI
-# 41..45, and uses a different shape per chord (Am7 as 1-5-7-3oct-5oct, then
-# Gsus4 as 1-5-1oct-4oct-5oct). That breaks rules 3, 5 and 6. It is one project,
-# so it is neither a profile nor a refutation - but it is enough to show that
-# these are observations about a sample, and that a deviation from them is a
-# question ("was that deliberate?") rather than a defect.
+# One real commercial project breaks it: a big-room track at 122 BPM, 'Chords'
+# track, clip 'Minor Prog 1 (VI-vi-i-VII)', with FIVE voices, its bass on MIDI
+# 41..45, and a different shape per chord (Am7 as 1-5-7-3oct-5oct, Gsus4 as
+# 1-5-1oct-4oct-5oct). That breaks rules 3, 5 and 6. One project is neither a
+# profile nor a refutation, but a deviation from these rules is a question
+# ("was that deliberate?") rather than a defect.
 #
 # Key structural patterns observed:
 # - Low interval spacing: fifths, fourths, or octaves at the base, no major seconds.
 # - Voice distribution: melody on chord thirds, 3-voice texture in middle register.
 # - Single-voicing consistency: progressions typically transpose a unified voicing shape.
 #
-# Notes on pitch representations:
-# - MIDI numbers are used throughout for unambiguous register indexing.
-# - Frequency calculations adhere to standard logarithmic scaling.
+# Pitches are MIDI numbers throughout, for unambiguous register indexing.
+# Frequency calculations use standard logarithmic scaling.
 # --------------------------------------------------------------------------- #
 
 #: Lowest interval (bass to next voice) in semitones -> attack counts across 221 attacks.

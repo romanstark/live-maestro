@@ -1,20 +1,17 @@
 """Dynamic surface inspection for loaded devices and session state at runtime.
 
-Provides typed views of device parameters, fuzzy parameter matching and ranking,
-and whole-session snapshot generation.
+Typed views of device parameters, fuzzy parameter matching, and whole-session snapshots.
 
-Introspection observations:
-- A VST reports only ``Device On`` until parameters are added via Live's
-  Configure mode. Measured on a 3rd-party VST2 plugin (Live 12.4.3): 1 parameter
-  before, 5 after four clicks in the plugin GUI. In a sweep of 328 browser entries,
-  88 had exactly 1 parameter (unconfigured instances).
-- Live allocates a fixed array of 128 parameter slots per VST instance.
-  Unconfigured slots carry the placeholder value ``0.1234567687`` in the ``.als``
-  (measured on a 3rd-party VST plugin: 128 slots, 2 named).
-- VST2 does not report parameter units. Measured across 2699 parameters of 242 plugins:
-  898 report a unit (33 %), 898 of 2006 VST3 (45 %), 0 of 693 VST2 (0 %).
-- Quantized parameters are indicated by ``is_quantized`` with discrete steps in ``value_items``.
-- Group tracks have no arm state and no arrangement clips. Iteration guards with
+Measured behaviour:
+- A VST reports only ``Device On`` until parameters are added in Live's Configure mode
+  (3rd-party VST2 plugin, Live 12.4.3: 1 parameter before, 5 after four clicks; 88 of
+  328 browser entries had exactly 1).
+- Live allocates 128 parameter slots per VST instance; unconfigured slots carry the
+  placeholder ``0.1234567687`` in the ``.als`` (3rd-party VST plugin: 128 slots, 2 named).
+- VST2 reports no parameter units. Across 2699 parameters of 242 plugins, 898 report a
+  unit (33 %): 898 of 2006 VST3 (45 %), 0 of 693 VST2.
+- Quantized parameters carry ``is_quantized`` with discrete steps in ``value_items``.
+- Group tracks have no arm state and no arrangement clips; iteration guards with
   ``can_be_armed`` and ``is_foldable``.
 """
 
@@ -180,9 +177,9 @@ _PARAMETER_FIELDS: tuple[str, ...] = (
 # view and ignores the Arrangement until Live's own Back to Arrangement button
 # clears the flag. A survey without it reports a transport that is running, a
 # playhead that is advancing and a set that makes no sound, with nothing in the
-# answer to say why. Measured 2026-09-07 against Live 12.4.5: writing it false
-# reads back not_observed and the value stays true, so it is reportable and not
-# clearable from here.
+# answer to say why. Measured 2026-09-10 against Live 12.4.5: writing it false
+# answers applied at read_back_attempts 2, so a single read reports not_observed
+# with the value still true while the write is pending.
 _SONG_FIELDS: tuple[str, ...] = (
     "tempo",
     "signature_numerator",
@@ -1284,12 +1281,11 @@ def snapshot(
     clip_views = (
         _read_clips(client, raw_tracks[:track_count], slots, warnings) if clips and slots else {}
     )
-    # Not gated on ``clips``. Whether a track holds Arrangement material is the
-    # question asked before deleting it, and a caller who skipped the Session
-    # sweep for speed needs the answer more, not less. One read per track, in one
-    # batch, so one extra round trip: measured 2026-09-07 against Live 12.4.5 on a
-    # six track set, 3.27 s with the probe against 2.73 s without. Only regular
-    # tracks have an Arrangement.
+    # Not gated on ``clips``: whether a track holds Arrangement material is the
+    # question asked before deleting it. One read per track, in one batch, so one
+    # extra round trip: measured 2026-09-07 against Live 12.4.5 on a six track set,
+    # 3.27 s with the probe against 2.73 s without. Only regular tracks have an
+    # Arrangement.
     arrangement = _read_arrangement_flags(client, raw_tracks[:track_count])
 
     views = [

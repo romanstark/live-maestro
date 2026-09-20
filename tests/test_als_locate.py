@@ -1,14 +1,11 @@
-"""Tests for answering "where does this field sit in the file?".
+"""Tests for ``_als_locate`` and for the dry run report over a project file.
 
-``als_write``'s ``attribute`` operation needs an ElementTree expression, and the
-tool that reads a project produced none, so the expression had to come from
-knowing the .als schema. Knowing it is not enough: Live 11 writes the main track
-as ``MasterTrack`` and Live 12 writes it as ``MainTrack``, so an expression that
-is right for one file selects nothing at all in the other and the write is
-refused for a reason that says nothing about the cause.
-
-Every expression is therefore read out of the file in hand. These tests build
-the two shapes as XML rather than needing a project on disk.
+``als_write``'s ``attribute`` operation needs an ElementTree expression, and that
+expression has to be read out of the file in hand: Live 11 writes the main track as
+``MasterTrack`` and Live 12 writes it as ``MainTrack``, so an expression that is right
+for one file selects nothing at all in the other and the write is refused for a reason
+that says nothing about the cause. These tests build both shapes as XML rather than
+needing a project on disk.
 """
 
 from __future__ import annotations
@@ -45,7 +42,7 @@ def project(main_tag: str, tracks: tuple[tuple[str, str, str], ...] = ()) -> ET.
 def test_the_tempo_expression_comes_from_the_file_and_not_from_a_constant(
     main_tag: str,
 ) -> None:
-    """Measured 2026-09-07: Live 11 writes MasterTrack, Live 12 writes MainTrack.
+    """Live 11 writes MasterTrack and Live 12 writes MainTrack.
 
     A constant is right for one of them and silently matches nothing in the
     other, which reaches the caller as a refused write rather than as the schema
@@ -68,7 +65,7 @@ def test_a_file_with_no_tempo_answers_with_nothing_rather_than_a_guess() -> None
 
 
 def test_the_index_counts_matches_of_the_expression_not_tracks() -> None:
-    """This is the trap the expression form sets.
+    """The index counts matches of the expression, not tracks in the project.
 
     ``.//MidiTrack/Name/EffectiveName`` does not see the audio tracks, so the
     third track in the project is the second match of that expression. An index

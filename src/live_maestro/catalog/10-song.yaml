@@ -369,9 +369,16 @@
   status: verified
   proven: [get, set]
   doc: >-
-    Bottom number of the global time signature. Live accepts powers of two only (1, 2, 4, 8,
-    16); anything else is expected to be rejected or rounded, and the read-back says which. The
-    range here is a bound, not a whitelist - the validator cannot express "power of two".
+    Bottom number of the global time signature. Live stores powers of two only (1, 2, 4, 8, 16),
+    and a value that is not one is neither rejected nor rounded: it is accepted and silently
+    ineffective. Measured 2026-09-16 against Live 12.4.5, on Ableton's "Patience" demo song:
+    writing 3 answered ok with read_back not_observed, and a re-read 1.5 s later still returned 4;
+    writing 8 answered read_back applied and read back 8. Restored to 4. Read not_observed here as
+    the write having done nothing rather than as a read taken too early, because 8 applied in the
+    same round of probes. This is the accepted-and-ineffective shape the read_back field exists to
+    expose, and docs/limits.md lists it beside the other writes that report success and change
+    nothing. The range here is a bound, not a whitelist: a range field expresses bounds only and
+    cannot say "power of two", which is a limit of this catalog's schema rather than of Live.
 - id: song.tap_tempo
   path: song
   access: [call]
@@ -454,16 +461,21 @@
   status: verified
   proven: [get, set]
   doc: >-
-    Playhead position in beats from the start of the arrangement. Settable, which is how you
-    place the playhead before recording or before song.set_or_delete_cue. Writing while the
-    transport runs jumps the playhead rather than being ignored - Measured 2026-09-01 against
-    Live 12.4.5, by setting a position and reading an automated parameter back at it. But the
-    write is applied asynchronously, after the running main-thread task finishes, and a
-    lom_batch is that task: a jump and a read in the same batch return the position from before
-    the jump. Measured the same day - four jumps interleaved with four reads gave four identical
-    pre-jump values and no error, which reads exactly like a parameter that never moves. Use one
-    call per position when sampling a running transport. Observing this fires very often; a
-    listener on it can flood the event ring buffer (docs/protocol.md section 5.11).
+    Playhead position in beats from the start of the arrangement. Settable, which is how you place
+    the playhead before recording or before song.set_or_delete_cue. Writing while the transport
+    runs jumps the playhead rather than being ignored - Measured 2026-09-01 against Live 12.4.5,
+    by setting a position and reading an automated parameter back at it. But the write is applied
+    asynchronously, after the running main-thread task finishes, and a lom_batch is that task: a
+    jump and a read in the same batch return the position from before the jump. Measured the same
+    day - four jumps interleaved with four reads gave four identical pre-jump values and no error,
+    which reads exactly like a parameter that never moves. Use one call per position when sampling
+    a running transport. Observing this fires very often; a listener on it can flood the event
+    ring buffer (docs/protocol.md section 5.11). Measured 2026-09-10
+    to 2026-09-13 against Live 12.4.5:
+    the write is bounded by song_length, and a position past it answers live_error "Cannot set the
+    Songtime behind the Songlength", while playback is not bounded and this property read 626.95
+    after ten minutes of Session playback with song_length at 232. So a position Session playback
+    reaches past song_length cannot be navigated to by writing this property.
 - id: song.last_event_time
   path: song.last_event_time
   access: [get, observe]
@@ -902,12 +914,17 @@
   proven: [get]
   doc: >-
     True when session clips are currently overriding arrangement playback (the lit Back to
-    Arrangement button). Setting it to false hands control back to the arrangement. Live sets it
-    to true by itself when a clip is launched. Measured 2026-09-06 against Live 12.4.5: the
-    write travels one way. Writing false while it read true stored false. Writing true
-    afterwards answered read_back not_observed and it still read false, so a probe cannot put
-    this value back and scripts/probe_paths.py lists the row in ONE_WAY_ROWS. Nothing is lost by
-    leaving it false, because launching a Session clip raises it again.
+    Arrangement button). Live raises it by itself when a Session clip is launched, and writing
+    false, which hands control back to the arrangement, is the only direction that works. Measured
+    2026-09-06 against Live 12.4.5: writing false while it read true stored false, and writing
+    true afterwards answered read_back not_observed and it still read false, so a probe cannot put
+    this value back and scripts/probe_paths.py lists the row in ONE_WAY_ROWS. Measured again
+    2026-09-10 to 2026-09-13 against Live 12.4.5: Live applies the false write
+    asynchronously, on its main thread rather than inside the writing task, so lom_set needs the
+    second read it now takes and answers changed true with read_back applied at
+    read_back_attempts 2. A single read straight after the write answers not_observed, which is
+    the write still pending and not the write refused. Nothing is lost by leaving it false,
+    because launching a Session clip raises it again.
 - id: song.re_enable_automation_enabled
   path: song.re_enable_automation_enabled
   access: [get, observe]
@@ -2084,8 +2101,12 @@
   proven: [get]
   doc: >-
     Position of the locator in beats from the start of the arrangement. Read-only: a locator
-    cannot be moved through the LOM. To place one somewhere else, set song.current_song_time,
-    call song.set_or_delete_cue to create the new one, and toggle the old one away.
+    cannot be moved through the LOM. Measured 2026-09-16 against Live 12.4.5, on Ableton's
+    "Patience" demo song: lom_set on song.cue_points[0].time was offered the write through the raw
+    tool, which does not consult this row's access list, and Live answered not_settable. No value
+    was stored, so nothing needed restoring. To place one somewhere else, set
+    song.current_song_time, call song.set_or_delete_cue to create the new one, and toggle the old
+    one away.
   params:
     - {name: cue, kind: int, required: true}
 

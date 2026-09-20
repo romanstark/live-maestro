@@ -1,0 +1,82 @@
+{
+ "record": "experiment",
+ "schema_version": 1,
+ "id": "basic-pitch-against-suno-midi",
+ "title": "basic-pitch agrees with Suno's own MIDI on 93 to 96 percent of the pitch content",
+ "measured_on": "2026-09-19",
+ "host": "macOS 25.6.0, Apple silicon, CoreML backend",
+ "question": "Notes have to come out of audio, because a generator that exports MIDI is the exception rather than the rule and an open tool cannot depend on one. Is an off the shelf transcriber good enough, and how would anyone know?",
+ "why_this_could_be_measured": "One song was exported from a paid tier as both separated audio and MIDI. The MIDI is not a timing reference, since its timing is reported to drift and the measurement here bears that out, but it is a pitch reference, and that is the part a transcriber is being trusted for.",
+ "tool": {
+  "name": "spotify/basic-pitch 0.4.0",
+  "licence": "Apache 2.0, which is the reason to prefer it over the transcriber shipped with YuE",
+  "backend": "CoreML on macOS, chosen by the package itself",
+  "environment": "its own, on Python 3.11: the package supports 3.7 to 3.11 and this project runs 3.14, so it is a subprocess and not an import",
+  "speed": "about two seconds for a four minute stem"
+ },
+ "method": [
+  "basic-pitch was run over five separated stems with default settings and nothing tuned.",
+  "Its notes were compared with the MIDI the generator exported for the same stems.",
+  "The measure is the overlap of the two pitch class distributions, which is insensitive to the timing the MIDI cannot be trusted on, plus the note range and the median pitch."
+ ],
+ "readings": [
+  {
+   "stem": "Synth Keys",
+   "pitch_class_overlap_pct": 96.2,
+   "median_offset_semitones": 0,
+   "notes_found": 2272,
+   "notes_in_midi": 2319,
+   "range_found": "31-88",
+   "range_in_midi": "45-81"
+  },
+  {
+   "stem": "Acoustic Guitar",
+   "pitch_class_overlap_pct": 95.4,
+   "median_offset_semitones": 0,
+   "notes_found": 835,
+   "notes_in_midi": 580,
+   "range_found": "30-78",
+   "range_in_midi": "38-68"
+  },
+  {
+   "stem": "Synth Pad",
+   "pitch_class_overlap_pct": 93.9,
+   "median_offset_semitones": 2,
+   "notes_found": 2207,
+   "notes_in_midi": 676,
+   "range_found": "38-90",
+   "range_in_midi": "33-78"
+  },
+  {
+   "stem": "Lead Vocal",
+   "pitch_class_overlap_pct": 93.7,
+   "median_offset_semitones": 2,
+   "notes_found": 373,
+   "notes_in_midi": 211,
+   "range_found": "31-85",
+   "range_in_midi": "57-76"
+  },
+  {
+   "stem": "Bass",
+   "pitch_class_overlap_pct": 93.7,
+   "median_offset_semitones": 9,
+   "notes_found": 664,
+   "notes_in_midi": 350,
+   "range_found": "28-64",
+   "range_in_midi": "28-38"
+  }
+ ],
+ "result": [
+  "The harmonic content agrees between 93.7 and 96.2 percent on all five stems, with nothing tuned. On Synth Keys it finds 2,272 notes against the export's 2,319 at the same median pitch.",
+  "It finds more notes than the export nearly everywhere, which is the known behaviour: an overtone strong enough to look like a note is transcribed as one.",
+  "Bass is the one clear weakness. The median lands nine semitones above the export's, because a sub bass has a weak fundamental and the model locks to a harmonic. Its lowest note is 28, the same as the export's, so it does hear the fundamentals and adds ghosts above them rather than missing them.",
+  "A bass stem therefore needs a step that keeps the lowest sounding note rather than the loudest, and every stem needs a filter for notes that are harmonics of a note already there."
+ ],
+ "scope_and_weakness": [
+  "One song, five stems, one generator. Nothing here says how this behaves on an acoustic recording or on a dense mix that was never separated.",
+  "Pitch class overlap is deliberately blind to time, octave and note count, so it measures whether the same harmony was heard and not whether the transcription is playable. A rebuild needs the second thing and it is not measured here.",
+  "The reference is a generator's own export, not a human transcription. Where both are wrong in the same way this measure cannot see it.",
+  "Default settings throughout. Neither the onset nor the frame threshold was touched, and the bass failure is exactly the kind a threshold might address."
+ ],
+ "recorded_also_in_note": "This record is the only published account of the measurement. What it also went into at the time were working notes kept outside the repository."
+}

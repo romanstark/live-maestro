@@ -1,16 +1,11 @@
 """Note list manipulation, validation, and diffing for Live MIDI clips.
 
-Provides pure operations over lists of :class:`~live_maestro.models.Note`:
-transforms, safety validation, and change diffing. All operations assume
-replace semantics (full note list in, full note list out).
-
-Key operations:
-- Replace-semantics helpers: ensures note updates replace existing notes rather
-  than silently stacking duplicates.
-- Time conversion: translates between Live's clip-local beat representation and
-  standard 480 ticks/quarter resolution.
-- Validation: catches missing keys, beat-zero stacking, out-of-range pitches,
-  and unquantized note boundaries.
+Pure operations over lists of :class:`~live_maestro.models.Note`: transforms, safety
+validation and change diffing. Everything here assumes replace semantics, the full
+note list in and the full note list out, so an update replaces the existing notes
+rather than silently stacking duplicates on them. Time conversion translates between
+Live's clip-local beats and the standard 480 ticks per quarter. Validation catches
+missing keys, beat-zero stacking, out-of-range pitches and unquantized note boundaries.
 
 Examples:
 >>> from live_maestro.models import Note

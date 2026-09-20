@@ -1,23 +1,17 @@
 """What the note write path accepts, refuses, and says about it.
 
-The note module is covered by ``tests/test_notes.py``. These tests cover the few
-lines between the validator and the socket, where the tool that uses it lives.
+The note module itself is covered by ``tests/test_notes.py``. These tests cover the
+few lines between the validator and the socket, against a faked client answering the
+shapes Live 12.4.5 really sent.
 
-Measured 2026-09-02 against Live 12.4.5.
+``read_clip_notes`` hands back ``note_id`` on every note, so ``write_clip_notes``
+drops it rather than refusing the list with ``unknown key(s) ['note_id']``:
+``validate_note_dicts`` declares ``note_id`` tolerable and says it "will be dropped".
 
-1. ``read_clip_notes`` hands back ``note_id`` on every note. Reading a clip,
-   changing one velocity and writing it back is the most ordinary edit in a DAW,
-   so ``write_clip_notes`` drops ``note_id`` rather than refusing the list with
-   ``unknown key(s) ['note_id']``. ``validate_note_dicts`` declares ``note_id``
-   tolerable and says it "will be dropped", and it is.
-
-2. ``validate_note_dicts`` is the only place ``missing_velocity`` and
-   ``empty_note_list`` are raised, so its report reaches the caller alongside the
-   second validation's. An empty list with ``mode="replace"`` clears the clip, and
-   the warning that says so is part of the result.
-
-These tests need no Live. The client is faked. The shapes it answers with are
-the shapes Live really sent.
+``validate_note_dicts`` is the only place ``missing_velocity`` and
+``empty_note_list`` are raised, so its report reaches the caller alongside the second
+validation's. An empty list with ``mode="replace"`` clears the clip, and the warning
+that says so is part of the result.
 """
 
 from __future__ import annotations
@@ -110,8 +104,7 @@ def test_the_ignored_key_notice_is_stated_once_and_not_once_per_note(
 def test_a_note_without_velocity_says_so_in_the_result(live: _FakeLive) -> None:
     """``missing_velocity`` is computed by the first validation and reaches the caller.
 
-    The whole point of the warning is that 100 is a real default but an inherited
-    one, so it has to be visible.
+    100 is a real default but an inherited one, so it has to be visible.
     """
     result = server.write_clip_notes(
         track=0, slot=0, notes=[{"pitch": 36, "start_time": 0.0, "duration": 0.25}]

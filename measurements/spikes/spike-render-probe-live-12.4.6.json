@@ -1,0 +1,75 @@
+{
+ "record": "spike",
+ "schema_version": 1,
+ "id": "render-probe-round-trip",
+ "title": "A preset rendered in Live does not retrieve itself from the preview index: 2 of 60",
+ "measured_on": "2026-09-19",
+ "live_version": "12.4.6",
+ "script_version": "0.1.2",
+ "host": "macOS 25.6.0, Apple silicon",
+ "set": "empty set, probe device on MIDI track 0 after the instrument",
+ "device": "devices/LiveMaestro_Probe.amxd, the track recorder added for this",
+ "question": "The index is built from Ableton's preview renders. If a preset is loaded in Live, played, recorded and matched back, does the index return that preset? Nothing downstream can work if it does not.",
+ "why_this_was_owed": "Every earlier evaluation compared previews with previews, or stems with previews and judged the answers by eye. This one has a ground truth that cannot be argued with: the exact preset that made the sound is known.",
+ "method": [
+  "60 presets, drawn round robin across the twelve coarse families from the 949 that have both a browser handle and an index entry.",
+  "Each is loaded onto a MIDI track that already carries the probe device, which sits after the instrument and records the track signal through sfrecord~.",
+  "The probe MIDI is one held C3 of two beats, two beats of silence, then C3, E3 and G3 of 0.4 beats each at 120 BPM. Six point seven seconds of audio per preset.",
+  "The recording is matched against the whole index of 6,540 loadable items in four forms: the whole render, the held note alone, the three note phrase alone, and the loudest 1.5 seconds.",
+  "The chain is read back before every render, and a render counts only when it shows both an instrument and the probe device."
+ ],
+ "readings": {
+  "rendered": "60 of 60, 8.8 seconds each, 8.8 minutes total",
+  "exact_retrieval_best_form": {
+   "form": "the held note",
+   "top_1": "2 of 60",
+   "top_5": "2 of 60"
+  },
+  "exact_retrieval_loudest_slice": {
+   "top_1": "1 of 60",
+   "top_5": "7 of 60"
+  },
+  "family_retrieval_best_form": {
+   "form": "the held note",
+   "top_1": "8 of 60",
+   "top_5": "21 of 60"
+  },
+  "family_retrieval_loudest_slice": {
+   "top_1": "6 of 60",
+   "top_5": "23 of 60"
+  }
+ },
+ "cause": {
+  "measure": "The distance from each render to the preview of the very same preset.",
+  "render_to_own_preview": {
+   "p10": 0.0854,
+   "median": 0.1985,
+   "p90": 1.7181
+  },
+  "preview_to_nearest_other_preview": {
+   "median": 0.0282
+  },
+  "ratio": "A preset's own render sits about seven times further from its preview than an arbitrary preview sits from its nearest neighbour.",
+  "examples": [
+   "PolyBerg Keys renders at 619 Hz and its preview reads 1221 Hz, an octave apart",
+   "Syncy Lead renders at 2004 Hz against 3758 Hz",
+   "MPE Intimate renders at 478 Hz against 1472 Hz"
+  ],
+  "reading": "A preview plays the preset in its own register with its own demo material, often with rhythm and effects. A probe plays middle C. The index therefore describes Ableton's demonstrations and not the instruments, which is why preview against preview scores 0.507 and everything else fails."
+ },
+ "result": [
+  "The preview index can only be queried with a preview. It is not a usable index of how instruments sound when played.",
+  "An index built from consistently rendered probes is necessary rather than optional, which is what the instrument sweep spec asked for and this project tried to avoid paying for.",
+  "The rig for that exists and is measured: 8.8 seconds per preset, so 6,540 loadable presets is about sixteen hours, once, unattended.",
+  "A pitch aware probe is needed too. The descriptor's centroid term moves with the note played, so a probe at one fixed pitch compares badly with a preset whose range sits elsewhere. The sweep spec says the probe tone must be chosen from the measured playable range, and this is the reading that shows why.",
+  "A drum rack renders silent on C3, E3, G3 in at least one case (Unseen Kit, distance 1.80 with a centroid of zero). Drum content needs its own probe notes."
+ ],
+ "scope_and_weakness": [
+  "60 presets of 6,540, drawn round robin across families rather than at random, so each family contributes about five and no family figure is reliable.",
+  "One probe sequence at one pitch and one velocity. That the wrong pitch hurts is shown here; how much a right one helps is not measured.",
+  "The renders went through Live's default track with no effects, but the two return tracks in the set exist and were not checked for sends.",
+  "Only the hand built descriptor was scored this way. MERT was not, and the same round trip would be the honest way to compare them.",
+  "One machine, one Live version, one session."
+ ],
+ "recorded_also_in_note": "This record is the only published account of the measurement. What it also went into at the time were working notes kept outside the repository."
+}

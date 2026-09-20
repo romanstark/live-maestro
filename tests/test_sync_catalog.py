@@ -1,23 +1,18 @@
 """The reconciliation rules of ``scripts/sync_catalog.py``, exercised offline.
 
-Nothing here opens a socket or needs Live. The tool reads Live through
-exactly two handlers, so a recorded ``{"describe": {...}, "get": {...}}`` payload
-is a complete stand-in for one, which is also the ``--replay`` format users get,
-so these tests exercise the shipped path rather than a test-only one.
+Nothing here opens a socket or needs Live. The tool reads Live through exactly two
+handlers, so a recorded ``{"describe": {...}, "get": {...}}`` payload stands in for
+one, and that payload is the shipped ``--replay`` format rather than a test-only
+shortcut past it.
 
-What is actually under test is the deletion policy (``docs/catalog.md``,
-"Four outcomes, not two"). Getting it wrong in the safe direction costs a rerun.
-Getting it wrong in the unsafe direction deletes a real capability, or plants a
-``broken`` row that says something false about the Live Object Model and outlives
-the session that wrote it. So each of the three outcomes has a test, and so does
-every guard that keeps absence from being read as evidence.
+Under test is the deletion policy (``docs/catalog.md``, "Four outcomes, not two"): the
+unsafe direction deletes a real capability, or plants a ``broken`` row that says something
+false about the Live Object Model and outlives the session that wrote it. Each of the three
+outcomes has a test, as does every guard that keeps absence from being read as evidence.
 
-Provenance of the payloads below: they are read from the source, so the answer
-shapes are ``docs/protocol.md`` §5.6 and the error codes are the table in §4,
-"Message shape", and hand-built to put one branch each under test. They are
-*not* a recording of a real Live, and nothing here should be quoted as a
-measurement of one. What they prove is that the tool draws the right conclusion
-from a given answer, which is the half that can be checked without Live open.
+The payloads are hand-built to the answer shapes of ``docs/protocol.md`` §5.6 and the
+error table in §4, one branch each. They are not a recording of a real Live and must
+not be quoted as a measurement of one.
 """
 
 from __future__ import annotations
@@ -395,10 +390,8 @@ def verdict_of(report: sc.Report, spec_id: str) -> sc.RowFinding:
 def rows_on_disk(file: Path) -> dict[str, dict[str, Any]]:
     """The catalog file as raw YAML, keyed by id.
 
-    Read as data rather than through :class:`Registry`, for the reason
-    ``tests/test_catalog.py`` gives: the loader normalises, and a test that only
-    asks the loader stops noticing the day the loader gets looser. What sync_catalog
-    writes is text, so text is what gets checked.
+    Read as data rather than through :class:`Registry`: the loader normalises, and
+    what sync_catalog writes is text, so text is what gets checked.
     """
     parsed = yaml.safe_load(file.read_text(encoding="utf-8"))
     assert isinstance(parsed, list), f"{file.name} is no longer a list of rows"
@@ -550,9 +543,8 @@ def test_index_out_of_range_neither_deletes_the_row_nor_marks_it_broken(
     """The third outcome, asserted hard: the rule that is easiest to get wrong.
 
     ``song.scenes[0]`` answers ``index_out_of_range``: the open set has no scenes.
-    That is a fact about *this set* and none whatever about ``scene.name``, and it
-    is the branch that plants false facts when it is got wrong, because both wrong
-    answers look reasonable from inside the code:
+    That is a fact about *this set* and none whatever about ``scene.name``. Both
+    wrong answers look reasonable from inside the code:
 
     * deleting the row throws away a real capability on the evidence of a
       missing fixture, and the deletion is the one change nothing undoes.
@@ -560,11 +552,11 @@ def test_index_out_of_range_neither_deletes_the_row_nor_marks_it_broken(
       into a file that outlives the session that wrote it, and a ``broken`` row is
       read as settled, so the next person does not look.
 
-    ``docs/catalog.md``, "Four outcomes, not two": the third case is the common
-    one. So every channel through which this row could change is checked to be
-    silent: the verdict, the proposed status, the deletion list, the status-change
-    list, and last the file on disk after a full ``--write``, because a report that
-    is right and a writer that is wrong still costs the catalog.
+    ``docs/catalog.md``, "Four outcomes, not two": the third case is the common one.
+    So every channel through which this row could change is checked to be silent:
+    the verdict, the proposed status, the deletion list, the status-change list, and
+    last the file on disk after a full ``--write``, because a report that is right
+    and a writer that is wrong still costs the catalog.
     """
     catalog = workspace / "catalog"
     report = run(workspace)
@@ -871,12 +863,11 @@ def versionless() -> dict[str, Any]:
 def test_a_run_that_cannot_name_a_live_version_flips_no_status(workspace: Path) -> None:
     """No version, no measurement, and therefore no status.
 
-    A note has to say which build it was true of. ``tests/test_catalog.py`` checks
-    for a date *and* a ``Live <version>`` before it will accept ``verified`` or
-    ``broken``. A handshake that reports neither leaves the note with nothing to
-    name, so the reconciliation still runs and still reports what Live answered,
-    it may not write a status, and a property it confirmed arrives
-    ``untested`` with a doc that does not pretend otherwise.
+    A note has to say which build it was true of, and ``tests/test_catalog.py``
+    checks for a date *and* a ``Live <version>`` before it accepts ``verified`` or
+    ``broken``. A handshake reporting neither leaves the note with nothing to name,
+    so the reconciliation still runs and still reports what Live answered, but it
+    writes no status, and a property it confirmed arrives ``untested``.
 
     Deletions are the exception and stay: "this attribute does not exist" needs no
     version to be true, and the removed row leaves no status behind to pair.
@@ -1010,11 +1001,11 @@ def test_comments_and_prose_survive_a_write(
 ) -> None:
     """The catalog is 22 000 lines of hand-written prose, and a sync may not reflow it.
 
-    This is why the writer is a line editor and not ``yaml.safe_load`` followed by
-    ``yaml.dump``: the round trip is correct YAML and an unreviewable diff with
-    every comment deleted. Each of the fixture's comment lines stands somewhere
-    different: above the first row, above a section, above a section whose first
-    row gets deleted, and all three have to come out the other side.
+    The writer is a line editor rather than ``yaml.safe_load`` followed by
+    ``yaml.dump``, whose round trip is correct YAML and an unreviewable diff with
+    every comment deleted. The fixture's comment lines stand in three places: above
+    the first row, above a section, and above a section whose first row gets
+    deleted. All three have to come out the other side.
     """
     catalog = workspace / "catalog"
     before = (catalog / "10-test.yaml").read_text(encoding="utf-8")

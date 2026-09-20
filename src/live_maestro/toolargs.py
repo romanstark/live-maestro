@@ -32,11 +32,14 @@ __all__ = [
     "NoteArg",
     "NoteIn",
     "ParameterPathArg",
+    "PlacementArg",
+    "PlacementIn",
     "SlotArg",
     "TrackArg",
     "batch_ops",
     "inline_schema_refs",
     "note_dicts",
+    "placement_dicts",
 ]
 
 
@@ -221,6 +224,43 @@ class BatchOp(BaseModel):
     )
 
 
+class PlacementIn(BaseModel):
+    """Arrangement placement input model.
+
+    Required fields: track, slot, at_beat.
+    Optional fields: to_track.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "description": (
+                "One clip placement from a Session slot onto the Arrangement timeline."
+            ),
+        },
+    )
+
+    track: int = Field(
+        description="Source track index in song.tracks, counted from 0.", ge=0
+    )
+    slot: int = Field(
+        description="Clip slot index in track.clip_slots, counted from 0.", ge=0
+    )
+    at_beat: float = Field(
+        description=(
+            "Where the copy starts on the Arrangement timeline, in beats from "
+            "the start of the song. Fractional beats are accepted."
+        )
+    )
+    to_track: int | None = Field(
+        default=None,
+        description=(
+            "Destination track index. Omit to use the source track, which is the usual case."
+        ),
+        ge=0,
+    )
+
+
 def inline_schema_refs(schema: Mapping[str, Any]) -> dict[str, Any]:
     """Replace local $ref schema pointers with inline definitions.
 
@@ -315,3 +355,27 @@ def batch_ops(ops: Sequence[BatchOp | Mapping[str, Any] | Any]) -> list[Any]:
         else:
             out.append(op)
     return out
+
+
+#: Placement argument schema annotation: validated by PlacementIn with inlined JSON schema.
+PlacementArg = Annotated[
+    PlacementIn,
+    WithJsonSchema(inline_schema_refs(PlacementIn.model_json_schema())),
+]
+
+
+def placement_dicts(
+    placements: Sequence[PlacementIn | Mapping[str, Any] | Any],
+) -> list[dict[str, Any]]:
+    """Convert PlacementIn models or mappings to raw dictionaries."""
+    out: list[dict[str, Any]] = []
+    for item in placements:
+        if isinstance(item, PlacementIn):
+            out.append(item.model_dump(exclude_unset=True))
+        elif isinstance(item, Mapping):
+            validated = PlacementIn.model_validate(item)
+            out.append(validated.model_dump(exclude_unset=True))
+        else:
+            raise TypeError(f"expected PlacementIn or dict, got {type(item).__name__}")
+    return out
+

@@ -158,11 +158,13 @@
   status: verified
   proven: [get]
   doc: >-
-    Whether the device is switched on. Read-only in the LOM: writing here is expected to fail
-    with not_settable, which is not measured. To actually switch a device off, write
-    parameters[0] instead; see device.on. A device that is off passes audio through unchanged,
-    which is why a read-back of a parameter proves the stored value and never the audible effect
-    (docs/protocol.md §10).
+    Whether the device is switched on. Read-only in the LOM. Measured 2026-09-16 against Live
+    12.4.5, on Ableton's "Patience" demo song: writing false to
+    song.tracks[0].devices[1].is_active through the raw lom_set tool, which does not consult this
+    row's access list, answered not_settable. No value was stored, so nothing needed restoring.
+    To actually switch a device off, write parameters[0] instead; see device.on. A device that is
+    off passes audio through unchanged, which is why a read-back of a parameter proves the stored
+    value and never the audible effect (docs/protocol.md §10).
   params:
     - {name: track, kind: int, required: true}
     - {name: device, kind: int, required: true}
@@ -470,7 +472,7 @@
     retire a device on a return track: deleting a device there was measured not to work, so
     switching it off is the documented workaround. This path resolves to the DeviceParameter
     object. It is the correct target for automation_write's 'parameter' argument, and lom_get on
-    it still carries 'display'. It is read-only - lom_set answers not_settable. To write the
+    it still carries 'display'. It is read-only - lom_set answers not_settable. Measured 2026-09-19 against Live 12.4.6 on a Reverb in return track A: the parameter object refused the write. Its .value took 0.42 and answered clamped, because an on/off parameter holds 0 or 1 and nothing between. To write the
     number, use the companion 'return_device.on_value' row, whose path ends in .value. The LOM
     answers a ATimeableValueVector.
   params:
@@ -529,7 +531,7 @@
     while switching the device off. The read-back in lom_set is what makes that class of failure
     loud (docs/protocol.md §5.4). This path resolves to the DeviceParameter object. It is the
     correct target for automation_write's 'parameter' argument, and lom_get on it still carries
-    'display'. It is read-only - lom_set answers not_settable. To write the number, use the
+    'display'. It is read-only - lom_set answers not_settable. Measured 2026-09-19 against Live 12.4.6 on a Reverb in return track A: the parameter object refused the write and its .value answered applied. To write the number, use the
     companion 'return_device.parameter_value' row, whose path ends in .value. The LOM answers a
     ATimeableValueVector.
   params:
@@ -802,12 +804,13 @@
   status: verified
   proven: [get]
   doc: >-
-    One parameter of a master-track device, addressed by index. Read master_device.parameters
-    first and confirm the name in the read-back. This path resolves to the DeviceParameter
-    object. It is the correct target for automation_write's 'parameter' argument, and lom_get on
-    it still carries 'display'. It is read-only - lom_set answers not_settable. To write the
-    number, use the companion 'master_device.parameter_value' row, whose path ends in .value.
-    The LOM answers a ATimeableValueVector.
+    One parameter of a master-track device, addressed by index. Read master_device.parameters first
+    and confirm the name in the read-back. This path resolves to the DeviceParameter object. It is
+    the correct target for automation_write's 'parameter' argument, and lom_get on it still carries
+    'display'. It is read-only - lom_set answers not_settable, measured 2026-08-29 against Live
+    12.4.5 and recorded on the companion row named next, not here. To write the number, use the
+    companion 'master_device.parameter_value' row, whose path ends in .value. The LOM answers a
+    ATimeableValueVector.
   params:
     - {name: device, kind: int, required: true}
     - {name: param, kind: int, required: true}
@@ -893,7 +896,7 @@
     prefer a display-driven search over arithmetic; where it does not (all VST2), write
     normalised and calibrate by eye once. This path resolves to the DeviceParameter object. It
     is the correct target for automation_write's 'parameter' argument, and lom_get on it still
-    carries 'display'. It is read-only - lom_set answers not_settable. To write the number, use
+    carries 'display'. It is read-only - lom_set answers not_settable. Measured 2026-09-19 against Live 12.4.6 on an empty set: lom_set on the parameter object of an Operator answered not_settable, and the same parameter's .value took 0.42 and read back applied. The object is the handle; the number is one level in. To write the number, use
     the companion 'param.value_raw' row, whose path ends in .value. The LOM answers a
     ATimeableValueVector.
   params:
@@ -2146,7 +2149,9 @@
     without a sound and without an error: a device that is off still stores everything written
     to it. This path resolves to the DeviceParameter object. It is the correct target for
     automation_write's 'parameter' argument, and lom_get on it still carries 'display'. It is
-    read-only - lom_set answers not_settable. To write the number, use the companion
+    read-only - lom_set answers not_settable. Measured 2026-09-19 against Live 12.4.6 on the
+    first device of the first chain of an Oxi Bass Rack: the parameter object refused the
+    write and its .value answered applied. To write the number, use the companion
     'chain.device_on_value' row, whose path ends in .value. The LOM answers a
     ATimeableValueVector.
   params:
@@ -2186,12 +2191,13 @@
   proven: [get]
   doc: >-
     One parameter of a device nested inside a rack chain. Automatable like any other, and the
-    envelope is addressed through this same device: which is the reason a rack is a stable home
-    for automation: the rack keeps its index on the track even when its contents change. This
-    path resolves to the DeviceParameter object. It is the correct target for automation_write's
+    envelope is addressed through this same device: which is the reason a rack is a stable home for
+    automation: the rack keeps its index on the track even when its contents change. This path
+    resolves to the DeviceParameter object. It is the correct target for automation_write's
     'parameter' argument, and lom_get on it still carries 'display'. It is read-only - lom_set
-    answers not_settable. To write the number, use the companion 'chain.device_parameter_value'
-    row, whose path ends in .value. The LOM answers a ATimeableValueVector.
+    answers not_settable, measured 2026-08-29 against Live 12.4.5 and recorded on the companion row
+    named next, not here. To write the number, use the companion 'chain.device_parameter_value' row,
+    whose path ends in .value. The LOM answers a ATimeableValueVector.
   params:
     - {name: track, kind: int, required: true}
     - {name: device, kind: int, required: true}
@@ -3135,10 +3141,10 @@
   status: verified
   proven: [get]
   doc: >-
-    Absolute path of the audio file behind the Simpler. Read-only: a sample cannot be swapped by
-    writing a path: that goes through the browser (50-browser.yaml, browser.load_item onto the
-    selected pad or device). The single most useful row for answering "what is actually on this
-    pad", and the thing to compare against a kit's expected file names.
+    Absolute path of the audio file behind the Simpler. Read-only. Measured 2026-09-19 against Live 12.4.6 on a Simpler created by dropping a sample onto a MIDI track: the path read back as the file on disk, and lom_set with another path answered not_settable. That a sample cannot be swapped by writing a path is therefore this project's reading and not only Ableton's documentation. A Simpler with no sample loaded has no .sample at all and the path answers no_such_path. Swapping one goes through the
+    browser (50-browser.yaml, browser.load_item onto the selected pad or device). The single most
+    useful row for answering "what is actually on this pad", and the thing to compare against a
+    kit's expected file names.
   params:
     - {name: track, kind: int, required: true}
     - {name: device, kind: int, required: true}
@@ -3961,7 +3967,7 @@
     exactly that end of the range. The parameter index is not fixed; find it by name in
     device.parameters. This path resolves to the DeviceParameter object. It is the correct
     target for automation_write's 'parameter' argument, and lom_get on it still carries
-    'display'. It is read-only - lom_set answers not_settable. To write the number, use the
+    'display'. It is read-only - lom_set answers not_settable. Measured 2026-09-19 against Live 12.4.6 on an EQ Eight: the parameter object refused the write and its .value answered applied. To write the number, use the
     companion 'eq8.frequency_hint_value' row, whose path ends in .value. The LOM answers a
     ATimeableValueVector.
   params:
@@ -6617,11 +6623,10 @@
 
 - id: rack_drum_pad.name
   path: song.tracks[{track}].devices[{device}].chains[{chain}].devices[{nested}].drum_pads[{pad}].name
-  access: [get, set, observe]
+  access: [get, observe]
   kind: str
   unit: none
   destructive: false
-  verify: read_back
   status: verified
   proven: [get]
   doc: >-
@@ -6675,11 +6680,10 @@
 
 - id: rack_drum_pad.note
   path: song.tracks[{track}].devices[{device}].chains[{chain}].devices[{nested}].drum_pads[{pad}].note
-  access: [get, set, observe]
+  access: [get, observe]
   kind: int
   unit: none
   destructive: false
-  verify: read_back
   status: verified
   proven: [get]
   doc: >-

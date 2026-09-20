@@ -1,21 +1,13 @@
 """Schema discipline for ``src/live_maestro/catalog/*.yaml``.
 
-These are the schema tests for the catalog whose format ``docs/catalog.md`` defines.
-The rules are enforced against the raw YAML, not against what
-:class:`~live_maestro.registry.Registry` happened to make of it. That is
-deliberate: the loader already rejects most of this, and a test that only asked
-the loader would pass just as happily on the day somebody loosens the loader.
-The data is the artefact under test, so the data is what gets read.
+The rules run against the raw YAML in the format ``docs/catalog.md`` defines,
+not against what :class:`~live_maestro.registry.Registry` made of it: the loader
+already rejects most of this, so a test that asked the loader would pass on the
+day the loader is loosened. Nothing here opens a socket or needs Live installed.
 
-Nothing here opens a socket, imports Live, or needs Live installed. The catalog
-is a text file, and checking it is a text-file job.
-
-Two conventions used throughout:
-
-* Every offence is collected, then reported together. A catalog edit that
-  breaks four rows should say so once, not four times across four runs.
-* Failure messages explain the rule, not just the breach. These rows are
-  hand-written and the message is the only feedback their author gets.
+Two conventions throughout: every offence is collected and reported together,
+and a failure message states the rule rather than only the breach, because the
+rows are hand-written and the message is their author's only feedback.
 """
 
 from __future__ import annotations
@@ -61,9 +53,8 @@ HOW_TO_VERIFY = (
 class Row:
     """One catalog row, with the file and position it came from.
 
-    The provenance travels with the row because every failure message in this
-    file needs it: "a row is missing a doc" is not actionable, "30-clip.yaml row
-    41 (clip.warping)" is.
+    Every failure message here needs the provenance: "a row is missing a doc" is
+    not actionable, "30-clip.yaml row 41 (clip.warping)" is.
     """
 
     file: str
@@ -112,8 +103,7 @@ def _load_rows() -> list[Row]:
     return rows
 
 
-#: Loaded once at import: 1166 rows across five files, re-read by every test below
-#: would be waste, and none of these tests mutate them.
+#: Loaded once at import: 1166 rows across five files. No test below mutates them.
 ROWS: list[Row] = _load_rows()
 
 VALID_ACCESS: frozenset[str] = frozenset(a.value for a in Access)
@@ -411,15 +401,10 @@ def test_status_is_one_of_the_three() -> None:
 #: Rows that read ``verified`` on evidence this repository cannot check: an
 #: empty ``proven`` and not a call row, so nothing says what was run.
 #:
-#: It is zero, and it took three days of measuring to get there. The count stood
-#: at 192 on 2026-09-06, when the probed set held no rack at all, and at 34 once
-#: the missing devices were built on scratch tracks. The last of them needed
-#: three things the LOM cannot make and a person made by hand: a return chain
-#: inside a rack, a sample dropped straight onto a drum pad, and a group track.
-#:
-#: Zero is the only correct value and the only one worth defending. A row that
-#: raises this is a row claiming a run nobody made, which is the failure this
-#: file exists to prevent.
+#: Zero is the only correct value. Reaching it needed devices the LOM cannot
+#: build, made by hand on scratch tracks: a return chain inside a rack, a sample
+#: dropped straight onto a drum pad, and a group track. A row that raises the
+#: count is a row claiming a run nobody made.
 UNMEASURED_VERIFIED_ALLOWANCE = 0
 
 
@@ -440,19 +425,11 @@ def _backed_by_a_run(doc: str, proven: list[str], access: list[str]) -> bool:
 def test_a_verified_row_says_what_was_run_against_live() -> None:
     """A ``verified`` row must be backed by a run, not by a sentence.
 
-    This is the project's core discipline, and it was not being kept. The rule
-    used to be that ``doc`` carries a date, a Live version and a verb, which
-    checks the shape of a sentence rather than the existence of a run. Measured
-    2026-09-06 against Live 12.4.5: 715 of 1166 rows carried a sentence no
-    generator in this repository produces, and 108 settable rows asserted that
-    no write had been attempted on a path a sweep then wrote successfully. A
-    test that can be satisfied by typing is a test that will be.
-
-    ``proven`` replaces the sentence. It is written from a probe run and lists
-    the access kinds that were exercised, so a row cannot claim a write nobody
-    made. What it does not do is stop a person editing the field and the report
-    together, and this test does not pretend otherwise. It closes the easy hole,
-    not every hole.
+    A date, a Live version and a verb in ``doc`` check the shape of a sentence
+    rather than the existence of a run, so they are not enough on their own.
+    ``proven`` is written from a probe run and lists the access kinds that were
+    exercised, so a row cannot claim a write nobody made. Editing the field and
+    the report together still passes: this closes the easy hole, not every hole.
     """
     unbacked = [
         f"{row.where} ({row.get('id')}): verified, but proven is empty and it is "
@@ -486,14 +463,10 @@ MEASUREMENTS_DIR: Path = CATALOG_DIR.parent.parent.parent / "measurements"
 def measurement_report() -> Path:
     """Return the one report in ``measurements/``, or fail saying why not.
 
-    The filename carries the Live version, so naming it here would pin the test
-    to one release. It did, and the consequence was worse than a stale constant:
-    the check skipped when the file was not found, so renaming the report for a
-    new Live version would have switched the cross-check off in silence, exactly
-    when the catalog had just been re-measured.
-
-    The directory holds one report, which is the run the catalog currently
-    stands on. Earlier runs belong in the history, not beside it.
+    The filename carries the Live version, so the report is found by glob rather
+    than by name: naming it would pin the test to one release and switch the
+    cross-check off in silence the moment the report is renamed for a new Live
+    version. The directory holds one report, the run the catalog stands on.
     """
     found = sorted(MEASUREMENTS_DIR.glob("catalog-live-*.json"))
     if len(found) == 1:
@@ -512,13 +485,9 @@ def test_every_proven_entry_traces_to_the_run_that_produced_it() -> None:
 
     The report is written by scripts/probe_paths.py and holds no value read from
     anybody's set. A row whose ``proven`` disagrees with it was edited by hand,
-    or the report is stale, and either way one of the two is claiming a run that
-    did not happen.
-
-    This does not make the catalog unfalsifiable. Editing the field and the
-    report together passes, and a person who wants to lie here can. What it
-    stops is the cheap version, where a claim appears because somebody typed a
-    sentence, which is how 715 rows came to carry provenance no tool produced.
+    or the report is stale, and either way one of the two claims a run that did
+    not happen. Editing the field and the report together still passes; what
+    this stops is a claim that appears because somebody typed a sentence.
     """
     report = json.loads(measurement_report().read_text(encoding="utf-8"))["rows"]
     offences = []
@@ -621,15 +590,13 @@ def test_no_doc_calls_itself_unverified_and_then_records_the_measurement() -> No
 
     Rows are written before they are probed and updated afterwards, so a
     pre-measurement hedge ("Expected from the LOM; unverified.") survives the
-    probe that settled it and ends up sitting a sentence above "Read verified
-    2026-08-29 ... returned False". Both halves are in the same paragraph and they
-    disagree. A reader takes whichever they reach first, and the hedge is first.
+    probe that settled it and ends up a sentence above the measurement that
+    contradicts it. A reader takes whichever half they reach first.
 
-    What stays allowed is the useful case: a measurement that covers part of a
-    row leaves the rest genuinely unmeasured, and saying so is honest. The rule
-    is that such a sentence must name its subject ("What an unknown name does is
-    not measured") rather than passing a verdict on the row as a whole. Only the
-    subjectless forms are refused here.
+    A scoped sentence stays allowed: a measurement that covers part of a row
+    leaves the rest genuinely unmeasured, and such a sentence must name its
+    subject ("What an unknown name does is not measured") rather than pass a
+    verdict on the row. Only the subjectless forms are refused here.
     """
     offences = []
     for row in ROWS:
@@ -695,20 +662,16 @@ def test_no_doc_denies_the_write_its_own_proven_field_records() -> None:
 def test_every_row_a_doc_points_at_actually_exists() -> None:
     """Rows send readers to other rows. Those rows have to be there.
 
-    "Write through its `.value` companion row", "read `param.min` and `param.max`
-    instead of assuming", "Read `device.get_bank_count` first": the catalog is
-    full of these, and they are how a reader gets from a row that refuses a write
-    to the one that accepts it. A pointer to a row that was deleted or renamed
-    strands them, silently, at exactly the moment they needed help.
+    "Write through its `.value` companion row", "Read `device.get_bank_count`
+    first": these are how a reader gets from a row that refuses a write to the
+    one that accepts it, and a pointer to a row that was deleted or renamed
+    strands them at the moment they needed help. Nothing else in the suite reads
+    a doc as a reference.
 
-    A pointer of this kind is invisible to the rest of the suite: nothing else
-    here reads a doc as a reference.
-
-    The hard part is that a row id and the tail of a LOM path are spelled
-    identically: ``simpler.sample_start`` is a row, and
-    ``...devices[0].view.sample_start`` ends in something shaped just like one. The
-    lookbehind is what tells them apart: a real citation does not follow a dot or a
-    closing bracket.
+    A row id and the tail of a LOM path are spelled identically:
+    ``simpler.sample_start`` is a row, and ``...devices[0].view.sample_start``
+    ends in something shaped just like one. The lookbehind tells them apart: a
+    real citation does not follow a dot or a closing bracket.
     """
     ids = {str(row.get("id")) for row in ROWS}
     areas = {i.split(".")[0] for i in ids if "." in i}
@@ -985,6 +948,7 @@ ACRONYMS: frozenset[str] = frozenset((
     "RAM", "ID", "XML", "TCP", "DAW", "OSC", "LFO", "ADSR", "HPF", "LPF", "VU", "DC", "AU",
     "M4L", "REX", "MPE", "CC", "NRPN", "PDC", "EOF", "IP", "OS", "PC", "IO", "SDK", "URL",
     "UUID", "ASCII", "UTF", "LSB", "MSB", "RMS", "FFT", "DSP", "AB", "DJ", "MCP", "BBD", "IR",
+    "ACE",
 ))
 
 EMPHASIS = re.compile(r"\b[A-Z]{2,}\b")
@@ -1274,13 +1238,12 @@ def test_catalog_coverage_report(capsys: pytest.CaptureFixture[str]) -> None:
 # `means`: the catalog decoding what Live will not
 # --------------------------------------------------------------------------------
 
-#: Every row that carries a ``means`` map, named on purpose. Adding one is then a
-#: deliberate diff and the moment to ask where the meaning came from: a
-#: transcription of the row's own doc, a measurement, or somebody's memory of the
-#: LOM reference. The third is the one this list exists to catch. The names in
-#: these rows were read off Live on 2026-08-31: `device.type` carries four values
-#: and no value 3, `groove.base` carries six, and `wavetable.unison_mode` uses
-#: the spellings Live itself uses.
+#: Every row that carries a ``means`` map, named on purpose, so adding one is a
+#: deliberate diff and the moment to ask where the meaning came from: the row's
+#: own doc, a measurement, or somebody's memory of the LOM reference. The third
+#: is what this list catches. These names were read off Live on 2026-08-31:
+#: `device.type` carries four values and no value 3, `groove.base` carries six,
+#: and `wavetable.unison_mode` uses the spellings Live itself uses.
 ROWS_WITH_MEANS: dict[str, int] = {
     "arrangement_clip.launch_mode": 4,
     "arrangement_clip.launch_quantization": 15,
@@ -1344,15 +1307,13 @@ _NAMES_UNSOURCED = re.compile(
 def test_no_row_carries_a_measured_means_block_and_calls_it_unmeasured() -> None:
     """A row that decodes its own values has stopped being a row that cannot.
 
-    ``means`` is the measured value->meaning map, so the sentence "read from the LOM
-    enum order, not measured" is not a hedge that aged. It is contradicted by the
-    block directly above it, and a reader takes whichever of the two they reach
-    first.
+    ``means`` is the measured value->meaning map, so the sentence "read from the
+    LOM enum order, not measured" is contradicted by the block directly above it,
+    and a reader takes whichever of the two they reach first.
 
-    :data:`_BLANKET_HEDGE` does not cover these and should not. It refuses
-    *subjectless* verdicts, and these name their subject, which is what makes them
-    legitimate on a row with no ``means`` and false on a row with one. The
-    distinction needs its own check rather than a wider pattern.
+    :data:`_BLANKET_HEDGE` does not cover these: it refuses *subjectless*
+    verdicts, and these name their subject, which is what makes them legitimate
+    on a row with no ``means`` and false on a row with one.
     """
     offences = []
     for row in ROWS:
@@ -1393,22 +1354,44 @@ def test_every_meaning_is_a_sentence_and_not_a_hedge() -> None:
 
 
 def test_an_unmeasured_meaning_says_so() -> None:
-    """The two sentinels taken from the LOM reference rather than from Live.
+    """``fired_slot_index``'s ``-2`` is the LOM's convention and nothing more.
 
-    ``-2`` on both slot-index rows is the LOM's convention. One of them has since
-    been seen (every track read -2 right after ``stop()``, 2026-08-31) and one has
-    not. Neither may read as settled, because the catalog's whole value is that
-    the difference between "measured" and "documented elsewhere" survives.
+    The difference between "measured" and "documented elsewhere" has to survive,
+    so a sentinel no probe has produced may not read as settled.
     """
-    registry = Registry.load()
-    for row_id in ("track.playing_slot_index", "track.fired_slot_index"):
-        meaning = registry.get(row_id).meaning_of(-2)
-        assert meaning is not None, f"{row_id} lost its -2 entry"
-        disclosed = ("not established" in meaning or "not measured" in meaning
-                     or "not been measured" in meaning)
-        assert disclosed, (
-            f"{row_id}: the -2 meaning comes from the LOM reference, not from a "
-            f"measurement, and has to say so: {meaning!r}"
+    meaning = Registry.load().get("track.fired_slot_index").meaning_of(-2)
+    assert meaning is not None, "track.fired_slot_index lost its -2 entry"
+    disclosed = ("not established" in meaning or "not measured" in meaning
+                 or "not been measured" in meaning)
+    assert disclosed, (
+        "track.fired_slot_index: the -2 meaning comes from the LOM reference, not "
+        f"from a measurement, and has to say so: {meaning!r}"
+    )
+
+
+def test_the_playing_slot_sentinel_is_measured_and_says_what_it_measured() -> None:
+    """``playing_slot_index == -2`` is a standing state, and the row has to say which.
+
+    Against Live 12.4.5 on Ableton's "Patience" demo song, the raw reads across
+    the 15 tracks were identical while scene 2 was settling, 6 s later once
+    settled, and again after ``song.stop_playing``, and the tracks reading -2
+    were exactly the tracks holding no clip in the fired scene. So -2 means "no
+    clip is playing on this track", a property of the scene and not a moment in a
+    transition. The row may not hedge the value as unsettled, and it may not be
+    read back as "stopping", which makes ``in_transition`` always true. The row's
+    own dated note is asserted below.
+    """
+    meaning = Registry.load().get("track.playing_slot_index").meaning_of(-2)
+    assert meaning is not None, "track.playing_slot_index lost its -2 entry"
+    assert "no clip is playing on this track" in meaning, (
+        f"the -2 meaning no longer says what the measurement settled: {meaning!r}"
+    )
+    assert "Measured 2026-09-16 against Live 12.4.5" in meaning, (
+        f"the -2 meaning is a measurement and has to date itself: {meaning!r}"
+    )
+    for stale in ("not established", "not measured", "stopping"):
+        assert stale not in meaning, (
+            f"the -2 meaning still carries the superseded reading {stale!r}: {meaning!r}"
         )
 
 
@@ -1460,12 +1443,9 @@ def test_no_catalog_row_declares_the_same_key_twice() -> None:
 
     YAML says a mapping key must be unique. PyYAML does not enforce it and keeps
     the last value, so a row with two ``params:`` loads and every test over the
-    loaded catalog passes.
-
-    The cost is not the dead line. It is that the file stops being valid YAML for
-    anything less forgiving than the loader this project happens to use, and that
-    a real double declaration (two different ``doc`` fields, two ``status``
-    values) would be swallowed the same silent way.
+    loaded catalog passes. The file then stops being valid YAML for anything less
+    forgiving than PyYAML, and a real double declaration (two ``doc`` fields, two
+    ``status`` values) is swallowed the same silent way.
     """
     _DuplicateReportingLoader.duplicates = []
     for path in sorted(CATALOG_DIR.glob("*.yaml")):
@@ -1490,11 +1470,9 @@ def test_no_doc_line_is_a_truncated_copy_of_the_next() -> None:
 
     The shape is silent: a line, then the same line continuing one word further.
     YAML folds both into the doc, so the row parses, loads and reads almost
-    right, as a sentence that starts twice and finishes once.
-
-    Nothing else here would catch it: it is not a duplicate key, not a stale
-    number, not a bad citation. Just prose that says the same thing twice and then
-    goes on.
+    right, as a sentence that starts twice and finishes once. It is not a
+    duplicate key, not a stale number and not a bad citation, so nothing else
+    here would catch it.
     """
     offences = []
     for path in sorted(CATALOG_DIR.glob("*.yaml")):
@@ -1507,4 +1485,113 @@ def test_no_doc_line_is_a_truncated_copy_of_the_next() -> None:
         "doc line(s) duplicated by a bad re-wrap",
         offences,
         explain="Delete the shorter, truncated line; the longer one is the real sentence.",
+    )
+
+
+# --------------------------------------------------------------------------------
+# Impossibility claims
+# --------------------------------------------------------------------------------
+
+#: The vocabulary a row reaches for when it tells a caller that something is out of
+#: reach. Sweeping for it is the only way to enumerate the claims: an impossibility
+#: lives in prose, never in a field, so no schema check can find one.
+_IMPOSSIBILITY = re.compile(
+    r"cannot|not[ _]settable|not[ _]writable|has no effect|is ignored"
+    r"|travels one way|not possible",
+    re.IGNORECASE,
+)
+
+#: What counts as saying where a claim came from, short of a date: a verb of
+#: measurement, an admission that nothing measured it, or a pointer at the document
+#: that carries the evidence. A claim with none of these is the row asserting a
+#: limit of Live on nobody's authority.
+_ATTRIBUTION = re.compile(
+    r"\b(measured|observed|probed|untested)\b"
+    r"|no write has probed|on record|docs/(limits|protocol|catalog)\.md",
+    re.IGNORECASE,
+)
+
+#: Every row that claims an impossibility without a date, audited by hand on
+#: 2026-09-16 and written up in ``docs/catalog.md``. The roster is frozen so the
+#: population is inherited rather than re-grepped: a row may leave it by being
+#: probed against Live, which is the only exit, and a new arrival has to be added
+#: here on purpose.
+#:
+#: Why each of the three is still here: ``song.tempo``'s claim is about
+#: automation rather than a write, ``clip.color``'s is a palette snap on Live 10
+#: and earlier which this installation cannot show, and ``chain.send``'s is
+#: advice about units rather than an impossibility.
+UNDATED_IMPOSSIBILITY_ROWS: frozenset[str] = frozenset(
+    {
+        "song.tempo",
+        "clip.color",
+        "chain.send",
+    }
+)
+
+
+def _impossibility_rows() -> list[Row]:
+    """Every row whose ``doc`` tells a caller that something cannot be done."""
+    return [row for row in ROWS if _IMPOSSIBILITY.search(" ".join(str(row.get("doc", "")).split()))]
+
+
+def test_every_impossibility_claim_says_where_it_came_from() -> None:
+    """A row that closes a door must name who tried it.
+
+    "Cannot" in a row is read as a property of the Object Model. Some such claims
+    are measurements, some are read off Ableton's published documentation, and
+    some are about this bridge rather than about Live; written without
+    provenance the three are indistinguishable, and the caller who believes the
+    wrong one stops looking for a route that exists.
+
+    A date is the strongest attribution and not the only honest one: saying that
+    nothing measured it, or pointing at the document that carries the evidence,
+    is enough. Inventing a measurement is not, and neither is deleting the
+    warning.
+    """
+    offences = [
+        f"{row.where}: claims an impossibility with no date and no attribution"
+        for row in _impossibility_rows()
+        if not _ISO_DATE.search(" ".join(str(row.get("doc", "")).split()))
+        and not _ATTRIBUTION.search(" ".join(str(row.get("doc", "")).split()))
+    ]
+    fail(
+        "catalog row(s) claiming an impossibility on nobody's authority",
+        offences,
+        explain=(
+            "Say where the claim comes from. Either it was measured, and the "
+            "sentence carries its date and Live version, or it was not, and the "
+            "sentence says so and names the probe that would settle it, or it "
+            "restates something recorded elsewhere, and the sentence points "
+            "there. See the dated audit in docs/catalog.md."
+        ),
+    )
+
+
+def test_the_undated_impossibility_roster_only_shrinks() -> None:
+    """The audited population is inherited, not re-derived.
+
+    :data:`UNDATED_IMPOSSIBILITY_ROWS` is the list of impossibility claims that
+    carry an attribution but no measurement, as audited on 2026-09-16. A row
+    leaves it by being probed against Live, which is the only legitimate exit. A
+    row arriving in it is a new undated claim, and the failure is the reader's
+    only chance to notice one before it is inherited as fact.
+    """
+    undated = {
+        row.id
+        for row in _impossibility_rows()
+        if not _ISO_DATE.search(" ".join(str(row.get("doc", "")).split()))
+    }
+    offences = [
+        f"{row_id}: an undated impossibility claim that the 2026-09-16 audit does not list"
+        for row_id in sorted(undated - UNDATED_IMPOSSIBILITY_ROWS)
+    ]
+    fail(
+        "undated impossibility claim(s) outside the audited roster",
+        offences,
+        explain=(
+            "Measure it, or add it to UNDATED_IMPOSSIBILITY_ROWS and to the "
+            "audit section in docs/catalog.md, so the next reader inherits the "
+            "list instead of re-grepping for it."
+        ),
     )

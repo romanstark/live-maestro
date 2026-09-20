@@ -1,18 +1,15 @@
-"""Tests for :mod:`live_maestro.music.notes`: the measured traps first.
+"""Tests for :mod:`live_maestro.music.notes`.
 
-No socket, no Live, no sleeping. Where a test needs a clip it uses
-:class:`FakeMidiClip`, a faithful stand-in for the two LOM calls the
-``notes_set`` handler actually makes (``docs/protocol.md`` §5.8):
-``add_new_notes`` adds notes, ``remove_notes_extended`` removes a
-pitch/time window. Replace is remove-then-write on top of those, which is
-exactly what the handler does inside Live.
+No socket and no Live. :class:`FakeMidiClip` stands in for the two LOM calls the
+``notes_set`` handler makes (``docs/protocol.md`` §5.8): ``add_new_notes`` adds,
+``remove_notes_extended`` removes a pitch/time window, and replace is
+remove-then-write on top of them.
 
-The three failures these tests exist for are all measured, all silent, and all
-report success:
+Three silent failures are covered, each of which reports success:
 
 * wrong dict keys collapse every note onto beat 0 with duration 0.25.
-* a write that appends instead of replacing left 86 notes where a 23-note
-  correction to a 63-note clip was meant to leave 23.
+* a write that appends instead of replacing leaves 86 notes where a 23-note
+  correction to a 63-note clip should leave 23.
 * tick values sent as beats are 480 times too large and the clip looks empty.
 """
 
@@ -46,14 +43,11 @@ def melody(count: int, *, pitch: int = 60, step: float = 0.5, duration: float = 
 class FakeMidiClip:
     """The two Live 11+ note calls the handler uses, and nothing else.
 
-    ``add_new_notes`` is additive: that is the LOM's behaviour and the
-    origin of the doubling. It is also the only write call ``Clip`` has:
-    ``set_notes_extended`` does not exist (measured 2026-08-29 against Live
-    12.4.5), so this stand-in does not offer it either.
-    ``remove_notes_extended`` takes its arguments in the order
-    ``(from_pitch, pitch_span, from_time, time_span)``, which is *not* the order
-    of Live's older ``remove_notes`` and is the swap the handler's own comment
-    warns about.
+    ``add_new_notes`` is additive, and it is the only write call ``Clip`` has:
+    ``set_notes_extended`` does not exist on Live 12.4.5, so this stand-in does not
+    offer it either. ``remove_notes_extended`` takes its arguments in the order
+    ``(from_pitch, pitch_span, from_time, time_span)``, which is *not* the order of
+    Live's older ``remove_notes``.
     """
 
     def __init__(self, notes: list[Note] | None = None) -> None:
@@ -171,7 +165,7 @@ def test_stack_check_needs_two_notes_and_the_exact_fingerprint() -> None:
 
 
 def test_partial_stack_is_a_warning_not_an_error() -> None:
-    """One bad batch in an otherwise healthy clip: the measured shape."""
+    """One bad batch in an otherwise healthy clip."""
     healthy = [note(72, 4.0 + i, 0.5) for i in range(8)]
     bad_batch = [note(60 + i, 0.0, 0.25) for i in range(N.STACK_WARN_MIN_NOTES)]
 
@@ -204,7 +198,7 @@ def test_validation_report_is_json_safe() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Replace semantics: 63 + 23 = 86 was measured, and must not happen again
+# Replace semantics: appending instead of replacing turns 63 + 23 into 86
 # --------------------------------------------------------------------------- #
 
 
@@ -233,7 +227,7 @@ def test_replace_writes_the_list_that_was_sent() -> None:
 
 
 def test_applying_the_same_list_twice_yields_the_same_clip() -> None:
-    """The property the module is built on. Twice written, once present."""
+    """Idempotence: twice written, once present."""
     clip = FakeMidiClip()
     line = melody(23, pitch=64)
 
@@ -575,7 +569,7 @@ def test_stretching_past_the_clip_end_is_reported_when_the_length_is_known() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Ticks and beats: the off-by-480 disaster, in both directions
+# Ticks and beats: the off-by-480 trap, in both directions
 # --------------------------------------------------------------------------- #
 
 
@@ -647,7 +641,7 @@ def test_from_tick_notes_velocity_fallback_only_fills_the_gaps() -> None:
 
 
 def test_tick_values_used_as_beats_are_480_times_too_large() -> None:
-    """The disaster itself: skip the conversion and bar 1 becomes bar 121."""
+    """Skip the conversion and bar 1 becomes bar 121."""
     tick_form = [{"pos": 1920, "dur": 480, "pitch": 60}]
 
     correct = N.from_tick_notes(tick_form)[0]

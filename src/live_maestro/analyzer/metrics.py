@@ -1,18 +1,13 @@
-"""Everything derived from a reply, kept away from the socket so it can be tested.
+"""Derive every reported figure from an analyzer reply, as pure functions.
 
-The device reports amplitudes and the six numbers ``loudness~`` produces. Every
-dB value, every correlation, the crest factor, the centroid and every verdict is
-computed here, from those numbers alone. That split is the point: a wrong
-threshold or a wrong logarithm is a unit test away from being caught, and none of
-it needs Ableton Live to be running.
+The device reports amplitudes and the six numbers ``loudness~`` produces. Every dB
+value, every correlation, the crest factor, the centroid and every verdict is computed
+here from those numbers alone, with no Ableton Live in the loop. No verdict comes from
+the device: a boolean it asserts cannot be checked against the numbers beside it.
 
-No verdict is taken from the device. A boolean the device asserts cannot be
-checked against the numbers it sends alongside it, so every judgement is computed
-here from the measurements and can be contradicted by them.
-
-Silence is a real answer here, not a zero. An empty track has no correlation and
-no centroid, and reporting 0.0 for either would read as "perfectly decorrelated"
-and "no brightness" instead of "nothing was playing".
+Silence is a real answer here, not a zero. An empty track has no correlation and no
+centroid, and reporting 0.0 for either would read as "perfectly decorrelated" and "no
+brightness" instead of "nothing was playing".
 """
 
 from __future__ import annotations
@@ -24,11 +19,15 @@ from live_maestro.analyzer.protocol import BANDS
 __all__ = [
     "SILENCE_FLOOR_AMPLITUDE",
     "SILENCE_FLOOR_DB",
+    "band_amplitude_means",
+    "band_occupancy_percentages",
+    "band_occupancy_window",
     "centroid_hz",
     "combined_rms",
     "correlation",
     "crest_factor_db",
     "to_dbfs",
+    "window_coverage_pct",
 ]
 
 #: Below this an amplitude is treated as silence rather than as a level. Live's
@@ -129,14 +128,13 @@ def crest_factor_db(peak_db: float, rms_db: float) -> float | None:
 def centroid_hz(bands: dict[str, float]) -> float | None:
     """Calculate the energy weighted centre of the seven measured bands in Hz.
 
-    This is not the spectral centroid of an FFT. It is the centre of mass of
-    seven band energies, each placed at the geometric centre of its own band, and
-    it is reported as such. A true FFT centroid needs ``pfft~``, which needs a
-    subpatcher file on disk, which would stop the device from being one file.
+    This is not the spectral centroid of an FFT: it is the centre of mass of seven
+    band energies, each placed at the geometric centre of its own band. A true FFT
+    centroid would need ``pfft~``, and so a subpatcher file on disk, which would stop
+    the device from being one file.
 
     The band with no upper edge is placed at the geometric centre of 10 kHz and
-    20 kHz, because that is the range it actually passes at every sample rate
-    this runs at.
+    20 kHz, the range it actually passes at every sample rate this runs at.
 
     >>> centroid_hz({name: 0.0 for name, _, _ in BANDS}) is None
     True
@@ -159,3 +157,103 @@ def centroid_hz(bands: dict[str, float]) -> float | None:
     if total <= 0.0:
         return None
     return round(weighted / total, 1)
+
+
+def band_occupancy_window(
+    band_db_values: dict[str, float | None],
+    threshold_db: float = 12.0,
+) -> dict[str, bool]:
+    """Determine for a single window which bands are within threshold_db of the loudest band.
+
+    A band is occupied if it carries energy at all and its level is within
+    threshold_db of the loudest band in the window. If all bands are silent (at or
+    below SILENCE_FLOOR_DB), no band is occupied.
+
+    The silence floor is checked on the band itself and not only when picking the
+    loudest. A silent band clears a cutoff that sits below the floor, so a quiet
+    window with a wide threshold would otherwise count bands that carry nothing:
+    with a loudest band at -80 dBFS the cutoff is -92 dBFS, and the floor at -90
+    dBFS is above it.
+
+    >>> band_occupancy_window({"band_mid": -20.0, "band_high_mid": -30.0, "band_air": -35.0}, 12.0)
+    {'band_mid': True, 'band_high_mid': True, 'band_air': False}
+    >>> band_occupancy_window({"band_mid": -80.0, "band_sub": -90.0}, 12.0)
+    {'band_mid': True, 'band_sub': False}
+    >>> band_occupancy_window({"band_mid": -80.0, "band_sub": None}, 70.0)
+    {'band_mid': True, 'band_sub': False}
+    """
+    valid = {k: v for k, v in band_db_values.items() if v is not None and v > SILENCE_FLOOR_DB}
+    if not valid:
+        return {k: False for k in band_db_values}
+    loudest = max(valid.values())
+    cutoff = loudest - threshold_db
+    return {
+        k: (v is not None and v > SILENCE_FLOOR_DB and v >= cutoff)
+        for k, v in band_db_values.items()
+    }
+
+
+def band_occupancy_percentages(
+    occupied_counts: dict[str, int],
+    total_windows: int,
+) -> dict[str, float | None]:
+    """Calculate the occupancy percentage per band over multiple analysis windows.
+
+    The figure is a share of the windows that were counted, and those windows are
+    a sample of the span they were taken from rather than the whole of it.
+
+    >>> band_occupancy_percentages({"band_mid": 8, "band_air": 1}, 8)
+    {'band_mid': 100.0, 'band_air': 12.5}
+    >>> band_occupancy_percentages({"band_mid": 0}, 0)
+    {'band_mid': None}
+    """
+    if total_windows <= 0:
+        return {k: None for k in occupied_counts}
+    return {
+        k: round((count / total_windows) * 100.0, 1)
+        for k, count in occupied_counts.items()
+    }
+
+
+def band_amplitude_means(
+    amplitude_sums: dict[str, float],
+    total_windows: int,
+) -> dict[str, float] | None:
+    """Average each band's summed amplitude over the windows they were summed from.
+
+    ``None`` when nothing was counted. A mean over no window is not a quiet
+    measurement, it is no measurement, and a dictionary of zeroes would reach the
+    spectrum as seven bands sitting at digital silence.
+
+    >>> band_amplitude_means({"band_sub": 1.0, "band_mid": 2.0}, 4)
+    {'band_sub': 0.25, 'band_mid': 0.5}
+    >>> band_amplitude_means({"band_sub": 0.0}, 0) is None
+    True
+    """
+    if total_windows <= 0:
+        return None
+    return {k: total / total_windows for k, total in amplitude_sums.items()}
+
+
+def window_coverage_pct(covered_ms: float, elapsed_s: float) -> float | None:
+    """Return what share of an elapsed span the measured windows add up to, in %.
+
+    ``None`` where either figure is zero or negative, because neither a span of no
+    time nor a set of windows covering none of it supports a share.
+
+    The result is not clamped. Under 100 the windows sampled the span rather than
+    covering it. Over 100 they add up to more time than has elapsed, which the first
+    window does on its own: it reaches back to the audio before the span began, so a
+    short accumulation reads well above 100 with every window abutting the next.
+
+    >>> window_coverage_pct(4000.0, 10.0)
+    40.0
+    >>> window_coverage_pct(12000.0, 10.0)
+    120.0
+    >>> window_coverage_pct(400.0, 0.0) is None
+    True
+    """
+    if covered_ms <= 0.0 or elapsed_s <= 0.0:
+        return None
+    return round(covered_ms / (elapsed_s * 1000.0) * 100.0, 1)
+

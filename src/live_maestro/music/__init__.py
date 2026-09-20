@@ -1,25 +1,17 @@
 """Musical logic: notes, theory, humanisation. Knows nothing about sockets.
 
-This package is the layer that may never touch the transport. Nothing here imports
-``live_maestro.client`` or opens a connection. It takes plain data structures (MIDI
-numbers, beats, chord labels) and returns plain data structures. That separation is an
-architectural rule, not a preference: ``client.py`` knows sockets and no music,
-``music/`` knows music and no sockets. A pitch in ``client.py`` is a layering bug.
+Nothing here imports ``live_maestro.client`` or opens a connection: the layer takes
+plain data (MIDI numbers, beats, chord labels) and returns plain data. A pitch in
+``client.py`` is a layering bug.
 
-The public surface of :mod:`live_maestro.music.theory` is re-exported flat, so callers
-can write ``from live_maestro.music import voicing``. Anything not listed in
-:data:`__all__` is an implementation detail of its module.
+:mod:`live_maestro.music.theory` is re-exported flat, so callers can write
+``from live_maestro.music import voicing``. Anything outside :data:`__all__` is an
+implementation detail of its module.
 
-:mod:`~live_maestro.music.notes` and :mod:`~live_maestro.music.humanize` are
-exported as modules rather than flattened::
-
-    from live_maestro.music import notes, humanize
-    notes.transpose(...)      humanize.to_live(...)
-
-The two share four names: ``TICKS_PER_QUARTER``, ``VELOCITY_RANGE``, ``beats_to_ticks``
-and ``ticks_to_beats``. Flattening both would let one silently shadow the other, and a
-shadowed conversion between ticks and beats is the 480x error this package guards against
-everywhere else. Keeping them namespaced forces the caller to say which one they mean.
+:mod:`~live_maestro.music.notes` and :mod:`~live_maestro.music.humanize` stay
+namespaced (``notes.transpose(...)``, ``humanize.to_live(...)``): they share
+``TICKS_PER_QUARTER``, ``VELOCITY_RANGE``, ``beats_to_ticks`` and ``ticks_to_beats``,
+and a shadowed tick/beat conversion is a 480x error.
 """
 
 from __future__ import annotations

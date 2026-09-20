@@ -1,0 +1,95 @@
+{
+  "spike": "sustained-material-transcription",
+  "date": "2026-09-19",
+  "question": "Does a pitch transcription of held material agree with what the recording holds?",
+  "method": "Four separated stems of one song, 128 BPM. Each transcribed with basic-pitch through the sidecar environment and cleaned with the default pipeline. The 20 s loudest window of each stem was described, and the onsets the audio starts there were compared with the notes the transcription placed in the same stretch.",
+  "stems": [
+    {
+      "stem": "4 Bass.wav",
+      "audio_onsets_per_s": 2.9,
+      "audio_sustain_fraction": 0.63,
+      "written_onsets_per_s": 3.4,
+      "written_over_heard": 1.2,
+      "notes_plain": 463,
+      "written_onsets_per_s_merged": 1.6,
+      "notes_merged": 202
+    },
+    {
+      "stem": "5 Acoustic Guitar.wav",
+      "audio_onsets_per_s": 0.25,
+      "audio_sustain_fraction": 0.843,
+      "written_onsets_per_s": 2.4,
+      "written_over_heard": 9.6,
+      "notes_plain": 635,
+      "written_onsets_per_s_merged": 1.45,
+      "notes_merged": 268
+    },
+    {
+      "stem": "6 Synth Pad.wav",
+      "audio_onsets_per_s": 0.0,
+      "audio_sustain_fraction": 1.0,
+      "written_onsets_per_s": 9.75,
+      "written_over_heard": null,
+      "notes_plain": 1516,
+      "written_onsets_per_s_merged": 2.8,
+      "notes_merged": 450
+    },
+    {
+      "stem": "7 Synth Keys.wav",
+      "audio_onsets_per_s": 0.0,
+      "audio_sustain_fraction": 1.0,
+      "written_onsets_per_s": 11.25,
+      "written_over_heard": null,
+      "notes_plain": 1633,
+      "written_onsets_per_s_merged": 4.55,
+      "notes_merged": 575
+    }
+  ],
+  "finding": "The bass is the only stem whose written note density matches its recording. The guitar writes 9.6 times what it strikes. The pad and the keys sound without pause and start no detectable event at all, and the transcription writes 9.75 and 11.25 events a second into them. That is one held chord reported as a stutter of fragments at the right pitches.",
+  "merge_finding": "Joining same-pitch fragments separated by less than 60 ms cuts the excess by roughly two thirds on every stem, and does not remove it: the pad still writes 2.8 events a second where the recording starts none. It is a mitigation, not a repair.",
+  "consequence": "The transcription_suspect cross-check fired only in the too-few direction, which is percussion. It now fires in both, with kind saying which way, and a sustained argument exposes the merge that was previously reachable only from inside the pipeline.",
+  "not_adopted": "Merging is not made the default. Measured earlier against the generator's own MIDI export of five stems it cost agreement on pitch content every time, between one and ten points, because a part playing repeated notes has small gaps by construction.",
+  "open": "Neither setting produces a usable pad part. A held chord progression has to be shortened by hand or played in; no tool here does it.",
+  "window_choice": {
+    "question": "Which stretch should the transcription be checked against?",
+    "method": "Same four stems plus the drum kit. The loudest 20 s window against the busiest, meaning the one starting the most onsets, and the written attacks counted in each.",
+    "rows": [
+      {
+        "stem": "2 Drum Kit.wav",
+        "loudest_ratio": 0.0,
+        "busiest_ratio": 0.0
+      },
+      {
+        "stem": "4 Bass.wav",
+        "loudest_ratio": 1.1,
+        "busiest_ratio": 1.2
+      },
+      {
+        "stem": "5 Acoustic Guitar.wav",
+        "loudest_ratio": 7.4,
+        "busiest_ratio": 2.7
+      },
+      {
+        "stem": "6 Synth Pad.wav",
+        "loudest_ratio": null,
+        "busiest_ratio": 53.5
+      },
+      {
+        "stem": "7 Synth Keys.wav",
+        "loudest_ratio": null,
+        "busiest_ratio": 9.6
+      }
+    ],
+    "finding": "In the loudest window the acoustic guitar reads as 7.4 times too dense, which is false: its loudest 20 s is a chord ringing out at 0.25 onsets a second while its busiest holds 1.30. Checked in the busiest window the guitar reads 2.7 and is not reported, and the pad and keys still read 53.5 and 9.6.",
+    "second_correction": "Counting written notes where the recording counts onsets reads one chord as several strikes. A transcriber does not place a chord's notes at one time: measured 1.05 to 1.68 notes per attack over the four stems, with notes within 30 ms counted as one attack. The check counts attacks.",
+    "cost": "Choosing the busiest window is one pass over the audio, 18 s for a 229 s stem, against 1.6 s for the loudest window alone."
+  },
+  "verdicts": {
+    "2 Drum Kit.wav": "too_few",
+    "4 Bass.wav": "quiet",
+    "5 Acoustic Guitar.wav": "quiet",
+    "6 Synth Pad.wav": "too_many",
+    "6 Synth Pad.wav sustained": "too_many",
+    "7 Synth Keys.wav": "too_many"
+  }
+}

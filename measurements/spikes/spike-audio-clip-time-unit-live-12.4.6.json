@@ -1,0 +1,35 @@
+{
+  "spike": "audio-clip-time-unit",
+  "date": "2026-09-19",
+  "live_version": "12.4.6",
+  "question": "get_session reported nine different lengths for nine audio files of identical duration, and get_clip labelled every time field 'beats'. What unit is clip.length actually in?",
+  "given": {
+    "files": "nine separated stems, afinfo reports 228.792167 sec for every one",
+    "reported_lengths": [240.7936, 241.2926, 245.798, 487.5288, 247.8303, 244.1744, 240.918, 243.7658, 290.4897]
+  },
+  "unit": {
+    "method": "loop_end read on three unwarped audio clips of that file, and a write of a larger end_marker on one of them",
+    "loop_end": [228.79216663805613, 228.7921666565513, 228.79216666666667],
+    "write_clamped_to": 228.79216666666667,
+    "finding": "An audio clip's times are in seconds while warping is off. loop_end is the file duration in seconds on every clip, and Live clamps an end_marker write to that same number. The catalog row declares beats, and get_clip repeated it, which was wrong on every unwarped audio clip."
+  },
+  "toggle": {
+    "method": "one clip, warping off -> on -> off, reading loop_end and end_marker at each step",
+    "steps": [
+      {"warping": false, "loop_end": 228.79216666666667, "end_marker": 240.91805538211787},
+      {"warping": true, "loop_end": 240.91805538211787, "end_marker": 253.6821384344822},
+      {"warping": false, "loop_end": 228.79216666666667, "end_marker": 253.6821384344822}
+    ],
+    "factor": 1.05298,
+    "finding": "Toggling warping rescales the stored markers by the clip's own warp tempo over 60, and turning it back off does not undo it. 1.05298 is 63.18 BPM, which is what the clip was warped at. loop_end is not stored and returns to the file length; end_marker is stored and keeps the scaled value. Every toggle multiplies again.",
+    "explains_earlier": "An earlier measurement on a 1.14-unit clip saw loop_end 0.5704 -> 1.1408 at 120 BPM and no movement at 60 BPM, and called the mechanism unestablished. Both fit tempo/60 exactly.",
+    "explains_the_nine": "The nine reference clips were warped at different tempi and turned unwarped in one pass, which multiplied each clip's markers once by its own tempo over 60. That is why identical files reported nine different lengths."
+  },
+  "stale_length": {
+    "method": "after writing end_marker from 240.793565 to 228.792167 on a non-looping unwarped clip, read length, start_marker, end_marker and looping",
+    "after": {"length": 240.793565, "start_marker": 0.0, "end_marker": 228.792167, "looping": false},
+    "finding": "length still held the value from before the write. On a clip that does not loop, length is the span between the markers, and here it disagrees with them by 12 s with nothing reporting it."
+  },
+  "consequence": "get_clip labels the time fields seconds on an unwarped audio clip, carries times_in, and reports length_disagrees when length contradicts its own markers. The warping paragraph in its docstring now states the mechanism instead of declining to.",
+  "side_effect_on_the_set": "The nine reference clips of the rebuild were realigned to 0 -> 228.79216666666667 s. Before this they started between 0 and 3.31 s into the stem and ran up to 61 s past its end, so they did not line up with the rebuilt MIDI clips."
+}

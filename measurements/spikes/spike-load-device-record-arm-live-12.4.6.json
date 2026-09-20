@@ -1,0 +1,33 @@
+{
+  "spike": "load-device-record-arm",
+  "date": "2026-09-19",
+  "live_version": "12.4.6",
+  "question": "An agent reported that pointing song.view.selected_track at a track moved Live's record arm. Does it?",
+  "method": "One set, 15 tracks. Arm read on three tracks over lom_batch before and after each step. A scratch MIDI track was created at index 15 for the load and deleted afterwards.",
+  "steps": [
+    {
+      "step": "selection write, one armed track",
+      "before": {"tracks[7].arm": false, "tracks[9].arm": true, "tracks[11].arm": false},
+      "action": "set song.view.selected_track to song.tracks[11]",
+      "after": {"tracks[7].arm": false, "tracks[9].arm": true, "tracks[11].arm": false},
+      "moved": false
+    },
+    {
+      "step": "selection write, two armed tracks",
+      "before": {"tracks[9].arm": true, "tracks[11].arm": true, "tracks[7].arm": false},
+      "action": "set song.tracks[11].arm true, then set song.view.selected_track to song.tracks[7]",
+      "after": {"tracks[9].arm": true, "tracks[11].arm": true, "tracks[7].arm": false},
+      "moved": false
+    },
+    {
+      "step": "instrument load onto a third track",
+      "before": {"tracks[9].arm": true, "tracks[11].arm": true, "tracks[15].arm": false},
+      "action": "load_device(item_path=Grand Piano.adg, track=15, confirm=true)",
+      "after": {"tracks[9].arm": false, "tracks[11].arm": false, "tracks[15].arm": true},
+      "moved": true
+    }
+  ],
+  "finding": "Writing song.view.selected_track does not move the record arm. Loading an instrument does: it arms the track loaded onto and disarms every other track in the set, including tracks armed explicitly beforehand.",
+  "reported_claim_corrected": "The agent attributed the arm change to the selection write, which is the step it performed by hand. The cause is the load, and the effect is wider than reported: it is not that the arm follows the selection but that a load takes the arm exclusively.",
+  "consequence": "load_device's note states this. No tool answer reports the arm, so a caller who needs it reads arm before and after."
+}

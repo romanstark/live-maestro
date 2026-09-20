@@ -168,13 +168,13 @@ Any change to the reply layout raises `REPLY_SCHEMA` in the same commit. A devic
 
 ### Adding an object to the patcher
 
-`SHAPES` in the generator lists every Max object the device may use, with its inlet and outlet counts. Add an entry only after looking the object up in the reference pages that ship with Live:
+`SHAPES` in `src/live_maestro/maxgen.py` lists every Max object a generated device may use, with its inlet and outlet counts. It sits in the package rather than in `scripts/build_analyzer_device.py` because a build script is not importable and every generator, and every test, needs the same table. Add an entry only after looking the object up in the reference pages that ship with Live:
 
 ```
 <Live install>/Resources/Max/resources/docs/refpages/
 ```
 
-Max draws an object name it does not have as a broken box, reports no error and measures nothing, so an unverified name fails silently. The tests refuse a patcher holding an object that is not in `SHAPES`, and refuse one where a measurement object's outlet is wired nowhere.
+Max draws an object name it does not have as a broken box, reports no error and measures nothing, so an unverified name fails silently. `tests/test_devices.py` refuses a patcher holding an object that is not in `SHAPES`, and refuses one where a measurement object's outlet is wired nowhere.
 
 ### Testing it against Live
 
@@ -212,6 +212,8 @@ Findings about the Max objects themselves go in [docs/limits.md](docs/limits.md)
   - `server.py`: MCP tool definitions and high-level endpoints.
   - `lookup.py` / `vocabulary.py`: Turns an intent in the caller's own words into a route and ranked catalog rows. Reads the catalog only, never the socket.
   - `analyzer/`: Channel C. The socket lives in `client.py` alone; every derived figure and every verdict is computed in `metrics.py` and `report.py`, which is what makes them testable without a DAW.
+  - `audio/`: offline sample-file inspection. Standard library only, no Live and no external codec, so it runs anywhere the tests do.
+  - `maxgen.py`: the parts every generated Max for Live device shares, including `SHAPES`, the patcher writer, the `.amxd` container and the `--out`/`--check` command line. A generator under `scripts/` supplies only its own graph.
 - **Remote Script Changes:** Adding handlers inside Live requires a full restart of Live. Prefer expressing capabilities as catalog rows whenever possible.
 - **Safety Checks:** Method calls must be explicitly listed in the Remote Script's allowlist. Destructive operations (such as deleting tracks or devices) require `confirm=True`.
 

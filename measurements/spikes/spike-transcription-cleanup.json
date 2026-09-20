@@ -1,0 +1,161 @@
+{
+ "record": "experiment",
+ "schema_version": 1,
+ "id": "transcription-cleanup",
+ "title": "Removing what a played note explains helps three stems, costs two a little, and merging repeats hurt all of them",
+ "measured_on": "2026-09-19",
+ "host": "macOS 25.6.0, Apple silicon",
+ "question": "An untouched transcription of a bass sits nine semitones high at the median, because half of what it reports is overtones. Which cleanup steps earn their place?",
+ "reference": "The MIDI a generator exported for the same five separated stems. Its timing drifts and is not used; its pitch content is.",
+ "measure": "Overlap of the two pitch class distributions, plus note count and median pitch against the export's.",
+ "stages_measured_separately": {
+  "drop_harmonic_ghosts": "Remove a note when a lower, louder, simultaneous note sits a harmonic interval below it.",
+  "keep_lowest": "Reduce to the lowest note sounding, for material played one note at a time.",
+  "merge_repeats": "Join same-pitch events separated by a small gap."
+ },
+ "readings": {
+  "Bass": {
+   "export": {
+    "notes": 350,
+    "median": 33
+   },
+   "raw": {
+    "notes": 664,
+    "median_offset": 9,
+    "overlap_pct": 93.7
+   },
+   "ghosts_only": {
+    "notes": 463,
+    "median_offset": 7,
+    "overlap_pct": 92.0
+   },
+   "lowest_only": {
+    "notes": 494,
+    "median_offset": 7,
+    "overlap_pct": 91.7
+   },
+   "ghosts_and_lowest": {
+    "notes": 401,
+    "median_offset": 5,
+    "overlap_pct": 93.2,
+    "note": "Was 423 / offset 7 / 92.9 with the superseded keep_lowest."
+   },
+   "with_merge": {
+    "notes": 202,
+    "median_offset": 7,
+    "overlap_pct": 85.4
+   }
+  },
+  "Acoustic Guitar": {
+   "export": {
+    "notes": 580,
+    "median": 57
+   },
+   "raw": {
+    "notes": 835,
+    "median_offset": 0,
+    "overlap_pct": 95.4
+   },
+   "ghosts_only": {
+    "notes": 635,
+    "median_offset": -3,
+    "overlap_pct": 96.9
+   },
+   "with_merge": {
+    "notes": 267,
+    "median_offset": -1,
+    "overlap_pct": 86.9
+   },
+   "ghosts_and_lowest": {
+    "notes": 319,
+    "median_offset": -7,
+    "overlap_pct": 83.7,
+    "note": "Monophonic reduction on a part that plays chords, kept as the negative case."
+   }
+  },
+  "Synth Keys": {
+   "export": {
+    "notes": 2319,
+    "median": 64
+   },
+   "raw": {
+    "notes": 2272,
+    "median_offset": 0,
+    "overlap_pct": 96.2
+   },
+   "ghosts_only": {
+    "notes": 1633,
+    "median_offset": -2,
+    "overlap_pct": 94.6
+   },
+   "with_merge": {
+    "notes": 575,
+    "median_offset": -2,
+    "overlap_pct": 92.6
+   },
+   "ghosts_and_lowest": {
+    "notes": 641,
+    "median_offset": -7,
+    "overlap_pct": 86.0
+   }
+  },
+  "Synth Pad": {
+   "export": {
+    "notes": 676,
+    "median": 62
+   },
+   "raw": {
+    "notes": 2207,
+    "median_offset": 2,
+    "overlap_pct": 93.9
+   },
+   "ghosts_only": {
+    "notes": 1516,
+    "median_offset": -1,
+    "overlap_pct": 93.2
+   },
+   "ghosts_and_lowest": {
+    "notes": 503,
+    "median_offset": -6,
+    "overlap_pct": 85.4
+   }
+  },
+  "Lead Vocal": {
+   "export": {
+    "notes": 211,
+    "median": 66
+   },
+   "raw": {
+    "notes": 373,
+    "median_offset": 2,
+    "overlap_pct": 93.7
+   },
+   "ghosts_and_lowest": {
+    "notes": 318,
+    "median_offset": 0,
+    "overlap_pct": 93.4
+   }
+  }
+ },
+ "result": [
+  "Ghost removal is the default. It raises the guitar's agreement from 95.4 to 96.9 percent while taking 835 notes to 635 against an export of 580, brings the sung line's median onto the export's exactly, and takes the bass from 664 notes to 423 against 350.",
+  "It costs a little on dense material: Synth Keys falls from 96.2 to 94.6, because a keys part genuinely plays octaves and an octave played on purpose looks like one that came for free. The rule keeps a candidate that is louder than the note below it, which is what separates the two where anything can.",
+  "keep_lowest is only for material played one note at a time and is off unless asked for. On a sung line it costs 0.4 points of agreement and fixes the median; on a keys part it takes the median five semitones below the export's.",
+  "merge_repeats is off by default. It cost agreement on every stem, between one and ten points, because a part playing repeated notes has small gaps by construction. It stays available for a transcription visibly cut into pieces.",
+  "Note counts move toward the export on four of the five stems.",
+  "The bass is still the weakest case. Even cleaned, its median sits about seven semitones above the export's, so a bass transcription is the one to look at hardest."
+ ],
+ "scope_and_weakness": [
+  "One song, five stems, one generator, one transcriber at its default settings.",
+  "Pitch class overlap is blind to time, octave and note count on purpose, so it measures whether the same harmony was heard. Whether the result is playable is a different question and is not measured here.",
+  "The thresholds, the harmonic tolerance and the loudness ratio were chosen from these five stems. They are not fitted by search, and they are also not validated against anything else.",
+  "A second merge bug was found and fixed while measuring: overlapping events of one pitch gave a negative gap and always merged, which alone took a keys part from 2,272 notes to 701. That fix is in the figures above."
+ ],
+ "recorded_also_in": [
+  "README.md"
+ ],
+ "remeasured_on": "2026-09-19",
+ "remeasured_why": "keep_lowest was rewritten as a timeline sweep after the first run; the readings below that involve it are from the corrected implementation. The rows that do not (export, raw, ghosts_only, with_merge) came back identical, which is what makes the two runs comparable.",
+ "reproduce": "scripts/eval_transcription.py",
+ "correction": "The prose quoted a bass going from 463 notes to 377 with the median offset falling from seven semitones to five. 377 appears in no run of this measurement and the record's own ghosts_and_lowest row read 423 at offset 7. The corrected keep_lowest gives 401 at offset 5, so the direction was right and the count was not. Both the README and transcribe_stem now quote 401 and name the script that recomputes it."
+}

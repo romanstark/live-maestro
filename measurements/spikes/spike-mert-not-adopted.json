@@ -1,0 +1,66 @@
+{
+ "record": "experiment",
+ "schema_version": 1,
+ "id": "mert-not-adopted",
+ "title": "MERT wins the coarse question and loses the fine one, and the fine one is the only one left",
+ "measured_on": "2026-09-19",
+ "host": "macOS 25.6.0, Apple silicon, MPS",
+ "question": "Should a learned music embedding replace the hand built descriptor?",
+ "model": {
+  "name": "m-a-p/MERT-v1-95M",
+  "size": "95M parameters, 12 layers, 768 dimensions, 24 kHz, 5 s context",
+  "loads_without_remote_code": "The published config names custom modules, but the weights load into a plain transformers HubertModel with zero missing, unexpected or mismatched keys.",
+  "throughput": "8.7 files per second on the Apple GPU",
+  "licence": "cc-by-nc-4.0, which would have needed answering before any music made with it was sold",
+  "cost_if_adopted": "torch, transformers, a sidecar environment on a different Python, and about 400 MB of weights, against a project whose dependency count is zero"
+ },
+ "two_tasks": {
+  "coarse": "Which family is this: bass, pad, drum kit, guitar. Leave one out over the library, 900 probes.",
+  "fine": "Which preset inside a known family made this sound. Sixty presets rendered in Live, each ranked against its own family only, exact ground truth."
+ },
+ "results": {
+  "coarse_family_retrieval": {
+   "hand_built": {
+    "top_1": 0.54,
+    "top_5": 0.792
+   },
+   "mert_best_layer": {
+    "layer": 4,
+    "top_1": 0.628,
+    "top_5": 0.829
+   },
+   "verdict": "MERT wins by about nine points"
+  },
+  "fine_within_family_retrieval": {
+   "probes": 60,
+   "average_pool": 384,
+   "hand_built": {
+    "top_1": 4,
+    "top_5": 13,
+    "top_20": 25,
+    "median_rank": 30
+   },
+   "mert_best_layer": {
+    "layer": 3,
+    "top_1": 2,
+    "top_5": 3,
+    "top_20": 13,
+    "median_rank": 67
+   },
+   "verdict": "the hand built descriptor wins on every measure, by roughly two to one"
+  }
+ },
+ "result": [
+  "MERT is not adopted.",
+  "The two results do not contradict each other. MERT is trained to represent music, which is what a coarse family is, and the abstraction that buys it discards the fine spectral detail that separates one bass from another.",
+  "The family is supplied by the caller, because a stem being rebuilt is already named. The coarse question MERT wins is therefore not asked, and the fine question it loses is the whole task.",
+  "The pure Python descriptor stays, and now stays because it measured better rather than because it was already there."
+ ],
+ "scope_and_weakness": [
+  "Sixty renders, about five per family, and the per family figures cannot carry a percentage.",
+  "The renders are dry and the previews are produced, so both descriptors are being asked to cross a domain gap. That the gap is the same for both is what makes the comparison fair; it is not a measurement of either one at its best.",
+  "Time averaged hidden states, one layer at a time. A pooled or concatenated representation, or a layer combination, was not tried, and neither was the 330M model.",
+  "MERT was given no fine tuning of any kind. A model trained on this library's own previews is a different and untested proposition."
+ ],
+ "recorded_also_in_note": "This record is the only published account of the measurement. What it also went into at the time were working notes kept outside the repository."
+}

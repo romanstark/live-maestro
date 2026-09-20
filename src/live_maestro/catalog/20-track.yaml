@@ -294,7 +294,7 @@
   status: verified
   proven: [get]
   doc: >-
-    True when this track sits inside a group. Read-only. Grouping cannot be done through the LOM
+    True when this track sits inside a group. Read-only. Measured 2026-09-19 against Live 12.4.6: lom_set answered not_settable, and Live named the attribute in its own message. Grouping cannot be done through the LOM
     at all - it is Ctrl+G in the GUI - and it inserts the group track into song.tracks, shifting
     every index after it (measured). Re-read the track list after any grouping; do not compute
     the new indices.
@@ -311,9 +311,10 @@
   status: verified
   proven: [get]
   doc: >-
-    The group this track belongs to, as a handle, or none when it is not grouped. Read- only - a
+    The group this track belongs to, as a handle, or none when it is not grouped. Read-only - a
     track cannot be moved into or out of a group by writing here, and that is a real LOM gap,
-    not a missing catalog row (docs/limits.md). Grouping is a GUI action, and it renumbers every
+    not a missing catalog row (docs/limits.md). Measured 2026-09-19 against Live 12.4.6: lom_set
+    with a track handle answered not_settable. Grouping is a GUI action, and it renumbers every
     track index after the new group.
   params:
     - {name: track, kind: int, required: true}
@@ -643,9 +644,11 @@
   status: verified
   proven: [get]
   doc: >-
-    True for MIDI tracks. Read-only, and the guard that belongs in front of every notes_set:
-    writing notes into a clip on an audio track is not possible, and the failure should be
-    caught before the round trip.
+    True for MIDI tracks. Read-only, measured 2026-09-19 against Live 12.4.6 as not_settable, and the guard that belongs in front of every notes_set: writing
+    notes into a clip on an audio track is not possible, because the note methods belong to MIDI
+    clips alone in Ableton's published LOM documentation. No such write is on record here, so what
+    Live answers to one is not measured; the guard is worth keeping anyway, because checking this
+    costs nothing and the round trip does.
   params:
     - {name: track, kind: int, required: true}
 
@@ -755,14 +758,21 @@
       nothing is playing here. Correct and not a failure: with clip_trigger_quantization set
       to a bar, a read straight after firing still says -1
     "-2": >-
-      read on every track immediately after stop(), measured 2026-08-31 against Live 12.4.5.
-      The LOM calls this stopping; whether it differs from -1 in practice is not established
+      no clip is playing on this track. Measured 2026-09-16 against Live 12.4.5: the tracks
+      reading -2 were exactly those holding no clip in the fired scene, and the reading was
+      unchanged as the scene settled and again after a stop
   doc: >-
-    Index of the session clip currently playing on this track, or -1 when none is. Read- only.
-    This is the honest answer to "did the clip actually start" - with
-    song.clip_trigger_quantization set to a bar, a read straight after firing still shows -1 and
-    that is correct, not a failure. The -2 value is expected to mean the track is stopping; that
-    reading comes from the LOM and is not measured.
+    Index of the session clip currently playing on this track, -1 when none is, and -2 when the
+    track holds no clip in the fired scene. Read-only. This is the honest answer to "did the clip
+    actually start" - with song.clip_trigger_quantization set to a bar, a read straight after
+    firing still shows -1 and that is correct, not a failure. Measured 2026-09-16 against Live
+    12.4.5 on Ableton's "Patience" demo song: raw reads across the 15 tracks were
+    [2, 2, 2, 2, -2, -2, -2, -2, 2, -2, -2, -2, -2, -2, 2] while scene 2 was settling, identical
+    6 s later once settled, and identical again after song.stop_playing. The nine tracks reading
+    -2 were exactly the tracks holding no clip in the fired scene, so -2 is a standing state and
+    not a moment in a transition: it does not decay, it does not follow the transport, and it
+    survives a stop. Because the value outlives the transport, a count taken over it says nothing
+    about what is sounding now.
   params:
     - {name: track, kind: int, required: true}
 
@@ -976,8 +986,9 @@
     nothing. Expected to be a no-op when nothing is playing, which was not measured for an idle
     track - check track.playing_slot_index first. Call verified 2026-08-30 against Live 12.4.5:
     signature jump_in_running_session_clip(double). The precondition is a clip that is actually
-    playing, not merely triggered: playing_slot_index reads -2 while a clip waits for the
-    quantisation boundary and the jump then does nothing. With clip_trigger_quantization set to
+    playing, not merely triggered: a clip still waiting for the quantisation boundary has not
+    started, playing_slot_index reads -1 for it as that row's own means records, and the jump
+    then does nothing. With clip_trigger_quantization set to
     0 and the transport running, playing_slot_index read 0 and a jump of 2 moved
     playing_position from 0.797 to 3.077 - the 2 beats asked for, plus the 0.28 that playback
     alone explains between two round trips.
@@ -1016,8 +1027,9 @@
   proven: [get]
   doc: >-
     The device selected in this track's device chain, as a handle. Read-only from here;
-    song.view.select_device is the write side, and it needs an object the wire cannot currently
-    carry.
+    view.select_device is the write side, and the wire does carry the device: that row names it by
+    path and the script resolves it, and its call is verified there (2026-08-30 against Live
+    12.4.5). Nothing about a write to this path is measured; go through view.select_device.
   params:
     - {name: track, kind: int, required: true}
 
@@ -1477,13 +1489,15 @@
   status: verified
   proven: [get]
   doc: >-
-    The return's device chain, as handles. Measured asymmetry worth planning around: a return
-    device's parameters have been seen without display_value where the same device on a normal
-    track provides it - and without a display value there is no bisection, so a dB or Hz target
-    cannot be searched for on a return at all. The workaround that was measured to work: load
-    the same device on a helper track, find the raw value there, write that raw value here,
-    delete the helper track in a finally block. Whether lom_get suffers the same asymmetry is
-    not measured - it reads str_for_value() directly, so it may not.
+    The return's device chain, as handles. An asymmetry was once recorded here, that a return
+    device's parameters had been seen without display_value where the same device on a normal
+    track provided it, and it does not reproduce. Measured 2026-09-19 against Live 12.4.6: a
+    Reverb in return track A and a Reverb loaded onto an ordinary track answered the same
+    display_value for the same parameters, Predelay reading 2.5 on both, over the first four
+    parameters of each. The claim carried no date and no version, so what it was true of is not
+    known; it is not true of this one. If a display value does go missing on a return, the way
+    round it is still to load the same device on a helper track, find the raw value there, write
+    that raw value here, and delete the helper track in a finally block.
   params:
     - {name: ret, kind: int, required: true}
 
@@ -1953,8 +1967,9 @@
   proven: [get]
   doc: >-
     Every output destination the master will accept, as handles. Depends entirely on the audio
-    interface currently selected in Live's preferences, so it is machine-specific and cannot be
-    cached across sessions.
+    interface currently selected in Live's preferences, so it is machine-specific. That the list
+    survives an interface change is not measured here, which is the reason to read it again rather
+    than cache it across sessions.
 - id: master.output_sub_routing
   path: song.master_track.current_output_sub_routing
   access: [get, set, observe]

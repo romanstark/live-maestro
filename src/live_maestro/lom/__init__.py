@@ -1,16 +1,13 @@
 """The LOM layer: the path grammar, and the dynamic surface behind it.
 
-Two modules with two different characters.
-
-:mod:`~live_maestro.lom.paths` is the fixed half: the grammar of
-``docs/protocol.md`` §6, mirrored client-side. Pure string work, with no socket, no
-client import and no knowledge of Live. It lets a malformed path fail in a process where
-a traceback is free, rather than in the Live process, where an escaping ``IndexError``
-leaves a dead socket.
+:mod:`~live_maestro.lom.paths` is the fixed half: the grammar of ``docs/protocol.md``
+§6 mirrored client-side, pure string work with no socket, no client import and no
+knowledge of Live. A malformed path fails here, in a process where a traceback is free,
+rather than in the Live process, where an escaping ``IndexError`` leaves a dead socket.
 
 :mod:`~live_maestro.lom.introspect` is the dynamic half: what a loaded device actually
-exposes, which is knowable only at runtime and therefore cannot live in the catalog files
-(docs/architecture.md, 'the catalog'). It may call the client through a structural
+exposes, which is knowable only at runtime and therefore cannot live in the catalog
+files (docs/architecture.md, 'the catalog'). It may call the client through a structural
 protocol rather than an import, and it carries the measured diagnoses that keep a
 confusing answer from looking like an empty one, chiefly the plugin that reports nothing
 but ``Device On``.

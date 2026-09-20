@@ -74,7 +74,7 @@ Maestro reaches Live through three complementary routes ([docs/architecture.md](
 
 ## MCP Tools & Resources
 
-Maestro exposes **38 tools** and 4 resources over the Model Context Protocol (MCP):
+Maestro exposes **43 tools** and 4 resources over the Model Context Protocol (MCP):
 
 ### Intent Tools (Production Workflows)
 - **Session & Inspection:** `get_session`, `get_track`, `get_clip`, `get_devices`, `describe`
@@ -82,11 +82,34 @@ Maestro exposes **38 tools** and 4 resources over the Model Context Protocol (MC
 - **Clips & MIDI Notes:** `create_clip`, `delete_clip`, `write_clip_notes`, `read_clip_notes`, `quantize_clip`, `transpose_clip`
 - **Mixing & Automation:** `set_mix`, `write_automation`, `read_automation`, `clear_automation`
 - **Audio Measurement (Channel C):** `analyze_audio`
-- **Arrangement & Transport:** `arrange`, `set_locator`, `set_arrangement_time`, `play`, `stop`, `set_tempo`, `set_loop`
+- **Arrangement & Transport:** `arrange`, `set_locator`, `set_arrangement_time`, `play`, `stop`, `fire_scene`, `set_tempo`, `set_loop`
 - **Offline Projects (Channel B):** `als_read`, `als_write`
+- **Sound Matching:** `match_sound`, `sound_index_status`
+- **Transcription:** `transcribe_stem`
 
 ### Smart Path Discovery: `find_path`
 Looking up any of Live's 1,166 addressable paths by reading the whole catalog costs ~134,000 tokens. The `find_path` tool maps producer vocabulary (*"turn the bass down"*, *"filter cutoff"*, *"quantize swing"*) into the right mechanism and ranked catalog rows in ~1.5k tokens, distinguishing between fixed LOM rows, runtime device parameters, and impossible requests.
+
+### Finding a Sound: `find_sound`
+`find_path` answers which path serves an intent; `find_sound` answers which thing in Live's library could make a sound. It splits a phrase such as *"warm bass"* or *"dark cinematic strings"* into words, searches the browser for each one separately (the browser's own search matches one substring, spaces included, so the whole phrase finds nothing), and ranks the union by the preset's name and by the category its `uri` carries. Each candidate carries the argument block that loads it through `load_device`. Nothing is loaded, played or measured: the ranking reads the names Ableton gave these presets and says nothing about how any of them sounds.
+
+### Matching a Sound: `match_sound`
+`find_sound` reads names; `match_sound` reads audio. Hand it a stem, a loop or a one shot and it ranks the installed library by how close each item sounds to it, which is what a rebuild needs when the source carries no names at all.
+
+The comparison runs against the audio Ableton renders for its own browser previews, which sits beside the content under `Ableton Folder Info/Previews` and is ordinary Ogg Vorbis. That route exists because the direct one does not: Ableton's factory samples carry an `able` compression type, a same-size transform of the payload, and neither Python nor Max for Live inside Live's own process reads them. Both were measured against a running Live and the readings are in `measurements/spikes/`.
+
+The descriptor is pure Python with no third-party package: a 2048-point transform at 32 kHz reduced to 32 logarithmic bands, plus spectral centroid, rolloff, peakiness, onset rate, sustain fraction and crest factor. Level is removed on purpose, so a quiet recording and a loud one of the same sound match exactly; pitch is not matched.
+
+**Tell it what the instrument is.** Measured against the separated stems of a real song, ranked against the whole library: with the settings it ships with, a twenty second window, the top candidate shared the probe's family 1 time in 7; on one and a half second slices the same descriptor managed 6 of 20. A bass stem answers with drum kits and a guitar stem with pads. Given `instrument="bass"`, the same audio answers with basses, and `instrument="guitar"` answers with plucked guitars. **The order inside an answer is not reproducible either**: two windows of one stem share about one name in ten of their top ten, because the stem moves further from itself between windows than the whole candidate list is wide. Read it as a shortlist to audition, not a ranking, and see `measurements/spikes/spike-match-sound-window-dependence.json`. `drum_kit` and `drum_hit` are separate families, because a kit stem answered with five single hi-hats is a useless answer.
+
+Build the index by running `live-maestro-index`, which is installed alongside the server. It takes about a quarter of an hour, needs no network, and is not committed: it describes one machine's installed packs.
+
+**macOS only.** Decoding goes through `afconvert`, which ships with macOS, and the library is looked for in the macOS locations. On another system `match_sound` and `live-maestro-index` say so and every other tool is unaffected. What it cannot describe is behaviour per note, because a preview is the phrase Ableton chose rather than a note anyone played.
+
+### Notes out of Audio: `transcribe_stem`
+Hand it a separated stem and it returns notes in clip beats, or writes them straight into a Session clip. The transcriber is [basic-pitch](https://github.com/spotify/basic-pitch) (Apache 2.0), which runs in an environment of its own because it supports Python up to 3.11 while this server runs later; without that environment the tool answers `no_transcriber` and nothing else is affected.
+
+Against the MIDI a generator exported for the same five separated stems, with nothing tuned, the pitch content agreed between 93.7 and 96.2 percent. A transcriber reports what is in the signal, though, and one played note puts more than one thing there: an octave and a twelfth above a bass note are loud enough to look like notes. Those are removed where a lower, louder, simultaneous note explains them, which raised a guitar's agreement from 95.4 to 96.9 percent while taking it from 835 notes to 635 against an export of 580. `monophonic=True` is a separate step for a part played one note at a time; on a bass it takes 463 notes to 401, the median pitch from seven semitones above the export's to five, and the agreement from 92.0 to 93.2 percent. Bass stays the weakest case and the record says so. Recompute any of these with `scripts/eval_transcription.py`.
 
 ### Generic LOM Escape Hatches
 Direct, low-level access to the entire verified catalog surface:
@@ -108,7 +131,8 @@ Direct, low-level access to the entire verified catalog surface:
 
 A command sent to Live can be refused, clamped, or applied late, and a plain success reply shows none of that.
 
-- **Safe Dry-Run by Default:** Destructive and structural operations (`delete_track`, `delete_device`, `delete_clip`, `clear_automation`, `als_write`) require explicit `confirm=True`. Without confirmation, Maestro performs a safe dry run and reports exactly what would be removed or altered.
+- **Safe Dry-Run by Default:** Destructive and structural operations (`delete_track`, `delete_device`, `delete_clip`, `clear_automation`, `set_locator`, `als_write`, `transcribe_stem`'s write, and the load step of `load_device`) require explicit `confirm=True`. Without confirmation, Maestro performs a safe dry run and reports exactly what would be removed or altered.
+- **Three writes are destructive and are not gated**, because gating every note edit would make ordinary work unusable: `write_clip_notes` with its default `mode="replace"` discards every note in the target clip, and `quantize_clip` and `transpose_clip` rewrite one in place. All three are annotated as destructive so a client can ask, and `read_clip_notes` is how to look first. There is no undo through this server and the Live Object Model has no rollback.
 - **Read-Back Verification:** Parameter updates via `lom_set` read the stored value back from Live and report the exact state: `applied` (exact match), `clamped` (quantized or bounded by Live), or `not_observed` (deferred or asynchronous update).
 - **Change Baseline Checks:** Methods that modify material (note duplication, quantizing, loop doubling) measure baselines before dispatching and verify the resulting state one round trip later.
 - **Empirical LOM catalog:** Built on a catalog of 1,166 rows across 5 files, with 1,130 verified against a running Ableton Live, spanning the song and transport, tracks, clips, native devices, and the browser.
@@ -139,10 +163,10 @@ This finds your Ableton Live User Library, copies the Remote Script into it, and
 
 Then **quit Live completely and start it again**. Remote Scripts load only at startup: closing the set is not enough, and Live reports nothing either way.
 
-Check that it answers:
+Check that it answers by asking your assistant for `get_session`, which reports the script handshake. From a checkout there is also a shell form:
 
 ```bash
-python -m live_maestro.client ping
+.venv/bin/python -m live_maestro.client ping
 ```
 
 ### 4. Connect your AI assistant
@@ -179,13 +203,14 @@ The installer places `LiveMaestro Analyzer` in your User Library, where Live's b
 
 Only `analyze_audio` uses it. Every other tool works without it, and without it that one tool says so and names these steps. Live does not reload a changed device, so after an update replace any copy already loaded in a set. Skip the device entirely with `live-maestro-install --no-device`.
 
-Three environment variables change where the server looks, and none of them is normally needed:
+Four environment variables change where the server looks, and none of them is normally needed:
 
 | Variable | Default | What it changes |
 |---|---|---|
 | `LIVE_MAESTRO_PORT` | `9878` | The TCP port the Remote Script listens on. Change it in the Remote Script too, or nothing answers. |
 | `LIVE_MAESTRO_HOST` | `127.0.0.1` | Where to look for Live. Loopback is the only arrangement this project has measured; the Remote Script speaks no authentication, so anything else is your own arrangement to secure. |
 | `LIVE_MAESTRO_ANALYZER_PORT` | `9882` | The UDP port the analyzer device listens on. Change it in the device too. |
+| `LIVE_MAESTRO_BASIC_PITCH_PYTHON` | unset | Interpreter of the environment holding `basic-pitch`, which only `transcribe_stem` needs. Unset, the usual places are looked at and the tool says how to make one if it finds nothing. |
 
 Open a project in Ableton Live and start by asking: *"What tracks are in this set?"*
 
@@ -237,7 +262,7 @@ pip install -e ".[dev]"
 python scripts/install_script.py
 ```
 
-The `[dev]` extra adds pytest, ruff and pyright, and is only needed for the tests and the linter. `scripts/install_script.py` is the same installer as `live-maestro-install` and takes the same flags: it calls `live_maestro.installer`, which ships inside the wheel so that a user with no checkout can run it.
+The `[dev]` extra adds pytest, ruff, pyright and pyrefly, which are the four CI gates, and is only needed for the tests and the checkers. `scripts/install_script.py` is the same installer as `live-maestro-install` and takes the same flags: it calls `live_maestro.installer`, which ships inside the wheel so that a user with no checkout can run it.
 
 Point your MCP client at the checkout's interpreter while you work on it:
 

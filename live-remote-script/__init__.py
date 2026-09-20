@@ -1,21 +1,17 @@
 """Live Maestro: a generic Live Object Model bridge, running as a Remote Script.
 
-Runs inside Live's embedded Python runtime to provide a loopback TCP server (port 9878),
-path resolution across the Live Object Model, and seventeen protocol handlers.
+Runs inside Live's embedded Python runtime: a loopback TCP server on port 9878, path
+resolution across the Live Object Model, and the seventeen protocol handlers, which
+cover what a path cannot express (notes, envelopes, browser hierarchy, events, enum
+reflection).
 
-Core design rules:
-- Generic LOM bridge: protocol handlers implement capabilities unexpressible via pure
-  paths (notes, envelopes, browser hierarchy, events, and enum reflection).
-- Exception containment: all exceptions are caught and converted to structured error codes.
-- Safe path resolution: all indices are bounds-checked. A method is not reachable by path.
-- Non-blocking ping: answered immediately on client thread without dispatching to main thread.
-- Legacy note API refusal: blocks Clip.set_notes / remove_notes to prevent modal dialog locks.
-- Read-back verification: lom_set reads the written state back and reports it as
-  applied, clamped or not_observed.
-
-Runtime constraints:
-- Must run in Live's embedded interpreter (compatible with Python 2 and 3, no type
-  annotations, no f-strings).
+Rules the rest of this file holds to: every exception becomes a structured error code;
+every index is bounds-checked and no method is reachable by path; ``ping`` answers on
+the client thread without touching Live; Live's legacy ``Clip.set_notes`` and
+``remove_notes`` are refused because they open a modal dialog that blocks Live's main
+thread; ``lom_set`` reads the written state back and reports it as applied, clamped or
+not_observed. The interpreter is Live's own, so the code stays Python 2 and 3
+compatible: no type annotations, no f-strings.
 """
 
 from __future__ import absolute_import, print_function, unicode_literals
@@ -50,12 +46,12 @@ except ImportError:  # pragma: no cover - only reachable outside Live
 SCRIPT_NAME = "live-maestro"
 
 #: The package's version, carried as a literal because this file runs inside Live's
-#: own interpreter and cannot import the package. The two are kept in step by a test
-#: so that a handshake reporting a number below the installed package means one thing
-#: only: Live has not been restarted since the script was copied in. Comparing the
-#: file against the repo with ``python scripts/install_script.py --diff`` settles it
-#: outright, and a number is the glance rather than the proof.
-SCRIPT_VERSION = "0.1.1"
+#: own interpreter and cannot import the package. A test keeps the two in step, so a
+#: handshake reporting a number below the installed package means one thing only:
+#: Live has not been restarted since the script was copied in.
+#: ``python scripts/install_script.py --diff`` compares the file against the repo and
+#: settles it outright.
+SCRIPT_VERSION = "0.1.2"
 
 #: What protocol 1 means for a caller, the shapes it may rely on:
 #:
@@ -72,9 +68,11 @@ SCRIPT_VERSION = "0.1.1"
 #:   so "how many tracks are there" is one call and not a probe loop
 #:   (protocol §5.6).
 #: * ``browser_walk`` entries carry ``kind``, query matches carry ``match_rank``
-#:   and come back ranked rather than in discovery order, and a walk that ran
-#:   out of budget says which one stopped it in ``truncated_by``
-#:   (protocol §5.10).
+#:   and come back ranked rather than in discovery order, a walk that ran out
+#:   of budget says which one stopped it in ``truncated_by``, and every reply
+#:   carries ``status``: ``complete`` only when the walk covered everything it
+#:   was asked to cover, so an empty answer under it means the item is not
+#:   there (protocol §5.10).
 #:
 #: Results are objects so that they can gain a field without the version moving.
 #: Only a changed or removed field is a break (protocol §4). Branch on
@@ -126,9 +124,9 @@ RECV_CHUNK = 8192
 #: buffer is dropped and the client is told.
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 
-#: Why this script never touches Live's legacy note API (``Clip.set_notes`` and
+#: Why this script never calls Live's legacy note API (``Clip.set_notes`` and
 #: ``Clip.remove_notes``, the pair Ableton deprecated in favour of the Live 11
-#: extended calls), in the words the caller gets.
+#: extended calls).
 #:
 #: Measured 2026-08-29 against Live 12.4.5: calling ``clip.set_notes`` or
 #: ``clip.remove_notes`` from a Remote Script makes Live open a modal dialog:
@@ -136,21 +134,17 @@ MAX_REQUEST_BYTES = 8 * 1024 * 1024
 #: Modifizieren von MIDI-Noten... MPE, Probability, Velocity Deviation und
 #: Release Velocity... Soll das Skript fortfahren?" with Continue and Decline
 #: buttons. That dialog blocks Live's main thread until a human clicks it, and
-#: every queued request stalls behind it: in an automated server it is a total
+#: every queued request stalls behind it: in an automated server that is an
 #: outage, not a deprecation warning. The same API also silently discards MPE,
-#: probability, velocity_deviation and release_velocity.
+#: probability, velocity_deviation and release_velocity. There is no fallback to
+#: it: Live 11 or later is a requirement, and an older build is told so.
 #:
-#: So there is no fallback to it, not even "just in case": a fallback that can
-#: freeze the host is not a safety net. Live 11 or later is a requirement, and a
-#: build without the modern calls is told exactly that.
-#:
-#: The three method names below are the ones Live has, and they are the ones the
-#: version guard tests for. ``Clip.set_notes_extended`` is the name the symmetry
-#: invites and it does not exist on Clip: read off a running Live 12.4.5 via
-#: ``lom_describe`` on 2026-08-29, and absent from the LOM
-#: documentation for every Live. Guarding on a method that does not exist would
-#: tell a Live 12 user their Live is older than 11. ``add_new_notes`` is the
-#: Live 11+ write call.
+#: The three method names below are the ones Live has, and the ones the version
+#: guard tests for. ``Clip.set_notes_extended`` is the name the symmetry invites
+#: and it does not exist on Clip (read off a running Live 12.4.5 via
+#: ``lom_describe`` on 2026-08-29, and absent from the LOM documentation for
+#: every Live), so guarding on it would tell a Live 12 user their Live is older
+#: than 11. ``add_new_notes`` is the Live 11+ write call.
 _MODERN_NOTE_API = "get_notes_extended, add_new_notes, remove_notes_extended"
 
 _LEGACY_NOTE_API_REFUSED = (
@@ -189,11 +183,10 @@ _NOTE_EXTENSION_FIELDS = ("probability", "velocity_deviation", "release_velocity
 # report ``__qualname__`` consistently across versions (not measured, and both
 # spellings are listed so either works).
 #
-# What is on the list is decided one entry at a time, and the reasoning sits
-# next to the entry. The hazards that keep something off the list are these:
-# a call that latches (a ``begin`` whose ``end`` may never arrive), a call
-# whose target this script cannot see (a modal dialog, a GUI selection), and a
-# call whose safety depends on a state rather than on its name.
+# Three hazards keep a method off the list: a call that latches (a ``begin``
+# whose ``end`` may never arrive), a call whose target this script cannot see (a
+# modal dialog, a GUI selection), and a call whose safety depends on a state
+# rather than on its name. The reason for each entry sits next to it.
 #
 # Deliberately off the list, with reasons:
 #
@@ -227,16 +220,11 @@ _NOTE_EXTENSION_FIELDS = ("probability", "velocity_deviation", "release_velocity
 #       at the bank getters in the list below.
 
 #   Application.press_current_dialog_button
-#       Clicks whatever modal dialog happens to be open. Unknowable target.
-#       It stays off the list even though a modal dialog is a measured hazard
-#       rather than a hypothetical one: on 2026-08-29 against Live 12.4.5,
-#       Live's legacy note API opened one that blocked Live's main thread
-#       until a human clicked it (``_LEGACY_NOTE_API_REFUSED``). The answer to
-#       that is to stop opening the dialog, not to teach the script to click
-#       away dialogs it cannot see. A blind click can accept "discard changes?"
-#       or a plugin's licence prompt just as easily as the one that is in the
-#       way. A dialog that wedges the server is a monitoring problem (``ping``
-#       still answers, and says so) and a human's job.
+#       Clicks whatever modal dialog happens to be open: an unknowable target.
+#       A blind click can accept "discard changes?" or a plugin's licence
+#       prompt just as easily as the dialog that is in the way. A dialog that
+#       wedges the server is a monitoring problem (``ping`` still answers, and
+#       says so) and a human's job.
 #   MixerDevice
 #       Has no methods worth calling: volume, panning, sends, cue_volume,
 #       crossfader and track_activator are all properties and are reachable by
@@ -673,7 +661,7 @@ def parse_path(path):
     """Split a path into ``[(name, index_or_None), ...]``, validating syntax.
 
     Raises :class:`LomError` with ``bad_path`` for anything the grammar of
-    protocol §6 does not allow — including a leading underscore, which would
+    protocol §6 does not allow, including a leading underscore, which would
     otherwise let a caller reach into a Live object's private internals.
     """
     if not isinstance(path, str):
@@ -714,9 +702,9 @@ def parse_path(path):
 def _track_guard_reason(obj, name):
     """Return why ``name`` is unavailable on this track, or ``None``.
 
-    Applied on every attribute read, so guards hold for ``lom_get``,
-    ``lom_set``, ``lom_describe`` and ``lom_batch`` alike — "anywhere you touch
-    tracks generically" (protocol §6 rule 4).
+    Applied on every attribute read, so the guards hold for ``lom_get``,
+    ``lom_set``, ``lom_describe`` and ``lom_batch`` alike (protocol §6 rule 4,
+    "anywhere you touch tracks generically").
     """
     try:
         if not hasattr(obj, "can_be_armed"):
@@ -838,10 +826,10 @@ def is_lom_collection(value):
     The LOM's collections are **not** Python lists. ``song.tracks`` is a
     ``Vector`` and ``browser.drums.children`` is a ``BrowserItemVector``; both
     answer ``len()`` and ``[i]``, and neither passes ``isinstance(value, (list,
-    tuple))``. That one wrong test is enough to make ``lom_describe`` report no
-    count for any collection and ``browser_walk`` refuse to recurse, and both
-    failures look like something else entirely — which is why the question has a
-    function of its own rather than an ``isinstance`` at each call site.
+    tuple))``. That one wrong test makes ``lom_describe`` report no count for any
+    collection and ``browser_walk`` refuse to recurse, and both failures look
+    like something else, so the question has a function of its own rather than
+    an ``isinstance`` at each call site.
     """
     if value is None or isinstance(value, (bool, int, float, str, bytes, dict)):
         return False
@@ -856,9 +844,9 @@ def is_lom_collection(value):
 def collection_length(value):
     """``len(value)`` for a collection, or ``None`` when it cannot be had.
 
-    ``None`` means *genuinely could not be determined* — some Live collections
-    raise on ``len`` instead of answering — and never "did not try". A caller
-    that sees ``null`` here knows the script asked and Live refused.
+    ``None`` means the length genuinely could not be determined (some Live
+    collections raise on ``len`` instead of answering), never "did not try". A
+    caller that sees ``null`` here knows the script asked and Live refused.
     """
     if value is None or isinstance(value, (str, bytes, dict)):
         return None
@@ -978,9 +966,9 @@ def _int_members(candidate):
 def _attribute_report(candidate):
     """Report every public attribute of ``candidate``, with its type and a short value.
 
-    The handler's answer when the int members do not tell the whole story. A
-    probe that says "this is not what I expected" and nothing else forces the
-    next guess to be blind, and a guess about this script costs a Live restart.
+    The handler's answer when the int members do not tell the whole story: a
+    probe that reports only "not what I expected" leaves the next guess blind,
+    and a guess about this script costs a Live restart.
     """
     report = {}
     for name in _public_names(candidate)[:_ATTRIBUTE_REPORT_CAP]:
@@ -1016,12 +1004,11 @@ def object_handle(value, path):
 def object_reference(value, path):
     """The ``before``/``after`` form of an object-valued property (§5.4, §7).
 
-    Same shape as :func:`object_handle`, with one difference that carries the
-    whole point: ``path`` is the path that names *the object*, not the property
-    it was read from, and it is present only when this script honestly knows
-    one. After a reference write that is the ``__path__`` the caller sent, and
-    only when the read-back proved the same object. Otherwise the reference is
-    reported by class and name, which is all that can be said about it.
+    Same shape as :func:`object_handle`, with one difference: ``path`` names
+    *the object*, not the property it was read from, and is present only when
+    this script knows one. After a reference write that is the ``__path__`` the
+    caller sent, and only when the read-back proved the same object. Otherwise
+    the reference is reported by class and name.
     """
     if value is None:
         return None
@@ -1094,8 +1081,8 @@ def parameter_display(param):
 
     Most parameter values are normalised, not physical: a filter cutoff of 0.5
     is not a frequency and a track volume of 0.85 is 0 dB (protocol §7). This
-    is the only route to the real unit, and VST2 plugins never provide one — no
-    amount of retrying changes that (measured).
+    is the only route to the real unit, and VST2 plugins never provide one, no
+    matter how often it is retried (measured).
 
     Only ever called with the parameter's *current* value; see the note on
     ``str_for_value`` in the allowlist header.
@@ -1217,12 +1204,11 @@ MAX_AUTOMATION_SAMPLES = 512
 #: ``_MAIN_THREAD_TIMEOUTS``), which is below the client's 20 s write timeout
 #: (protocol §8), so the loop gives up first and can say how far it got.
 #:
-#: A curve is written one ``insert_step`` at a time, because there is no bulk
-#: call in the Live API of 11 or 12, so a fine resolution over a long clip is
-#: thousands of main-thread calls, and stopping halfway leaves an audible,
-#: half-written envelope that the LOM cannot roll back. Reported as a bare
-#: timeout, that is indistinguishable from a write that never started: the
-#: silent-failure shape this project refuses
+#: A curve is written one ``insert_step`` at a time, because the Live API of 11
+#: and 12 has no bulk call, so a fine resolution over a long clip is thousands of
+#: main-thread calls and stopping halfway leaves an audible, half-written
+#: envelope that the LOM cannot roll back. Reported as a bare timeout, that is
+#: indistinguishable from a write that never started
 #: (docs/architecture.md, "Read-back as a principle").
 AUTOMATION_WRITE_TIME_BUDGET = 15.0
 
@@ -1299,8 +1285,8 @@ def clamp_parameter_value(param, value):
 def prepare_automation_points(param, points, default_mode, default_exponent):
     """Validate, clamp and sort the breakpoints of a curve.
 
-    Accepts ``{"time": t, "value": v}`` objects — optionally with their own
-    ``interpolation`` / ``exponent`` for the segment that starts at them — and
+    Accepts ``{"time": t, "value": v}`` objects, optionally with their own
+    ``interpolation`` / ``exponent`` for the segment that starts at them, and
     plain ``[time, value]`` pairs.
 
     More than ``MAX_AUTOMATION_STEPS`` incoming points is a rejection, not a
@@ -1464,33 +1450,31 @@ def name_suffix(text):
 
 
 def browser_kind(entry):
-    """What a browser entry *is*, as one of :data:`BROWSER_KINDS`.
+    """What a browser entry is, as one of :data:`BROWSER_KINDS`.
 
     Derived from ``is_folder`` / ``is_device`` / ``is_loadable`` and the file
     extension on the name or uri, in that order of authority:
 
-    1. ``is_folder`` — a folder is a folder whatever it is called;
-    2. a preset extension (``.adg``, ``.adv``) — **before** ``is_device``,
-       because Live reports a rack preset as a device and the difference is the
+    1. ``is_folder``: a folder is a folder whatever it is called;
+    2. a preset extension (``.adg``, ``.adv``), **before** ``is_device``, because
+       Live reports a rack preset as a device and telling those apart is the
        whole point of this function;
-    3. an audio extension — a sample;
-    4. ``is_device`` — a real device;
-    5. ``is_loadable`` — loadable, unclassifiable: ``other``;
-    6. anything with children — a container, so ``folder``. This is what
-       catches the browser roots, which report ``is_folder=False`` and
-       ``is_loadable=False`` (measured 2026-08-29 against Live 12.4.5) and
-       would otherwise read as ``unknown``.
+    3. an audio extension: a sample;
+    4. ``is_device``: a real device;
+    5. ``is_loadable``: loadable but unclassifiable, so ``other``;
+    6. anything with children: a container, so ``folder``. This catches the
+       browser roots, which report ``is_folder=False`` and ``is_loadable=False``
+       (measured 2026-08-29 against Live 12.4.5) and would otherwise read as
+       ``unknown``.
 
-    Measured 2026-08-29 against Live 12.4.5, and the reason this exists:
-    searching root "drums" for "808 Boom" answered with ``Kick 808 Boom Eb.wav``
-    — a *sample*, which loads as an ``OriginalSimpler`` — and never with the
-    ``808 Boom Kit.adg`` rack preset, which loads as a ``DrumGroupDevice`` and
-    is what a human asking for "808 Boom" means. Nothing in the reply said
-    which was which, so the caller could not have told either.
+    Measured 2026-08-29 against Live 12.4.5: searching root "drums" for "808
+    Boom" answers with ``Kick 808 Boom Eb.wav``, a sample that loads as an
+    ``OriginalSimpler``, and never with the ``808 Boom Kit.adg`` rack preset,
+    which loads as a ``DrumGroupDevice`` and is what a human asking for "808
+    Boom" means.
 
-    Steps 2 and 3 are the derivation; what Live reports in ``is_device`` for a
-    ``.adg`` on this installation is **unverified**, and this function is
-    deliberately arranged so that it does not matter.
+    What Live reports in ``is_device`` for a ``.adg`` on this installation is
+    **unverified**; steps 2 and 3 are arranged so that it does not matter.
     """
     if entry.get("is_folder") is True:
         return "folder"
@@ -1515,14 +1499,13 @@ def match_rank(name, needle):
     ``2`` it starts with the query; ``3`` the query starts at a word boundary
     inside it; ``4`` the query is in there somewhere; ``5`` it is not.
 
-    Ranking is what makes a query answerable. A plain substring search puts
-    ``Kick 808 Boom Eb.wav`` and ``808 Boom Kit.adg`` on equal footing and
-    returns whichever the walk reaches first, which is the sample (measured
-    2026-08-29 against Live 12.4.5), where a human asking for "808 Boom" means
-    the rack preset. Under these ranks that query makes the
-    preset a prefix match (2) and the sample a word-boundary match (3), so the
-    preset comes first, and "808 Boom Kit" scores 1 against ``808 Boom
-    Kit.adg``, an all-but-exact hit.
+    A plain substring search puts ``Kick 808 Boom Eb.wav`` and ``808 Boom
+    Kit.adg`` on equal footing and returns whichever the walk reaches first,
+    which is the sample (measured 2026-08-29 against Live 12.4.5), where a human
+    asking for "808 Boom" means the rack preset. Under these ranks that query
+    makes the preset a prefix match (2) and the sample a word-boundary match
+    (3), so the preset comes first, and "808 Boom Kit" scores 1 against ``808
+    Boom Kit.adg``.
 
     ``needle`` arrives lower-cased and stripped.
     """
@@ -1548,17 +1531,16 @@ def match_rank(name, needle):
 class WalkBudget(object):
     """The shared node and time budget of one browser walk (protocol §5.10).
 
-    The browser is a separate object graph of its own and a full walk is
-    enormous: measured 2026-08-29 against Live 12.4.5, ``audio_effects`` alone
-    has 60 children before a single folder is opened, ``instruments`` 32 and
-    ``midi_effects`` 22 — and every one of those is a folder with its own tree.
+    The browser is a separate object graph and a full walk is enormous: measured
+    2026-08-29 against Live 12.4.5, ``audio_effects`` alone has 60 children
+    before a single folder is opened, ``instruments`` 32 and ``midi_effects``
+    22, and every one of those is a folder with its own tree.
 
     Two limits guard it and both are reported rather than swallowed: a node
     count, and a wall-clock deadline that keeps the handler inside its
-    main-thread budget (``_MAIN_THREAD_TIMEOUTS``, which is itself inside the
-    client's timeout — protocol §8). Which limit fired is kept, because
-    "truncated because the tree is huge" and "truncated because Live was slow"
-    are different problems.
+    main-thread budget (``_MAIN_THREAD_TIMEOUTS``, itself inside the client's
+    timeout, protocol §8). Which limit fired is kept, because "the tree is huge"
+    and "Live was slow" are different problems.
     """
 
     def __init__(self, nodes, seconds):
@@ -1590,6 +1572,63 @@ class WalkBudget(object):
         return None
 
 
+class WalkCoverage(object):
+    """How much of each root's subtree one browser walk actually covered.
+
+    A root is incomplete when its subtree was not walked to the depth the caller
+    asked for. Remembering which roots the walk yielded cannot answer that:
+    :meth:`LiveMaestro._browser_bfs` is breadth-first and puts every root on the
+    frontier at level 1, so every root is yielded within the first few nodes
+    whatever the budget is, and a walk that spent everything inside the first
+    root's tree would still count all of them reached.
+
+    The accounting is therefore per node, not per root visited. A node is
+    counted in when it joins the frontier and counted out only once it has been
+    examined and its own children are queued, so a root's counter returns to
+    zero exactly when nothing under it is still owed. A generator cannot hand a
+    value back to its caller, so this object is passed into the walk and read
+    off afterwards.
+    """
+
+    def __init__(self, root_names):
+        self._order = list(root_names)
+        self._pending = {}
+        for name in self._order:
+            self._pending[name] = 0
+
+    def push(self, root_name):
+        """Count one node of ``root_name`` onto the frontier."""
+        self._pending[root_name] = self._pending.get(root_name, 0) + 1
+
+    def pop(self, root_name):
+        """Count one node off again: examined, and its children queued."""
+        self._pending[root_name] = self._pending.get(root_name, 0) - 1
+
+    def incomplete_roots(self):
+        """The roots, in their own order, that still owe the walk work."""
+        return [name for name in self._order if self._pending.get(name, 0) > 0]
+
+    def complete(self):
+        """True when no root was left with work pending."""
+        return not self.incomplete_roots()
+
+
+def walk_status(budget, coverage):
+    """``"complete"`` or ``"incomplete"`` for one browser walk.
+
+    Gives every mode of ``browser_walk`` one definition of complete: nothing
+    truncated the walk, and no root was left with work pending. ``coverage``
+    is ``None`` for a mode that walks one named folder rather than the roots,
+    where there is no per-root question to ask and the budget is the whole of
+    the answer.
+    """
+    if budget.exhausted():
+        return "incomplete"
+    if coverage is not None and not coverage.complete():
+        return "incomplete"
+    return "complete"
+
+
 # --------------------------------------------------------------------------
 # The control surface
 # --------------------------------------------------------------------------
@@ -1618,9 +1657,8 @@ class LiveMaestro(ControlSurface):
     a LOM object at request time. ``ping`` touches none at all (§5.1),
     ``events_drain`` reads nothing but this script's own ring buffer, and
     ``script_info`` answers the Live version from a value cached in ``__init__``
-    on Live's own main thread — see ``_read_live_version``, which says why reading
-    it per request would be both unsafe and self-defeating. So none of the three
-    can block behind a busy Live, which is the entire reason they are there.
+    on Live's own main thread (see ``_read_live_version``). So none of the three
+    can block behind a busy Live, which is why they are there.
     """
 
     #: Main-thread budget per handler, in seconds. Every number here is strictly
@@ -1640,18 +1678,16 @@ class LiveMaestro(ControlSurface):
     #: tabled. See :meth:`_main_thread_timeout`.
     #:
     #: ``browser_walk`` is the exception. It is a read, so the client gives it
-    #: the ordinary 10 s, and §8 grants it no more: a per-handler allowance
-    #: large enough for a full tree (60 s, say) would mean tolerating a 45 s
-    #: block on Live's main thread, during which nothing else
-    #: in Live happens, and that is a worse outcome than a truncated walk. The
-    #: budget therefore has to be under 10.0. It sits at 9.0: the last second
-    #: available without breaking the invariant, because the browser needs every
-    #: one of them (measured 2026-08-29 against Live 12.4.5, a query against the
-    #: ``instruments`` and ``sounds`` roots spent its whole budget without
-    #: examining a single item). The walk's own node and time budget
-    #: (``WalkBudget``, ``_BROWSER_TIME_BUDGET``) fires before even that, so a
-    #: big walk returns ``truncated: true`` with real results rather than an
-    #: error with none.
+    #: the ordinary 10 s and §8 grants it no more: an allowance large enough for
+    #: a full tree (60 s, say) would mean tolerating a 45 s block on Live's main
+    #: thread, during which nothing else in Live happens, which is worse than a
+    #: truncated walk. It sits at 9.0, the last second available under 10.0, and
+    #: the browser needs every one of them (measured 2026-08-29 against Live
+    #: 12.4.5, a query against the ``instruments`` and ``sounds`` roots spent its
+    #: whole budget without examining a single item). The walk's own node and
+    #: time budget (``WalkBudget``, ``_BROWSER_TIME_BUDGET``) fires before even
+    #: that, so a big walk returns ``truncated: true`` with real results rather
+    #: than an error with none.
     _MAIN_THREAD_TIMEOUTS = {
         "lom_get": 8.0,
         "lom_set": 8.0,
@@ -1697,10 +1733,8 @@ class LiveMaestro(ControlSurface):
 
     #: How many query matches are collected before they are ranked and cut down
     #: to the caller's ``limit``. Larger than the ``limit`` ceiling on purpose:
-    #: ranking cannot promote an answer the walk never reached, and the right
-    #: answer sitting behind a worse one is the failure ranking exists to
-    #: prevent. The node and time budgets remain the real ceiling on the
-    #: work.
+    #: ranking cannot promote an answer the walk never reached. The node and
+    #: time budgets remain the real ceiling on the work.
     _BROWSER_MATCH_POOL = 1000
 
     #: Ceiling on the breadth-first frontier. Breadth-first trades memory for
@@ -1722,20 +1756,17 @@ class LiveMaestro(ControlSurface):
 
         #: Process-local facts, captured here so that ``ping`` can answer
         #: without touching a single Live object (protocol §5.1). Live builds
-        #: the control surface on its own main thread, so this is where the
-        #: main thread's identity can be had for free, and knowing it is what
-        #: lets ``_run_on_main_thread`` tell "already there" from "could not get
-        #: there", which are two very different answers.
+        #: the control surface on its own main thread, so this is where the main
+        #: thread's identity can be had for free; ``_run_on_main_thread`` needs
+        #: it to tell "already there" from "could not get there".
         self._started_at = time.time()
         self._main_thread_id = threading.current_thread().ident
 
         #: The Live version, read exactly once, here, on Live's own main thread.
-        #: ``script_info`` answers on the client thread, and reading the version
-        #: from the LOM there would be an off-thread access that blocks whenever
-        #: the main thread is busy, which is when a caller asks
-        #: whether the script is alive. Live's version cannot change while this
-        #: process lives, so the cache costs nothing and takes the last LOM read
-        #: out of the two handlers that have to answer while Live is busy.
+        #: ``script_info`` answers on the client thread, where a LOM read would
+        #: block whenever the main thread is busy, which is exactly when a caller
+        #: asks whether the script is alive. Live's version cannot change while
+        #: this process lives, so the cache costs nothing.
         self._live_version_cached = self._read_live_version()
 
         self.server = None
@@ -1853,8 +1884,7 @@ class LiveMaestro(ControlSurface):
         """The framing loop of protocol §2, exactly.
 
         There is no delimiter and no length prefix; the only message boundary
-        is "the buffer parses as JSON now". Two details are easy to get wrong
-        and expensive to debug, so both are spelled out here:
+        is "the buffer parses as JSON now". Two details carry that:
 
         * the UTF-8 decoder is **incremental**, because a multi-byte character
           split across a ``recv()`` boundary corrupts a buffer that decodes each
@@ -1936,19 +1966,16 @@ class LiveMaestro(ControlSurface):
     def _reply_to(self, request):
         """Exactly one reply object for one request, whatever happens.
 
-        :meth:`dispatch` already promises never to raise; this is the belt to
-        that pair of braces. On a strictly serial socket with no framing
-        (protocol §2, §3) a missing reply is not a failed request, it is a
-        stranded client: it waits out its whole timeout, closes the socket and
-        never learns why.
+        :meth:`dispatch` already promises never to raise, and this is the second
+        guard. On a strictly serial socket with no framing (protocol §2, §3) a
+        missing reply is not a failed request, it is a stranded client: it waits
+        out its whole timeout, closes the socket and never learns why.
 
         Measured 2026-08-29 against Live 12.4.5: a handler that runs inline on
         the client thread rather than through Live's main-thread queue has no
         timeout governing it at all, and a task that blocks there leaves the
-        client with no reply whatsoever for the full 20 s of its own write
-        timeout. :meth:`_run_on_main_thread` refuses to take that route; this
-        method is the guarantee that no other one opens. Everything that leaves
-        here is a dict with a ``status``.
+        client with no reply for the full 20 s of its own write timeout.
+        Everything that leaves here is a dict with a ``status``.
         """
         try:
             reply = self.dispatch(request)
@@ -2041,26 +2068,23 @@ class LiveMaestro(ControlSurface):
 
         The LOM is not thread-safe, and even reads (``device.parameters``, clip
         envelopes) are unsafe off-thread. Live's API documents no thread-safety
-        anywhere, which is why *everything* that touches it is scheduled rather
-        than a chosen few (not measured per property, and not a distinction
-        worth discovering at a user's expense).
+        anywhere, so everything that touches it is scheduled, not a chosen few
+        (not measured per property).
 
-        Every exit from here is a result or a :class:`LomError`, and
-        :meth:`dispatch` turns the latter into a structured reply. That is
-        load-bearing, and it is why there is no "if scheduling fails, just run
-        it here" fallback: on the client thread the queue timeout below governs
-        nothing, so a blocked LOM call blocks forever and nothing is ever sent —
-        measured 2026-08-29 against Live 12.4.5, the client waits out its full
-        20 s write timeout and learns nothing.
+        Every exit from here is a result or a :class:`LomError`, which
+        :meth:`dispatch` turns into a structured reply. There is no "if
+        scheduling fails, run it here" fallback: on the client thread the queue
+        timeout below governs nothing, so a blocked LOM call blocks forever and
+        nothing is ever sent (measured 2026-08-29 against Live 12.4.5, the
+        client waits out its full 20 s write timeout and learns nothing).
 
-        So: being already on Live's main thread is recognised by thread identity
-        rather than guessed from an exception, and a scheduling failure is an
-        error the caller is told about rather than a silent, unbounded,
-        off-thread LOM call.
+        Being already on Live's main thread is therefore recognised by thread
+        identity rather than guessed from an exception, and a scheduling failure
+        is an error the caller is told about.
         """
         if threading.current_thread().ident == self._main_thread_id:
-            # Already on Live's main thread — a re-entrant call, or Live calling
-            # in directly. Scheduling from here would deadlock: the task cannot
+            # Already on Live's main thread (a re-entrant call, or Live calling
+            # in directly). Scheduling from here would deadlock: the task cannot
             # run until this thread returns, and this thread is waiting for it.
             result = handler(params)
             if isinstance(result, DeferredReadBack):
@@ -2175,7 +2199,7 @@ class LiveMaestro(ControlSurface):
             return self._MAIN_THREAD_TIMEOUTS.get(
                 handler_name, self._DEFAULT_MAIN_THREAD_TIMEOUT)
         # A batch is one main-thread task, so its budget scales with the op
-        # count — but stays under the client's 20 s write timeout (protocol §8).
+        # count but stays under the client's 20 s write timeout (protocol §8).
         ops = params.get("ops")
         count = len(ops) if isinstance(ops, list) else 0
         return min(18.0, 4.0 + 0.4 * count)
@@ -2289,20 +2313,15 @@ class LiveMaestro(ControlSurface):
 
         Answering on the client thread is not enough by itself. Reading one Live
         property is what breaks a liveness check: measured 2026-08-29 against
-        Live 12.4.5, while Live's main thread holds the LOM lock — a modal
-        dialog is the everyday case — a read of ``song.current_song_time``
-        blocks, so the ping times out in exactly the situation a liveness check
-        exists for. A ping that only works when Live is idle answers a question
-        nobody asks.
+        Live 12.4.5, while Live's main thread holds the LOM lock (a modal dialog
+        is the everyday case) a read of ``song.current_song_time`` blocks, so
+        the ping times out in exactly the situation it exists for.
 
-        So everything reported here is process-local: this script's own version
-        and how long this process has been up. No attribute of any Live object,
-        no ``self._song_ref``, no ``self.application()``, and no main-thread
-        hop. Nothing may be added to this handler that does not hold to that
-        rule: the moment it reads one Live property it becomes a liveness check
-        that fails whenever liveness is in doubt.
-
-        ``script_info`` is the handler for anything that needs Live itself.
+        Everything reported here is therefore process-local: this script's own
+        version and how long this process has been up. No attribute of any Live
+        object, no ``self._song_ref``, no ``self.application()``, no main-thread
+        hop. Nothing may be added here that breaks that rule. ``script_info`` is
+        the handler for anything that needs Live itself.
         """
         return {
             "pong": True,
@@ -2340,11 +2359,10 @@ class LiveMaestro(ControlSurface):
         thread. Every later answer comes from ``self._live_version_cached``.
 
         Reading it per request would fail the way a LOM read in ``ping`` fails:
-        ``script_info`` is answered on the client thread on purpose - a handshake
-        that queues behind a busy Live is a handshake that fails at startup - and
-        a LOM read from that thread blocks behind Live's lock (measured
-        2026-08-29 against Live 12.4.5) and is unsafe besides. Nothing in this
-        method may be called from a client thread.
+        ``script_info`` is answered on the client thread, and a LOM read from
+        that thread blocks behind Live's lock (measured 2026-08-29 against Live
+        12.4.5) and is unsafe besides. Nothing in this method may be called from
+        a client thread.
         """
         try:
             application = self._root_object("app")
@@ -2397,74 +2415,31 @@ class LiveMaestro(ControlSurface):
         """Write a property and read it straight back (protocol §5.4).
 
         Live refuses an out-of-range value out loud and stores nothing (measured
-        2026-08-30 against Live 12.4.5), which is not the usual reason given for
-        reading back. What it does do silently is everything else: it snaps a
-        quantised value to the nearest step, applies some writes late enough that
-        the first read is stale, ignores an unknown property name, and reports
-        success for a write that did nothing. That is why a bridge which only
-        forwards writes cannot be trusted. So the answer never says only
-        "success": it says what was asked for, what was there, what is there now,
-        whether Live clamped it and whether anything changed at all.
+        2026-08-30 against Live 12.4.5). Everything else it does silently: snapping
+        a quantised value to a step, applying a write too late for the first read,
+        ignoring an unknown property name, reporting success for a write that did
+        nothing. So the answer reports request, before, after, clamp and change,
+        and what it proves is the stored value, never the audible effect (§10): a
+        parameter can be exactly right and do nothing because the device is off.
 
-        What the read-back proves is the *stored value*, never the audible
-        effect (protocol §10). A parameter can be exactly right and do nothing
-        because the device is off.
+        ``value`` may be ``{"__path__": "<path>"}``, the form ``lom_call`` arguments
+        use (§5.5). ``song.view.selected_track``, ``selected_scene``, ``detail_clip``,
+        ``browser.hotswap_target`` and ``clip.groove`` hold a Live object and refuse a
+        bare value with ``not_settable: "Track is a Live object, not a value"``
+        (measured 2026-08-29 against Live 12.4.5); see :meth:`_set_object_reference`.
 
-        **Object references.** ``value`` may also be ``{"__path__": "<path>"}``
-        — the same form ``lom_call`` arguments use (protocol §5.5), resolved
-        through the same resolver with the same guards. Several real LOM
-        properties take a Live object rather than a value:
-        ``song.view.selected_track``, ``song.view.selected_scene``,
-        ``song.view.detail_clip``, ``browser.hotswap_target`` and
-        ``clip.groove``. Without that form none of them can be written at all:
-        a bare value gives ``not_settable: "Track is a Live object, not a
-        value"`` (measured 2026-08-29 against Live 12.4.5).
-
-        For such a property the read-back still happens and still matters, but
-        it proves something different: **the reference, not a value**. ``after``
-        carries the path of the object the property now holds, and ``changed``
-        compares object identity rather than ``==``. See
-        :meth:`_set_object_reference`.
-
-        **The read-back is not always synchronous, and a stale reading must not
-        be reported as a clamp.** Measured 2026-08-29 against Live 12.4.5 on
-        ``song.current_song_time``, transport stopped, starting value 4.0::
-
-            set 8.0  ->  after=4.0  clamped=true  changed=false  (4.0 was before)
-            set 1.0  ->  after=8.0  clamped=true  changed=false  (8.0 was the
-                                                                  previous request)
-
-        The write lands (a later read shows 8.0) but Live applies it once the
-        current main-thread task finishes, so a read-back taken inside that same
-        task sees the value from before. Calling that a clamp would be false:
-        nothing was clamped, the answer was taken too early.
-
-        So three outcomes are told apart, and ``read_back`` names which one
-        happened:
-
-        ``applied``
-            ``after`` equals what was requested. The value is stored.
-        ``clamped``
-            ``after`` is neither the requested value nor the previous one, so
-            **Live** put that number there. A real clamp, and ``clamped`` is
-            true only here.
-        ``not_observed``
-            ``after`` still equals ``before``. Either Live clamped to the value
-            that was already stored, or the write has not been applied yet -
-            and from inside the writing task those are indistinguishable. One
-            bounded second read is taken a main-thread tick later
-            (:class:`DeferredReadBack`); if it shows the requested value the
-            answer becomes ``applied``, and if it still does not, both readings
-            are reported and ``clamped`` stays **false**. Guessing "clamped"
-            here would be a wrong answer; "not observed" is a true one.
-
-        Which properties are asynchronous is not something the LOM documents.
-        ``song.current_song_time`` is the measured one, and it should be read as
-        an example of a class rather than as a special case: transport and
-        playback position, anything Live recomputes on its own clock, and
-        properties whose setter Live defers to the end of the current task all
-        behave this way. Any property can be in that class; ``read_back`` is how
-        a caller finds out without having to know in advance.
+        ``read_back`` is ``applied`` when ``after`` equals the request, ``clamped``
+        when it is neither the request nor the previous value (only then is
+        ``clamped`` true), and ``not_observed`` when ``after`` still equals
+        ``before``: a clamp to the value already stored, or a write not applied yet.
+        Measured 2026-08-29 against Live 12.4.5 on ``song.current_song_time``,
+        transport stopped, 4.0 stored: ``set 8.0`` read back 4.0 and ``set 1.0`` read
+        back 8.0, because Live applies the write once the current main-thread task
+        ends. A bounded second read a tick later (:class:`DeferredReadBack`) settles
+        it; if it still shows no change both readings are reported and ``clamped``
+        stays false. Transport and playback position, anything Live recomputes on its
+        own clock, and any property whose setter Live defers to the end of the current
+        task behave this way, and any other property may.
         """
         path = params.get("path")
         if "value" not in params:
@@ -2614,7 +2589,7 @@ class LiveMaestro(ControlSurface):
         is bounds-checked, it rejects private attributes, it resolves objects
         only and it never calls anything on the way.
 
-        The read-back is what ``lom_set`` is for and it still happens — but for
+        The read-back is what ``lom_set`` is for and it still happens, but for
         an object property **it proves the reference, not a value**. ``after``
         carries the path of the object the property now holds, ``changed``
         compares object identity, and ``clamped`` says whether Live actually
@@ -2793,11 +2768,10 @@ class LiveMaestro(ControlSurface):
     def _handle_lom_describe(self, params):
         """Introspect a live object (protocol §5.6).
 
-        This is how the *dynamic surface* is reached — the parameters a loaded
-        plugin happens to expose, which cannot be known when the catalog is
-        written. A VST that reports only ``Device On`` has nothing taken into
-        Live's parameter strip via ``Configure``. That limit is in Live, not
-        here (measured).
+        This is how the dynamic surface is reached: the parameters a loaded plugin
+        happens to expose, which cannot be known when the catalog is written. A VST
+        that reports only ``Device On`` has nothing taken into Live's parameter
+        strip via ``Configure``. That limit is in Live, not here (measured).
 
         ``settable`` is ``true``/``false`` only when Python can tell. Live's
         objects expose C-level descriptors that accept ``__set__`` and raise at
@@ -2807,7 +2781,7 @@ class LiveMaestro(ControlSurface):
         Every child that is a LOM collection carries a real ``count``, which is
         what makes "how many tracks are there" a single round trip instead of a
         probe loop up the indices until ``index_out_of_range``. A ``count`` of
-        ``null`` means Live refused to say — it is never the default.
+        ``null`` means Live refused to say; it is never the default.
         """
         path = params.get("path")
         depth = params.get("depth", 1)
@@ -2979,8 +2953,7 @@ class LiveMaestro(ControlSurface):
         ``atomic`` is advisory and defaults to ``false``. The LOM has no
         transaction, so a failing op cannot roll back the ops before it. With
         ``atomic: true`` the script stops at the first error and the rest report
-        ``skipped`` — nothing is undone either way. Do not present a batch as
-        transactional.
+        ``skipped``; nothing is undone either way. A batch is not transactional.
         """
         ops = params.get("ops")
         if not isinstance(ops, list):
@@ -3059,32 +3032,27 @@ class LiveMaestro(ControlSurface):
     def _notes_from_clip(self, clip, from_time=None, time_span=None):
         """Read a clip's notes, or one time window of them. Returns ``(notes, api)``.
 
-        ``from_time`` and ``time_span`` are clip-local beats and default to the
-        whole clip. ``time_span`` is a length, not an end beat: the extended API
-        takes it that way and this passes it straight through.
+        ``from_time`` and ``time_span`` are clip-local beats and default to the whole
+        clip. ``time_span`` is a length, not an end beat: the extended API takes it
+        that way and this passes it straight through. It has taken a pitch and time
+        window since Live 9, so the window is available on every Live this supports. A whole-clip read is expensive
+        (measured 2026-08-30: one drum clip came back as 384 notes and 57k
+        characters), which is what the window is for.
 
-        The window keeps a narrow question narrow. ``get_notes_extended`` has
-        taken a pitch and time window since Live 9, and a whole-clip read is
-        expensive: measured 2026-08-30, one drum clip came back as 384 notes and
-        57k characters.
+        Only the extended API is used, so ``api_used`` is always ``"extended"``; it
+        stays in the reply so that an old log still says which API answered. There is
+        no fallback to Live's legacy ``clip.get_notes``, which is dangerous and not
+        merely lossy: see ``_LEGACY_NOTE_API_REFUSED``.
 
-        The extended API is the only one used, and ``api_used`` is therefore
-        always ``"extended"`` — it stays in the reply because a caller reading
-        an old log should be able to see which API answered.
-
-        There is no fallback to Live's legacy ``clip.get_notes``. It is not
-        merely lossy, it is dangerous: see ``_LEGACY_NOTE_API_REFUSED``.
-
-        Argument order, which is **not** the same in the two APIs and is easy to
-        swap by accident (read from the LOM, and the call below matches it):
+        Argument order is not the same in the two APIs and is easy to swap by
+        accident (read from the LOM; the call below matches the first)::
 
             get_notes_extended(from_pitch, pitch_span, from_time, time_span)
             get_notes(from_time, from_pitch, time_span, pitch_span)
 
         The Live 11+ extension fields (``probability``, ``velocity_deviation``,
-        ``release_velocity``) are included only when Live actually provides
-        them, never invented as defaults — protocol §5.8. The MPE fields ride
-        along on the same rule.
+        ``release_velocity``) are included only when Live provides them, never
+        invented as defaults (protocol §5.8). The MPE fields follow the same rule.
         """
         getter = getattr(clip, "get_notes_extended", None)
         if getter is None:
@@ -3172,44 +3140,29 @@ class LiveMaestro(ControlSurface):
     def _handle_notes_set(self, params):
         """Replace or append a clip's notes in one handler call (protocol §5.8).
 
-        ``mode`` defaults to ``replace``, and replace is
-        ``remove_notes_extended`` followed by ``add_new_notes`` inside this one
-        call. Adding is the only write the LOM offers, so a second write
-        silently doubles a melody instead of correcting it — measured: 63 notes
-        in the clip, 23 written, 86 afterwards. Making replace the default and
-        doing the removal here is what turns "write these notes" into a real
-        read-modify-write; ``append`` stays available and has to be asked for by
-        name.
+        ``mode`` defaults to ``replace``: ``remove_notes_extended`` followed by
+        ``add_new_notes`` inside this one call. Adding is the only write the LOM
+        offers, so a second write doubles a melody instead of correcting it
+        (measured: 63 notes in the clip, 23 written, 86 afterwards). ``append`` has
+        to be asked for by name.
 
-        Atomic here means "one client call", not "one Live transaction": if the
-        write fails after the removal, the notes are gone. The LOM has no
-        rollback and this handler does not pretend otherwise.
+        Atomic here means one client call, not one Live transaction: if the write
+        fails after the removal, the notes are gone and the LOM has no rollback.
 
-        **The write call. Measured 2026-08-29 against Live 12.4.5** by reading
-        the clip's own method list through ``lom_describe``: ``Clip`` has
-        ``add_new_notes``, ``apply_note_modifications``, ``get_notes_extended``,
-        ``remove_notes_extended``, ``remove_notes_by_id`` and Live's legacy
-        ``set_notes`` / ``remove_notes`` — and it has **no**
-        ``set_notes_extended``, the name the symmetry with
-        ``get_notes_extended`` invites. Guarding on a method that does not exist
-        would tell a Live 12 user their Live is older than 11, so the version
-        guard tests for ``add_new_notes`` and ``remove_notes_extended``, which is
-        the real test for "Live 11 or later".
+        Measured 2026-08-29 against Live 12.4.5, reading the clip's method list
+        through ``lom_describe``: ``Clip`` has ``add_new_notes``,
+        ``apply_note_modifications``, ``get_notes_extended``,
+        ``remove_notes_extended``, ``remove_notes_by_id`` and the legacy
+        ``set_notes`` / ``remove_notes``, and no ``set_notes_extended``. The Live 11+
+        guard therefore tests ``add_new_notes`` and ``remove_notes_extended``: a
+        guard on a name that does not exist would tell a Live 12 user their Live is
+        older than 11. The legacy pair is never called, because it opens a modal
+        dialog that blocks Live's main thread (``_LEGACY_NOTE_API_REFUSED``).
 
-        There is no fallback to Live's legacy note API. Live answers
-        ``clip.set_notes`` / ``clip.remove_notes`` from a Remote Script with a
-        modal dialog that blocks its own main thread until a human clicks a
-        button, and every queued request stalls behind it (measured 2026-08-29
-        against Live 12.4.5). ``_LEGACY_NOTE_API_REFUSED`` says so to the
-        caller.
-
-        ``note_id`` may ride along on an incoming note — every note
-        ``notes_get`` returns carries one — and is **ignored**: ``add_new_notes``
-        allocates fresh ids, and there is no way to ask it for a particular one.
-        The result says so in ``ignored_fields`` rather than letting a caller
-        believe the ids round-tripped. Editing notes in place, by id, is what
-        ``Clip.apply_note_modifications`` is for; it is deliberately not wired
-        up here (see :meth:`_add_new_notes`).
+        A ``note_id`` on an incoming note (every note ``notes_get`` returns carries
+        one) is ignored: ``add_new_notes`` allocates fresh ids. The result says so in
+        ``ignored_fields``. Editing notes in place by id is what
+        ``Clip.apply_note_modifications`` is for, and it is not wired up here.
         """
         path = params.get("path")
         notes = params.get("notes")
@@ -3269,7 +3222,7 @@ class LiveMaestro(ControlSurface):
             except RuntimeError as exc:
                 raise LomError("live_error", str(exc), path=path)
 
-        # What the clip holds *now*, after the removal — the reference point for
+        # What the clip holds now, after the removal: the reference point for
         # "did a refused argument shape leave anything behind". In append mode
         # nothing was removed, so it is the count read a moment ago.
         baseline = self._count_notes(clip) if mode == "replace" else before_count
@@ -3307,49 +3260,29 @@ class LiveMaestro(ControlSurface):
     def _add_new_notes(self, clip, adder, validated, path, baseline):
         """Hand ``validated`` to ``Clip.add_new_notes``. Returns the shape used.
 
-        Returns ``(shape, dropped_fields, attempts)`` — the label of the
-        argument shape Live accepted, the extension fields that had to be
-        dropped to build it, and the labels of every shape refused before it.
+        Returns ``(shape, dropped_fields, attempts)``: the argument shape Live
+        accepted, the extension fields dropped to build it, and the labels of every
+        shape refused before it. The LOM documents ``add_new_notes(specification)``
+        as taking a ``MidiNoteSpecification`` "or a sequence of them" and no more,
+        and Live's bindings are not uniform about which sequences convert, so:
 
-        **Why there is more than one shape.** The LOM documents
-        ``add_new_notes(specification)`` as taking a
-        ``Live.Clip.MidiNoteSpecification`` "or a sequence of them", and that
-        sentence is the whole specification of the argument: it does not say
-        which sequence types convert, and Live's Boost.Python bindings are not
-        uniform about it across versions. Guessing one spelling and calling the
-        failure "Live's fault" would be a silent failure, so the shapes are
-        tried in order and the ones that failed are reported either way:
+        1. ``add_new_notes(tuple_of_MidiNoteSpecification)``, the documented sequence
+           form. Preferred: one call cannot land half a melody.
+        2. ``add_new_notes(spec)`` once per note, the documented single form.
+        3. ``add_new_notes(tuple_of_dicts)`` and 4. one dict per note, for a binding
+           that takes the field names but not the specification class. **Unverified**.
+        5. ``add_new_notes(tuple_of_5_tuples)``, ``(pitch, start_time, duration,
+           velocity, mute)``, the tuple the legacy ``set_notes`` took. Also
+           **unverified**, and last because it carries no extension fields.
 
-        1. ``add_new_notes(tuple_of_MidiNoteSpecification)`` — the documented
-           sequence form, one call for the whole list. Preferred: one call
-           cannot land half a melody.
-        2. ``add_new_notes(spec)`` once per note — the documented single form.
-        3. ``add_new_notes(tuple_of_dicts)`` and 4. one dict per note — a
-           defensive fallback for a binding that takes the field names but not
-           the specification class. **Unverified**: no Live is known to accept
-           it, and it costs one refused call to find out.
-        5. ``add_new_notes(tuple_of_5_tuples)`` — ``(pitch, start_time,
-           duration, velocity, mute)``, the tuple the legacy ``set_notes`` took.
-           Also **unverified** here, and last because it cannot carry the
-           extension fields at all.
+        If every shape is refused, the error names all of them with Live's own text
+        for each. A shape is retried only while nothing has landed: the clip is
+        counted between attempts, and if a per-note shape got notes in before failing
+        the handler stops and reports the clip partially written. No rollback here
+        either.
 
-        If every shape is refused the error names **all** of them with Live's
-        own text for each, because "add_new_notes did not work" is not an
-        actionable sentence and the next person to look at this needs to know
-        which spelling Live objected to and how.
-
-        **A shape is only retried while nothing has landed.** Between attempts
-        the clip is counted; if a per-note shape got some notes in before
-        failing, retrying another spelling would duplicate them, so the handler
-        stops and reports the clip as partially written — the same honesty
-        ``automation_write`` owes a half-drawn envelope. The LOM has no
-        rollback here either.
-
-        ``apply_note_modifications(notes)`` is the third write call Live offers
-        and is **not** used: it edits notes that already exist, matched by
-        ``note_id``, so it can change a velocity but never add or remove a note.
-        Wiring it up means a third ``mode`` and a wire-shape decision, and it is
-        untestable without a running Live.
+        ``apply_note_modifications(notes)`` is not used: it edits existing notes
+        matched by ``note_id``, so it can change a velocity but never add or remove.
         """
         if not validated:
             # Nothing to add. Calling add_new_notes with an empty sequence would
@@ -3436,12 +3369,12 @@ class LiveMaestro(ControlSurface):
     def _count_notes(self, clip):
         """How many notes the clip holds right now, or ``-1`` if it will not say.
 
-        Counts the vector without decoding a single note, because this runs
-        once before the write and once after every refused argument shape, and
-        the only question it answers is "did anything land". A read that itself
-        fails must not mask the write error being reported, hence the sentinel
-        rather than a raise — and ``-1`` means *unknown*, which the caller
-        treats as "a partial write cannot be ruled out", never as zero.
+        Counts the vector without decoding a single note, because this runs once
+        before the write and once after every refused argument shape, and the only
+        question it answers is "did anything land". A read that itself fails must
+        not mask the write error being reported, hence the sentinel rather than a
+        raise. ``-1`` means unknown, which the caller treats as "a partial write
+        cannot be ruled out", never as zero.
         """
         getter = getattr(clip, "get_notes_extended", None)
         if getter is None:
@@ -3455,11 +3388,10 @@ class LiveMaestro(ControlSurface):
     def _validate_note(self, note, position):
         """Coerce and bounds-check one incoming note object.
 
-        Only the fields this script writes are carried through. Anything else
-        an incoming note happens to hold — ``note_id`` above all, which every
-        note ``notes_get`` returns carries — is dropped here, so a
-        read-modify-write round trip cannot break the write path. ``notes_set``
-        reports the drop in ``ignored_fields``.
+        Only the fields this script writes are carried through. Anything else an
+        incoming note holds (``note_id`` above all, which every note ``notes_get``
+        returns carries) is dropped here, so a read-modify-write round trip cannot
+        break the write path. ``notes_set`` reports the drop in ``ignored_fields``.
         """
         if not isinstance(note, dict):
             raise LomError("type_error",
@@ -3504,21 +3436,20 @@ class LiveMaestro(ControlSurface):
     def _build_note_specs(self, validated):
         """Build ``MidiNoteSpecification`` objects. **Never raises.**
 
-        Returns ``(specs, dropped, unavailable)``: the specification objects,
-        the extension fields Live refused, and ``None``. On failure ``specs`` is
-        ``None`` and ``unavailable`` is a sentence saying why there are none —
-        :meth:`_add_new_notes` then falls through to the plain shapes and names
-        this reason in its error if those fail too. Raising here instead would
-        let one unusable constructor spelling kill the whole write with no other
-        spelling tried.
+        Returns ``(specs, dropped, unavailable)``: the specification objects, the
+        extension fields Live refused, and ``None``. On failure ``specs`` is
+        ``None`` and ``unavailable`` is a sentence saying why there are none, and
+        :meth:`_add_new_notes` falls through to the plain shapes and names this
+        reason in its error if those fail too. Raising here would let one unusable
+        constructor spelling kill the whole write with no other spelling tried.
 
         Three constructor spellings per note, because Live 11 introduced the
         extension fields and Live's Boost.Python classes are not uniform about
         keyword arguments across versions:
 
         1. keywords including the extension fields;
-        2. keywords with the five core fields only — the extras are reported as
-           ``dropped``, never invented as defaults (protocol §5.8);
+        2. keywords with the five core fields only, the extras reported as
+           ``dropped`` and never invented as defaults (protocol §5.8);
         3. positional core fields, for a binding that takes no keywords at all.
 
         Spelling 1 is the one Live 12.4.5 is expected to take. 2 and 3 are read
@@ -3579,11 +3510,11 @@ class LiveMaestro(ControlSurface):
     def _envelope(self, clip, param, create=False):
         """The clip's envelope for a parameter, optionally creating it.
 
-        ``clip.automation_envelope()`` returns ``None`` for Arrangement clips
-        and for parameters belonging to a different track — quoted from the LOM
-        and measured. The build order is therefore Session clip, notes,
-        automation, and only then duplicate into the Arrangement; envelopes are
-        part of the clip and travel with the copy.
+        ``clip.automation_envelope()`` returns ``None`` for Arrangement clips and
+        for parameters belonging to a different track (quoted from the LOM, and
+        measured). The build order is therefore Session clip, notes, automation,
+        and only then duplicate into the Arrangement; envelopes are part of the
+        clip and travel with the copy.
         """
         envelope = None
         try:
@@ -3628,10 +3559,10 @@ class LiveMaestro(ControlSurface):
         """Sample an envelope (protocol §5.9).
 
         Live cannot enumerate an envelope's breakpoints, so this samples
-        ``value_at_time`` and answers the three questions that matter: does a
-        curve exist, what is its range, and does it move at all. What it cannot
-        answer is where the breakpoints sit — for that the ``.als`` file is the
-        only source (docs/architecture.md, 'three channels into Live', channel B).
+        ``value_at_time`` and answers three questions: does a curve exist, what is
+        its range, and does it move at all. Where the breakpoints sit it cannot
+        answer; for that the ``.als`` file is the only source
+        (docs/architecture.md, 'three channels into Live', channel B).
 
         Sampling starts at ``READ_EPSILON`` rather than 0 unless the caller asks
         for a start explicitly: at ``time = 0`` Live returns the parameter's
@@ -3728,9 +3659,9 @@ class LiveMaestro(ControlSurface):
     def _handle_automation_write(self, params):
         """Write a curve into a Session clip's envelope (protocol §5.9).
 
-        Interpolation happens here, in the script, so two breakpoints plus a
-        mode describe a whole ramp — one request instead of a few hundred
-        pre-sampled points across a strictly serial socket.
+        Interpolation happens here, in the script, so two breakpoints plus a mode
+        describe a whole ramp: one request instead of a few hundred pre-sampled
+        points across a strictly serial socket.
 
         Everything is computed before Live is touched, so a rejected request
         can never leave a half-cleared envelope behind.
@@ -3740,7 +3671,7 @@ class LiveMaestro(ControlSurface):
         ``insert_step`` at a time, and a curve that stops halfway is a real,
         audible, half-written envelope which the LOM cannot roll back. So the
         loop carries its own deadline (``AUTOMATION_WRITE_TIME_BUDGET``, under
-        this handler's main-thread budget, under the client's — protocol §8) and
+        this handler's main-thread budget, under the client's, protocol §8) and
         every way out of it reports ``steps_written`` of ``steps_total``,
         ``partial: true`` and the beat range that did land. A partial curve that
         reported a bare timeout would be indistinguishable from no curve at all.
@@ -3863,9 +3794,8 @@ class LiveMaestro(ControlSurface):
     def _handle_automation_clear(self, params):
         """Clear one envelope, or every envelope of the clip.
 
-        With no ``parameter`` — or with ``all: true`` — the whole clip is
-        cleared via ``clear_all_envelopes``. There is no ``envelope.clear()``
-        in the LOM.
+        With no ``parameter``, or with ``all: true``, the whole clip is cleared
+        via ``clear_all_envelopes``. There is no ``envelope.clear()`` in the LOM.
         """
         path = params.get("path")
         clip, clip_path = self.resolve_clip(path)
@@ -3924,9 +3854,8 @@ class LiveMaestro(ControlSurface):
         """One browser item, in the shape §5.10 promises for *every* entry.
 
         ``name``, ``path``, ``uri``, ``is_folder``, ``is_device`` and
-        ``is_loadable`` are always present — ``null`` where this Live version
-        does not answer — so a caller never has to tell "key missing" from
-        "false".
+        ``is_loadable`` are always present, ``null`` where this Live version does
+        not answer, so a caller never has to tell "key missing" from "false".
 
         ``path`` is a real resolver path (``app.browser.instruments.children[6]``)
         and that is the whole point of the walk: a search result feeds straight
@@ -3938,9 +3867,9 @@ class LiveMaestro(ControlSurface):
         treat "unknown" as "empty" and stop there.
 
         ``kind`` is always present: one of :data:`BROWSER_KINDS`, derived by
-        :func:`browser_kind` from the flags above and the file extension. It is
-        on *every* entry, in every mode, so that a caller can filter client-side
-        as well — the handler's own ``kind`` filter only narrows a ``query``.
+        :func:`browser_kind` from the flags above and the file extension. It is on
+        every entry, in every mode, so that a caller can filter client-side too;
+        the handler's own ``kind`` filter only narrows a ``query``.
         """
         entry = {"path": path, "name": None, "uri": None, "is_folder": None,
                  "is_device": None, "is_loadable": None}
@@ -3987,15 +3916,15 @@ class LiveMaestro(ControlSurface):
                 total += self._browser_count(children)
         return total
 
-    def _browser_bfs(self, roots, depth, budget):
+    def _browser_bfs(self, roots, depth, budget, coverage):
         """Yield ``(root_name, item, path, level)`` breadth-first.
 
-        ``level`` counts from 1 at a root, and ``depth`` is how many levels may
-        be examined - so ``depth=1`` yields the roots and nothing else.
+        ``level`` counts from 1 at a root, and ``depth`` is how many levels may be
+        examined, so ``depth=1`` yields the roots and nothing else.
 
-        Breadth-first is about *budgets* here, not about ordering. Measured
-        2026-08-29 against Live 12.4.5, walking the same roots depth-first under
-        the same budgets::
+        Breadth-first is about budgets here, not ordering. Measured 2026-08-29
+        against Live 12.4.5, the same roots walked depth-first under the same
+        budgets::
 
             root=drums,       query="808 Boom",     depth=6  -> considered=6, 6 hits
             root=instruments, query="808 Boom Kit", depth=8  -> considered=0,
@@ -4004,132 +3933,70 @@ class LiveMaestro(ControlSurface):
                                                                 truncated=true
             root=packs,       same                           -> considered=1, FOUND
 
-        ``instruments`` has 32 children and every one of them is a folder with
-        its own tree. Depth-first, the entire budget goes into the first branch
-        and the walk never comes back up, so nothing at any level gets examined -
-        including the shallow items that would have answered the query. Level by
-        level, the same budget buys every candidate down to whatever depth it
-        reaches, and what it did not reach is reported rather than implied.
+        ``instruments`` has 32 children, each a folder with its own tree: depth-first
+        the budget goes into the first branch and nothing at any level gets examined.
+        Level by level, it buys every candidate down to the depth it reaches.
 
-        The budget is charged **per examined node**, once, here - so every
-        caller of this generator shares one accounting and ``considered`` can be
-        a real number. The frontier has a ceiling of its own
-        (``_BROWSER_MAX_FRONTIER``): a wide graph held level by level is a
-        memory cost inside Live's own process, and an unbounded one is not
-        acceptable there.
+        The budget is charged per examined node, once, here, so every caller shares
+        one accounting and ``considered`` is a real number; ``_BROWSER_MAX_FRONTIER``
+        caps the frontier, which costs memory inside Live's process. ``coverage``
+        (:class:`WalkCoverage`) counts a node in as it joins the frontier and out
+        once its children are queued, so what is pending at the end was not bought.
         """
         frontier = deque()
         for root_name, item, path in roots:
+            coverage.push(root_name)
             frontier.append((root_name, item, path, 1))
         while frontier:
             root_name, item, path, level = frontier.popleft()
             if not budget.spend():
+                # This node came off the frontier but was never examined, so it
+                # and everything under it stays pending against its root.
                 return
             yield root_name, item, path, level
             if level >= depth:
+                # Not a truncation: the caller asked for this many levels and
+                # got them, so this node owes the walk nothing.
+                coverage.pop(root_name)
                 continue
             if len(frontier) >= self._BROWSER_MAX_FRONTIER:
                 budget.hit_node_limit = True
+                # No pop here: this node's children were never queued, so its
+                # subtree is still owed.
                 continue
             for position, child in enumerate(self._browser_child_items(item)):
+                coverage.push(root_name)
                 frontier.append((root_name, child,
                                  "{0}.children[{1}]".format(path, position),
                                  level + 1))
+            coverage.pop(root_name)
 
     def _handle_browser_walk(self, params):
         """Walk, search or resolve in the browser's own object graph (§5.10).
 
-        Four shapes in one handler because they all share one walk:
+        Four shapes share one walk: ``uri`` resolves a single item; ``path``
+        navigates ``Folder/Subfolder`` by name below one root; ``query`` returns
+        every item whose name contains the substring, case-insensitively, ranked
+        best first; otherwise the roots are walked ``depth`` levels as a tree. Every
+        entry carries a resolver ``path`` that feeds back into ``lom_call`` as
+        ``{"__path__": ...}`` and a ``kind`` from :data:`BROWSER_KINDS`. ``kind`` as
+        a parameter narrows a ``query`` only: filtering a tree by kind deletes the
+        folders on the way to the answer.
 
-        * ``uri`` resolves a single item and reports where it sits;
-        * ``path`` navigates ``Folder/Subfolder`` by name below one root;
-        * ``query`` returns every item whose **name** contains the substring,
-          case-insensitively, as a flat match list, best match first;
-        * otherwise the roots are walked ``depth`` levels deep as a tree.
+        Measured 2026-08-29 against Live 12.4.5. An unranked search of root "drums"
+        for "808 Boom" answers ``Kick 808 Boom Eb.wav`` and never the ``808 Boom
+        Kit.adg`` rack preset a human means; ranked (:func:`match_rank`) the preset
+        comes first and every match carries its ``match_rank``. A walk built with
+        ``list(item.children)`` answers ``{"root": "drums", "depth": 3}`` with the
+        root alone: a ``BrowserItemVector`` answers ``len()`` and ``children[0]``
+        while ``list()`` fails on it, so every level goes through
+        :func:`sequence_items`.
 
-        Every entry carries a ``path`` the resolver understands, so a result
-        feeds straight back into ``lom_call`` with ``{"__path__": ...}`` — which
-        is how a device gets loaded. Every entry also carries ``kind``, one of
-        :data:`BROWSER_KINDS`, so the caller can tell a rack preset from a
-        sample before it loads one.
-
-        **Measured 2026-08-29 against Live 12.4.5:** an unranked, unlabelled
-        search of root "drums" for "808 Boom" answers with ``Kick 808 Boom
-        Eb.wav`` and never with ``808 Boom Kit.adg``. Loading the first gives an
-        ``OriginalSimpler``; the second is the ``DrumGroupDevice`` a human means
-        by "the 808 Boom kit". Both halves of that have to be answered:
-
-        * an entry has to say what it *is*, or neither the caller nor a human
-          reading the log can tell the sample from the preset. Every entry
-          reports ``kind``, and ``kind`` as a **parameter** — ``device`` |
-          ``preset`` | ``sample`` | ``folder`` | ``any`` (the default) — narrows
-          a ``query`` to one of them;
-        * matches have to be ranked. In discovery order a substring hit in the
-          middle of a sample's name outranks the prefix hit on the preset;
-          ranked (:func:`match_rank`), the preset comes first, and every match
-          carries its ``match_rank``.
-
-        The ``kind`` parameter narrows **``query`` only**. Filtering a tree by
-        kind would delete the folders on the way to the thing being looked for
-        and answer with nothing at all; a caller walking a tree filters the
-        reported ``kind`` itself, which is why it is on every entry.
-
-        Measured 2026-08-29 against Live 12.4.5: a walk that builds its levels
-        with ``list(item.children)`` answers ``{"root": "drums", "depth": 3}``
-        with exactly one item — the root itself — and ``depth`` has no effect
-        whatsoever. A ``BrowserItemVector`` answers ``len()`` and
-        ``children[0]`` perfectly well while ``list()`` fails on it, so one
-        failed call empties an entire level, and the recursion, gated on the
-        resulting ``child_count`` of 0, never happens. Every level goes through
-        :func:`sequence_items` instead.
-
-        The same measurement pinned down the shape of the graph, through the
-        generic resolver, which always worked:
-
-        * ``app.browser.drums`` is a ``BrowserItem`` named "Drums" with
-          ``is_folder=False`` and ``is_loadable=False`` — the roots are items,
-          not folders, and their content hangs off ``.children``;
-        * ``app.browser.drums.children[0]`` is "Drum Hits", ``is_folder=True``;
-        * ``instruments`` has 32 children ([6] "Drum Rack", [21] "Instrument
-          Rack", [25] "Sampler", [26] "Simpler", [31] "Wavetable"),
-          ``audio_effects`` 60 ([3] "Audio Effect Rack", [28] "EQ Eight", [37]
-          "Hybrid Reverb", [41] "Looper"), ``midi_effects`` 22 ([8] "MIDI Effect
-          Rack") — before a single folder is opened.
-
-        Which is why both limits are real and both are reported. The whole walk
-        shares one :class:`WalkBudget`: a node count and a wall-clock deadline
-        that expires inside this handler's main-thread budget, which is itself
-        inside the client's timeout (protocol §8). ``truncated`` says whether
-        either fired and ``truncated_by`` says which, because "the tree is huge"
-        and "Live was slow" are different problems.
-
-        **Measured 2026-08-29 against Live 12.4.5:** searched depth-first, a
-        query against the wide roots reaches nothing at all::
-
-            root=drums,       query="808 Boom",     depth=6  -> considered=6, 6 hits
-            root=instruments, query="808 Boom Kit", depth=8  -> considered=0,
-                                                                truncated=true
-            root=sounds,      same                           -> considered=0,
-                                                                truncated=true
-            root=packs,       same                           -> considered=1, FOUND
-
-        ``considered=0`` with ``truncated=true`` is a walk that spent its whole
-        budget without examining a single item: on a root with 32 folders under
-        it, a depth-first search pours the budget into the first branch and never
-        comes back up. Level by level (:meth:`_browser_bfs`) the same budget buys
-        every shallow candidate first, which is where the answer usually is, and
-        the uri lookup is breadth-first for the same reason.
-
-        The reporting has to match, or the caller cannot see any of this:
-        ``considered`` counts items **examined**, ``matched`` counts the hits and
-        ``depth_reached`` says how deep the budget carried the walk. A
-        ``considered`` that counted matches would say nothing at all about how
-        far a fruitless walk got, which is the one thing its caller needs.
-
-        The budgets are stacked to fit: 7.5 s for the walk inside 9.0 s for the
-        handler inside the client's 10 s read timeout, the last second available
-        without breaking that chain. Headroom is not the mechanism, though: a
-        bigger budget spent depth-first still descends one branch.
+        Budgets stack: 7.5 s for the walk inside 9.0 s for the handler inside the
+        client's 10 s read timeout (§8). ``truncated_by`` names the limit that fired;
+        ``considered`` counts items examined, never matches; ``unreached_roots``
+        names roots not fully searched, half-searched included; and ``status`` is
+        ``complete``, which alone licenses "not installed", when neither happened.
         """
         browser = self._browser()
         budget = WalkBudget(self._BROWSER_MAX_NODES, self._BROWSER_TIME_BUDGET)
@@ -4164,14 +4031,20 @@ class LiveMaestro(ControlSurface):
                         ", ".join(name for name, _i, _p in self._browser_roots(browser))))
 
         if uri:
+            coverage = WalkCoverage([name for name, _i, _p in roots])
             found = self._browser_find_uri(roots, str(uri),
-                                           self._BROWSER_MAX_DEPTH, budget)
+                                           self._BROWSER_MAX_DEPTH, budget, coverage)
             if found is not None:
                 found_root, entry, entry_path = found
+                # A hit answers the question and the walk stops on it on
+                # purpose, so the roots it never finished are not a gap in this
+                # answer.
                 return {"mode": "uri", "uri": uri, "found": True, "root": found_root,
                         "item": entry, "item_path": entry_path,
                         "budget_left": budget.nodes,
-                        "truncated": False, "truncated_by": None}
+                        "truncated": False, "truncated_by": None,
+                        "unreached_roots": [],
+                        "status": "complete"}
             # "Not found" and "gave up looking" are different answers, and a
             # caller that cannot tell them apart will conclude the item does not
             # exist. Hence truncated on a miss.
@@ -4179,7 +4052,9 @@ class LiveMaestro(ControlSurface):
                     "item_path": None,
                     "budget_left": budget.nodes,
                     "truncated": budget.exhausted(),
-                    "truncated_by": budget.reason()}
+                    "truncated_by": budget.reason(),
+                    "unreached_roots": coverage.incomplete_roots(),
+                    "status": walk_status(budget, coverage)}
 
         if sub_path:
             if len(roots) != 1:
@@ -4196,7 +4071,11 @@ class LiveMaestro(ControlSurface):
                     "count": self._browser_count(children),
                     "budget_left": budget.nodes,
                     "truncated": budget.exhausted(),
-                    "truncated_by": budget.reason()}
+                    "truncated_by": budget.reason(),
+                    # No ``unreached_roots`` here: this mode walks one named
+                    # folder rather than the roots, and ``status`` says whether
+                    # that folder was walked to the end.
+                    "status": walk_status(budget, None)}
 
         if query:
             needle = str(query).strip().lower()
@@ -4215,8 +4094,9 @@ class LiveMaestro(ControlSurface):
             # one - which is the failure ranking exists to prevent. The pool is
             # what the node and time budgets already guard.
             pool = max(limit, self._BROWSER_MATCH_POOL)
+            coverage = WalkCoverage([name for name, _i, _p in roots])
             candidates, considered, depth_reached = self._browser_search(
-                roots, needle, pool, search_depth, budget, kind)
+                roots, needle, pool, search_depth, budget, coverage, kind)
             # Stable: equal ranks keep discovery order, and a shorter name is
             # the more specific answer at the same rank.
             candidates.sort(key=lambda entry: (entry["match_rank"],
@@ -4234,6 +4114,18 @@ class LiveMaestro(ControlSurface):
                 truncated_by = "match_pool"
             else:
                 truncated_by = budget.reason()
+            unreached_roots = coverage.incomplete_roots()
+            # ``status`` is about the walk, never about the reply list, and
+            # ``walk_status`` is that one definition shared with the other three
+            # modes. ``limit`` cuts the ranked list after the walk has finished
+            # with it, so a search that examined every node it was asked to
+            # examine reads ``complete`` even when only the first few matches
+            # came back - and ``truncated``/``truncated_by`` still report the
+            # cut, so nothing is lost. A full ``match_pool`` really does stop
+            # the walk, and that shows up here through ``coverage``, which is
+            # left holding the roots the search abandoned.
+            status = walk_status(budget, coverage)
+
             return {"mode": "query", "query": query, "matches": matches,
                     "count": len(matches), "limit": limit, "depth": search_depth,
                     "kind": kind,
@@ -4250,8 +4142,31 @@ class LiveMaestro(ControlSurface):
                     "depth_reached": depth_reached,
                     "budget_left": budget.nodes,
                     "truncated": bool(truncated_by),
-                    "truncated_by": truncated_by}
+                    "truncated_by": truncated_by,
+                    # Roots whose subtree was NOT fully searched. That is not
+                    # "never looked at": a half searched root is named here
+                    # too, since the half that was skipped is where the answer
+                    # may be. Pass one back as ``root`` to search it on a
+                    # budget of its own.
+                    "unreached_roots": unreached_roots,
+                    # The only value that licenses "it is not installed":
+                    # nothing truncated the walk and every root was searched to
+                    # the end. Under ``complete``, ``matched`` is the exact
+                    # number of items in the browser whose name matches;
+                    # otherwise it is a lower bound. ``count`` is a lower bound
+                    # on ``matched`` whenever the list was cut, which
+                    # ``truncated_by`` says and ``status`` deliberately does
+                    # not.
+                    "status": status}
 
+        # Every root is owed from the start, so a budget that runs out part
+        # way through leaves the rest of them pending. This walk recurses
+        # through :meth:`_browser_children` rather than the breadth-first
+        # frontier, so its rule is necessarily per root; that can only over
+        # report incompleteness, never under report it.
+        coverage = WalkCoverage([name for name, _i, _p in roots])
+        for name, _i, _p in roots:
+            coverage.push(name)
         items = []
         for name, item, path in roots:
             if not budget.spend():
@@ -4263,12 +4178,16 @@ class LiveMaestro(ControlSurface):
                 if children:
                     entry["children"] = children
             items.append(entry)
+            if not budget.exhausted():
+                coverage.pop(name)
         return {"mode": "tree", "depth": depth, "items": items,
                 "count": self._browser_count(items),
                 "roots": [name for name, _i, _p in self._browser_roots(browser)],
                 "budget_left": budget.nodes,
                 "truncated": budget.exhausted(),
-                "truncated_by": budget.reason()}
+                "truncated_by": budget.reason(),
+                "unreached_roots": coverage.incomplete_roots(),
+                "status": walk_status(budget, coverage)}
 
     def _browser_children(self, item, path, depth, budget):
         """The children of one browser item, recursively, ``depth`` levels down.
@@ -4276,11 +4195,10 @@ class LiveMaestro(ControlSurface):
         ``depth`` counts levels **below** ``item``: 0 returns nothing, 1 the
         children, 2 the children and their children.
 
-        The recursion is **not** gated on ``child_count``. A collection that
-        will not answer ``len()`` reports 0, and treating that as empty makes a
-        whole subtree vanish with nothing to say so — which is how ``depth``
-        comes to look as though it were ignored (measured 2026-08-29 against
-        Live 12.4.5).
+        The recursion is **not** gated on ``child_count``. A collection that will
+        not answer ``len()`` reports 0, and treating that as empty makes a whole
+        subtree vanish with nothing to say so, which is how ``depth`` comes to look
+        as though it were ignored (measured 2026-08-29 against Live 12.4.5).
         """
         children = []
         if depth <= 0:
@@ -4320,18 +4238,22 @@ class LiveMaestro(ControlSurface):
             item, path = found
         return item, path
 
-    def _browser_find_uri(self, roots, uri, depth, budget):
+    def _browser_find_uri(self, roots, uri, depth, budget, coverage):
         """The one item with this ``uri``, as ``(root_name, entry, path)``.
 
-        ``None`` when it was not reached — which is not the same as "it does not
+        ``None`` when it was not reached, which is not the same as "it does not
         exist", and the caller reports ``truncated`` for exactly that reason.
 
         Breadth-first over every root at once. Depth-first per root would make a
         uri sitting two levels down under the *second* root unreachable whenever
         the first root's tree is big enough to eat the budget, and a uri lookup
         is the one call that is supposed to be cheap.
+
+        ``coverage`` is filled by the walk itself; a caller that got ``None``
+        reads the roots it never finished off it.
         """
-        for root_name, item, path, _level in self._browser_bfs(roots, depth, budget):
+        for root_name, item, path, _level in self._browser_bfs(roots, depth, budget,
+                                                               coverage):
             try:
                 if str(getattr(item, "uri", None)) == uri:
                     return root_name, self._browser_entry(item, path), path
@@ -4339,45 +4261,37 @@ class LiveMaestro(ControlSurface):
                 pass
         return None
 
-    def _browser_search(self, roots, needle, pool, depth, budget, kind="any"):
+    def _browser_search(self, roots, needle, pool, depth, budget, coverage,
+                        kind="any"):
         """Every item whose name contains ``needle``, case-insensitively.
 
-        Returns ``(matches, considered, depth_reached)``.
+        Returns ``(matches, considered, depth_reached)``. ``needle`` arrives already
+        lowered and stripped. Matching is on the name only: a uri match is what the
+        ``uri`` mode is for, and a folder matches on its own name like anything
+        else, so "reverb" finds the folder as well as the devices inside it.
 
-        ``needle`` arrives already lowered and stripped. Matching is on the name
-        only: a uri match is what the ``uri`` mode is for, and folders match on
-        their own name like anything else, so "reverb" finds the folder as well
-        as the devices inside it.
+        ``kind`` drops entries of another kind before they take a slot in the pool,
+        since filtering afterwards would throw away the budget the search needs; it
+        never stops the walk, because a folder is not a preset and the presets are
+        inside the folders. Every match carries ``match_rank`` (:func:`match_rank`)
+        so that :meth:`_handle_browser_walk` can sort the pool before cutting it
+        down to ``limit``; rank ``5``, no name match, is never appended.
 
-        Four properties of this search, none of them optional:
+        The walk is breadth-first (:meth:`_browser_bfs`), so the budget is spent on
+        candidates across the whole graph rather than on one branch of one root.
+        ``considered`` is the number of items examined, as protocol §5.10 promises,
+        and never the number of matches: it is the only evidence a caller has for
+        how far a truncated walk got.
 
-        * ``kind`` drops entries that are not the kind the caller asked for
-          **before** they take a slot in the pool — filtering afterwards would
-          throw away exactly the budget the search needs. It never stops the
-          walk, though: a folder is not a preset, and the presets are inside the
-          folders.
-        * every match carries ``match_rank`` (:func:`match_rank`), so the caller
-          in :meth:`_handle_browser_walk` can sort the pool before cutting it
-          down to ``limit``. ``5`` — no name match — is never appended; it is
-          the value the ranking function returns for a name the search would not
-          have looked at.
-
-        * the walk is **breadth-first** (:meth:`_browser_bfs`), so the budget is
-          spent on candidates across the whole graph rather than on descending
-          one branch of one root;
-        * ``considered`` is the number of items **examined**, as protocol §5.10
-          promises — never the number of matches. A search that finds nothing
-          would otherwise report ``considered=0`` whether it had looked at two
-          items or two thousand, and that number is the only evidence a caller
-          has for how far a truncated walk got.
-
-        ``pool`` is the collection ceiling, not the caller's ``limit``. See
-        ``_BROWSER_MATCH_POOL``.
+        ``pool`` is the collection ceiling, not the caller's ``limit``
+        (``_BROWSER_MATCH_POOL``). ``coverage`` is filled by :meth:`_browser_bfs`;
+        the caller reads ``incomplete_roots()`` off it for ``unreached_roots``.
         """
         matches = []
         considered = 0
         depth_reached = 0
-        for _root_name, item, path, level in self._browser_bfs(roots, depth, budget):
+        for _root_name, item, path, level in self._browser_bfs(roots, depth, budget,
+                                                               coverage):
             considered += 1
             if level > depth_reached:
                 depth_reached = level
@@ -4480,9 +4394,9 @@ class LiveMaestro(ControlSurface):
     def _handle_events_drain(self, params):
         """Empty the ring buffer. Answers on the client thread.
 
-        Reads nothing but this script's own buffer, so it needs neither the
-        main thread nor Live to be idle — which is the point: a stuck Live is
-        exactly when the recent event history is worth having.
+        Reads nothing but this script's own buffer, so it needs neither the main
+        thread nor Live to be idle, which is the point: a stuck Live is exactly
+        when the recent event history is worth having.
         """
         try:
             maximum = int(params.get("max", self._EVENT_BUFFER_SIZE))

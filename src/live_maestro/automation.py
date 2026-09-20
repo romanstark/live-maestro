@@ -1,20 +1,13 @@
 """Client-side curve model for clip automation generation and verification.
 
-Provides breakpoint curves (:class:`Curve`, :class:`Point`), curve builders (:func:`ramp`,
-:func:`hold`, :func:`envelope`, :func:`adsr`, :func:`lfo`, :func:`probe_ramp`, :func:`merge`,
-:func:`densify`), grid prediction (:func:`plan_steps`), and sampling/verification
-(:func:`sample`, :func:`compare`, :func:`read_window`).
+Breakpoint curves (:class:`Curve`, :class:`Point`), builders (:func:`ramp`, :func:`hold`,
+:func:`envelope`, :func:`adsr`, :func:`lfo`, :func:`probe_ramp`, :func:`merge`, :func:`densify`),
+grid prediction (:func:`plan_steps`) and verification (:func:`sample`, :func:`compare`).
 
-Operational rules:
-- Live parameter default at t=0: ``automation_read`` returns the parameter's default value
-  at t=0 rather than the curve. Verification via :func:`read_window` and :func:`compare`
-  starts at :data:`READ_EPSILON` (> 0).
-- Session clip envelope restriction: ``clip.automation_envelope(param)`` is available
-  on Session clips only (returns None on Arrangement clips).
-- Parameter write overwrites: writing automation to a parameter replaces any existing
-  envelope on that parameter. Multiple segments should be combined with :func:`merge`.
-- Median-based verification: :func:`compare` evaluates median error to avoid single-sample
-  outlier bias.
+``automation_read`` gives the parameter default at t=0 instead of the curve, so :func:`read_window`
+and :func:`compare` start at :data:`READ_EPSILON` (> 0). ``clip.automation_envelope(param)``
+works on Session clips only and is None on an Arrangement clip. A write replaces that
+parameter's envelope: combine segments with :func:`merge`. :func:`compare` uses median error.
 
 Examples:
 >>> curve = ramp(0.15, 0.95, beats=64.0, interpolation=Interpolation.EASE_IN)

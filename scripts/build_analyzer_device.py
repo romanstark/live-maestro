@@ -1,26 +1,19 @@
 """Generate the Max for Live device that answers ``analyze_audio``.
 
-The device is generated rather than drawn, for two reasons.
+The reply field order, band edges, listening port and averaging ceiling come from
+``src/live_maestro/analyzer/protocol.py``, so a device and a client that disagree about
+any of them cannot be built. The ``.maxpat`` written beside the opaque ``.amxd`` is the
+same graph in a form ``git diff`` can show, and ``--check``, which a test runs, fails
+when either file stopped matching this script.
 
-The first is that the protocol lives in
-``src/live_maestro/analyzer/protocol.py`` and this script reads it. The reply
-field order, the band edges, the listening port and the averaging ceiling all come
-from there, so a device and a client that disagree about any of them cannot be
-built. A patcher drawn by hand carries its own copy of every number in it, and a
-copy is free to be wrong.
+:mod:`live_maestro.maxgen` holds the box and patch cord layer, the container format and
+the command line. This script holds the analyzer's graph alone.
 
-The second is that a ``.amxd`` is a container around patcher JSON, and a container
-is not reviewable. The generated ``.maxpat`` beside it is the same graph in a form
-``git diff`` can show, and ``--check`` fails when either file stopped matching this
-script. A test runs that, so the device in the repository is always the device this
-script describes.
-
-Every object used here was verified to exist in the Max that ships with Ableton
-Live 12 Suite, by looking it up in ``Resources/Max/resources/docs/refpages``. Max
-draws an object name it does not know as a broken box, reports no error, and
-measures nothing, so an unverified name is a silent failure. ``loudness~`` is the
-object that reports EBU R128 loudness, and its six outlets are the whole loudness
-and peak section of the reply. There is no ``ebur128~`` in Max.
+Every object name was verified against the refpages of the Max that ships with Live 12
+Suite. Max draws an unknown object as a broken box, reports no error and measures
+nothing, so an unverified name fails silently. ``loudness~`` reports EBU R128 and its
+six outlets are the whole loudness and peak section of the reply; there is no
+``ebur128~`` in Max.
 
 Usage:
     python scripts/build_analyzer_device.py
@@ -30,9 +23,6 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
-import json
-import struct
 import sys
 from pathlib import Path
 from typing import Any
@@ -54,229 +44,18 @@ from live_maestro.analyzer.protocol import (
     REQUEST_ADDRESS,
     STRING_REPLY_FIELDS,
 )
+from live_maestro.maxgen import AMXD_AUDIO_EFFECT, DeviceBuild, Patch
+from live_maestro.maxgen import main as maxgen_main
 
 DEVICE_NAME = "LiveMaestro_Analyzer"
+DEVICE_TITLE = "LiveMaestro Analyzer"
 DEFAULT_OUT = REPO_ROOT / "devices"
-
-#: The four byte code in an ``.amxd``'s first chunk that tells Live what kind of
-#: device this is. Read out of Live's own factory devices: the audio effects carry
-#: ``aaaa`` and the instruments carry ``iiii``.
-AMXD_AUDIO_EFFECT = b"aaaa"
-
-#: The same code as the integer Max stores in the patcher's ``project`` entry.
-#: 0x61616161 is ``aaaa`` read as a big endian integer.
-AMXD_TYPE_INT = int.from_bytes(AMXD_AUDIO_EFFECT, "big")
 
 #: ``svf~``'s resonance inlet takes 0 to 1, not a Q. Zero is the flattest setting
 #: it offers, and two sections at zero are what each band edge is built from. This
 #: is a 24 dB per octave state variable slope, not a calibrated Linkwitz-Riley
 #: crossover, and ``docs/`` says so where the band values are described.
 EDGE_RESONANCE = 0.0
-
-#: How many inlets and outlets each object class draws with, and what its outlets
-#: carry. Max re-derives all of this when it instantiates the object, but a stored
-#: count lower than an index a patch cord uses can lose that cord on load, so the
-#: counts here are floors that :func:`Patch.link` raises when it has to.
-SHAPES: dict[str, tuple[int, int, str]] = {
-    "plugin~": (2, 2, "signal"),
-    "plugout~": (2, 2, "signal"),
-    "loudness~": (2, 6, "float"),
-    "svf~": (3, 4, "signal"),
-    "*~": (2, 1, "signal"),
-    "+~": (2, 1, "signal"),
-    "average~": (1, 1, "signal"),
-    "snapshot~": (1, 1, "float"),
-    "udpreceive": (1, 1, ""),
-    "udpsend": (1, 0, ""),
-    "route": (1, 2, ""),
-    "unpack": (1, 4, "int"),
-    "prepend": (1, 1, ""),
-    "select": (2, 2, ""),
-    "expr": (2, 1, ""),
-    "dspstate~": (1, 4, ""),
-    "cycle~": (2, 1, "signal"),
-    "pack": (1, 1, ""),
-    "trigger": (1, 3, ""),
-    "t": (1, 3, ""),
-    "live.thisdevice": (1, 3, "bang"),
-    "live.path": (1, 3, ""),
-    "live.object": (2, 2, ""),
-    "tosymbol": (1, 1, ""),
-}
-
-
-class Patch:
-    """A Max patcher under construction.
-
-    Boxes are added in reading order and laid out in columns. The layout carries
-    no meaning for Max, but a patch nobody can open is a patch nobody can debug.
-    """
-
-    def __init__(self) -> None:
-        self.boxes: list[dict[str, Any]] = []
-        self.lines: list[dict[str, Any]] = []
-        self._next = 1
-        self._column = 0
-        self._row = 0
-
-    def _place(self, width: float) -> list[float]:
-        x = 24.0 + self._column * 232.0
-        y = 40.0 + self._row * 28.0
-        self._row += 1
-        if self._row > 22:
-            self._row = 0
-            self._column += 1
-        return [x, y, width, 20.0]
-
-    def obj(self, text: str, *, inlets: int | None = None, outlets: int | None = None) -> str:
-        """Add an object box and return its id."""
-        head = text.split()[0]
-        shape = SHAPES.get(head)
-        if shape is None:
-            raise KeyError(
-                f"{head!r} has no entry in SHAPES. Add it only after looking the "
-                f"object up in Max's refpages: an object Max does not have draws "
-                f"as a broken box and measures nothing."
-            )
-        base_in, base_out, kind = shape
-        box_id = f"obj-{self._next}"
-        self._next += 1
-        self.boxes.append(
-            {
-                "box": {
-                    "id": box_id,
-                    "maxclass": "newobj",
-                    "numinlets": inlets if inlets is not None else base_in,
-                    "numoutlets": outlets if outlets is not None else base_out,
-                    "outlettype": [kind] * (outlets if outlets is not None else base_out),
-                    "patching_rect": self._place(max(72.0, 7.0 * len(text))),
-                    "text": text,
-                }
-            }
-        )
-        return box_id
-
-    def message(self, text: str) -> str:
-        """Add a message box and return its id."""
-        box_id = f"obj-{self._next}"
-        self._next += 1
-        self.boxes.append(
-            {
-                "box": {
-                    "id": box_id,
-                    "maxclass": "message",
-                    "numinlets": 2,
-                    "numoutlets": 1,
-                    "outlettype": [""],
-                    "patching_rect": self._place(max(56.0, 7.0 * len(text))),
-                    "text": text,
-                }
-            }
-        )
-        return box_id
-
-    def comment(self, text: str) -> str:
-        box_id = f"obj-{self._next}"
-        self._next += 1
-        self.boxes.append(
-            {
-                "box": {
-                    "id": box_id,
-                    "maxclass": "comment",
-                    "numinlets": 1,
-                    "numoutlets": 0,
-                    "patching_rect": self._place(max(120.0, 6.5 * len(text))),
-                    "text": text,
-                }
-            }
-        )
-        return box_id
-
-    def _box(self, box_id: str) -> dict[str, Any]:
-        for entry in self.boxes:
-            if entry["box"]["id"] == box_id:
-                return entry["box"]
-        raise KeyError(box_id)
-
-    def link(self, source: str, outlet: int, target: str, inlet: int) -> None:
-        """Connect an outlet to an inlet, widening either box if the index needs it."""
-        src = self._box(source)
-        dst = self._box(target)
-        if outlet + 1 > src["numoutlets"]:
-            src["numoutlets"] = outlet + 1
-            kind = src.get("outlettype") or [""]
-            src["outlettype"] = (list(kind) + [kind[-1]] * (outlet + 1))[: outlet + 1]
-        dst["numinlets"] = max(dst["numinlets"], inlet + 1)
-        self.lines.append(
-            {"patchline": {"destination": [target, inlet], "source": [source, outlet]}}
-        )
-
-    def to_patcher(self, description: str) -> dict[str, Any]:
-        return {
-            "fileversion": 1,
-            "appversion": {
-                "major": 8,
-                "minor": 5,
-                "revision": 0,
-                "architecture": "x64",
-                "modernui": 1,
-            },
-            "classnamespace": "box",
-            "rect": [40.0, 90.0, 1000.0, 700.0],
-            "bglocked": 0,
-            "openinpresentation": 0,
-            "default_fontsize": 10.0,
-            "default_fontface": 0,
-            "default_fontname": "Arial Bold",
-            "gridonopen": 1,
-            "gridsize": [8.0, 8.0],
-            "gridsnaponopen": 1,
-            "objectsnaponopen": 1,
-            "statusbarvisible": 2,
-            "toolbarvisible": 1,
-            "lefttoolbarpinned": 0,
-            "toptoolbarpinned": 0,
-            "righttoolbarpinned": 0,
-            "bottomtoolbarpinned": 0,
-            "toolbars_unpinned_last_save": 0,
-            "tallnewobj": 0,
-            "boxanimatetime": 200,
-            "enablehscroll": 1,
-            "enablevscroll": 1,
-            "devicewidth": 0.0,
-            "description": description,
-            "digest": "",
-            "tags": "",
-            "style": "",
-            "subpatcher_template": "",
-            "title": "LiveMaestro Analyzer",
-            "assistshowspatchername": 0,
-            "dependency_cache": [],
-            "autosave": 0,
-            "boxes": self.boxes,
-            "lines": self.lines,
-            # Max writes this block into every device it saves. amxdtype is the
-            # audio effect code, and Live reads it to know what the device is.
-            "project": {
-                "version": 1,
-                "creationdate": 3605254137,
-                "modificationdate": 3605254137,
-                "viewrect": [0.0, 0.0, 300.0, 500.0],
-                "autoorganize": 1,
-                "hideprojectwindow": 1,
-                "showdependencies": 1,
-                "autolocalize": 0,
-                "contents": {"patchers": {}},
-                "layout": {},
-                "searchpath": {},
-                "detailsvisible": 0,
-                "amxdtype": AMXD_TYPE_INT,
-                "readonly": 0,
-                "devpathtype": 0,
-                "devpath": ".",
-                "sortmode": 0,
-            },
-        }
 
 
 def _edge(patch: Patch, source: str, outlet: int, hz: float, wanted: str) -> tuple[str, int]:
@@ -522,91 +301,32 @@ def build() -> dict[str, Any]:
 
     return patch.to_patcher(
         "LiveMaestro Analyzer: on-demand loudness, peak, phase and band "
-        "measurement for Live Maestro's analyze_audio tool."
+        "measurement for Live Maestro's analyze_audio tool.",
+        title=DEVICE_TITLE,
+        device_type=AMXD_AUDIO_EFFECT,
     )
 
 
-def maxpat_bytes(patcher: dict[str, Any]) -> bytes:
-    """The patcher as a ``.maxpat`` file: the same JSON Max reads and writes."""
-    return (json.dumps({"patcher": patcher}, indent=1) + "\n").encode("utf-8")
-
-
-def amxd_bytes(patcher: dict[str, Any]) -> bytes:
-    """Wrap the patcher in the chunk container Live loads.
-
-    Read out of Live's own devices and confirmed against
-    ``Resources/Max/examples/resources/fourin_fourout.amxd``, which is the one
-    unencrypted device that ships with Live 12 Suite:
-
-    * ``ampf`` + uint32 little endian length + the device type code
-    * ``meta`` + length + four zero bytes
-    * ``ptch`` + length + the patcher JSON, NUL terminated and counted with it
-
-    A file holding only the JSON has no type code, so Live cannot tell an audio
-    effect from an instrument, and the device does not appear at all.
-    """
-    body = json.dumps({"patcher": patcher}, indent=1).encode("utf-8") + b"\0"
-    return b"".join(
-        (
-            b"ampf",
-            struct.pack("<I", len(AMXD_AUDIO_EFFECT)),
-            AMXD_AUDIO_EFFECT,
-            b"meta",
-            struct.pack("<I", 4),
-            b"\0\0\0\0",
-            b"ptch",
-            struct.pack("<I", len(body)),
-            body,
-        )
-    )
+#: This device, for the generator command line and for the tests that read the two
+#: files it writes. ``plugout~`` and ``udpsend`` are where a chain is meant to end,
+#: and the four free running boxes are the audio input, the socket, the load
+#: notification and the reference oscillator.
+DEVICE = DeviceBuild(
+    name=DEVICE_NAME,
+    build=build,
+    generator="scripts/build_analyzer_device.py",
+    contract="src/live_maestro/analyzer/protocol.py",
+    out_default=DEFAULT_OUT,
+    display_root=REPO_ROOT,
+    device_type=AMXD_AUDIO_EFFECT,
+    free_running=("plugin~", "udpreceive", "live.thisdevice", "cycle~"),
+    terminal=("plugout~", "udpsend"),
+)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python scripts/build_analyzer_device.py",
-        description=(
-            "Generate LiveMaestro_Analyzer.maxpat and .amxd from the protocol "
-            "in src/live_maestro/analyzer/protocol.py."
-        ),
-    )
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, metavar="DIR",
-                        help=f"where to write (default {DEFAULT_OUT.name}/)")
-    parser.add_argument("--check", action="store_true",
-                        help="verify the files on disk match this script, write nothing")
-    args = parser.parse_args(argv)
-
-    patcher = build()
-    written = {
-        args.out / f"{DEVICE_NAME}.maxpat": maxpat_bytes(patcher),
-        args.out / f"{DEVICE_NAME}.amxd": amxd_bytes(patcher),
-    }
-
-    if args.check:
-        stale = [
-            path.name
-            for path, content in written.items()
-            if not path.is_file() or path.read_bytes() != content
-        ]
-        if stale:
-            print(
-                "out of date with scripts/build_analyzer_device.py: "
-                + ", ".join(sorted(stale))
-                + "\nrun: python scripts/build_analyzer_device.py",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"{len(written)} file(s) match the generator")
-        return 0
-
-    args.out.mkdir(parents=True, exist_ok=True)
-    for path, content in written.items():
-        path.write_bytes(content)
-    boxes = len(patcher["boxes"])
-    lines = len(patcher["lines"])
-    print(f"{boxes} boxes, {lines} patch cords")
-    for path in sorted(written):
-        print(f"  -> {path.relative_to(REPO_ROOT)}  {path.stat().st_size} bytes")
-    return 0
+    """Write or check the two files, from the graph :func:`build` assembles."""
+    return maxgen_main(DEVICE, argv)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,65 @@
+{
+ "record": "experiment",
+ "schema_version": 1,
+ "id": "matching-approaches",
+ "title": "Short slices matter more than the descriptor, and a learned embedding beats the hand built one on both",
+ "measured_on": "2026-09-19",
+ "host": "macOS 25.6.0, Apple silicon, MPS available",
+ "question": "The hand built descriptor scores well inside the library and badly on real stems. Is that the weighting, the descriptor, or the query?",
+ "material": {
+  "library": "9,979 indexed preview renders, 6,540 loadable, 5,870 carrying a coarse family",
+  "families": "drums 2045, pad 835, bass 726, keys 644, lead 505, fx 257, guitar 223, mallets 200, brass 142, voice 126, strings 111, winds 56",
+  "stems": "nine separated stems of one four minute song, WAVE 48 kHz. The two vocal stems are excluded: a sung line has no counterpart in an instrument library."
+ },
+ "metric": "Leave one out family retrieval. A probe is ranked against the index with itself removed and counts as right when the top candidate shares its coarse family. Always answering the largest family scores 0.348.",
+ "results": {
+  "in_library_leave_one_out": {
+   "hand_built_descriptor": {"top_1": 0.507, "top_5": 0.790, "probes": 400},
+   "hand_built_on_the_900_item_subset": {"top_1": 0.540, "top_5": 0.792},
+   "mert_v1_95m_best_layer": {"layer": 4, "top_1": 0.628, "top_5": 0.829, "probes": 900},
+   "note": "MERT layers 3 to 8 all score between 0.604 and 0.628, so the layer choice is flat and picking one is not tuning."
+  },
+  "stems_twenty_second_window": {
+   "hand_built_descriptor": "1 of 7 families right",
+   "mert": "3 of 7 families right",
+   "what_the_errors_showed": "Both answered with drum kits and voice racks, whose previews are long dense musical passages. A twenty second window of a mixed performance resembles another long passage more than it resembles the instrument that plays it."
+  },
+  "stems_one_and_a_half_second_slices": {
+   "how_chosen": "The MIDI export located note onsets; the four onsets per stem with the fewest other onsets inside the following 1.5 s were taken.",
+   "hand_built_descriptor": {"top_1": "6 of 20", "top_5": "11 of 20"},
+   "mert_best_layer": {"layer": 9, "top_1": "8 of 20", "top_5": "15 of 20 at layers 3 and 6"},
+   "per_family_mert": {"drums": "4 of 4", "bass": "2 of 4", "keys": "2 of 4", "pad": "0 of 4 top 1 but 3 of 4 top 5", "guitar": "0 of 4"}
+  },
+  "weight_search_rejected": {
+   "searched": "45 random weightings against 300 probes",
+   "on_the_search_set": "0.570 against 0.487",
+   "on_a_fresh_draw": "0.530 against 0.510",
+   "why_rejected": "Two points on held out data, and the winning weighting sets peakiness to 0.02 and onset rate to 0.68. That fits a library in which a third of everything is a drum, and onset rate is exactly the feature that a twenty second stem and a one shot preview disagree about for reasons other than timbre."
+  },
+  "refusal_threshold_does_not_work": {
+   "in_library_best_distance": "10th percentile 0.0121, median 0.0282, 90th 0.0456",
+   "lead_vocal_best_distance": 0.0232,
+   "conclusion": "A sung stem, which has no counterpart in the library at all, lands closer than the median real match. Distance cannot carry a refusal."
+  }
+ },
+ "cost": {
+  "mert_model": "m-a-p/MERT-v1-95M, 95M parameters, 24 kHz, 5 s context, 13 layers of 768",
+  "loads_without_remote_code": "The published config names custom modules, but the weights load into a plain transformers HubertModel with zero missing, unexpected or mismatched keys, so no code from the hub is executed.",
+  "throughput": "8.7 files per second on the Apple GPU, which is about 19 minutes for the whole library",
+  "hand_built_descriptor": "no dependency at all, 12.6 minutes for the whole library on ten cores"
+ },
+ "result": [
+  "The query was the larger error, not the descriptor. Cutting the probe from twenty seconds to one and a half doubles the hand built descriptor's hit rate on stems, from 1 in 7 to 6 in 20.",
+  "MERT is better than the hand built descriptor on both tasks, by about 9 points inside the library and by about 10 points on slices. It is not a different order of result.",
+  "Best combination measured: MERT on short slices, 8 of 20 top 1 and 15 of 20 top 5.",
+  "Guitar fails under every combination tried, 0 of 4 top 1 in both.",
+  "Neither a better weighting nor a distance threshold helps. Both were tried and both are recorded here as negative."
+ ],
+ "scope_and_weakness": [
+  "Twenty slices from five stems of one song. The per family figures rest on four probes each and cannot carry a percentage.",
+  "The best MERT layer differs by task: 4 inside the library, 9 for slice top 1, 3 and 6 for slice top 5. Choosing per task on twenty probes would be fitting to twenty probes.",
+  "The coarse families are derived from Ableton's category paths by keyword. A preset filed somewhere surprising is scored wrong through no fault of the ranking.",
+  "The slices were located with the MIDI export of this one song. Without one, onsets have to come from the audio, which is a different and unmeasured step.",
+  "One song, one genre, one generator. Nothing here says how this behaves on acoustic recordings."
+ ]
+}

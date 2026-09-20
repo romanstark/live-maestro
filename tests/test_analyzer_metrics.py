@@ -15,12 +15,17 @@ import pytest
 
 from live_maestro.analyzer.metrics import (
     DIGITAL_ZERO_DB,
+    SILENCE_FLOOR_DB,
+    band_amplitude_means,
+    band_occupancy_window,
     centroid_hz,
     combined_rms,
     correlation,
     crest_factor_db,
     to_dbfs,
+    window_coverage_pct,
 )
+from live_maestro.analyzer.models import AccumulationSpan
 from live_maestro.analyzer.protocol import BANDS
 
 
@@ -120,3 +125,93 @@ def test_the_centroid_weights_energy_and_not_amplitude() -> None:
 def test_silence_has_no_centroid() -> None:
     assert centroid_hz({field: 0.0 for field, _, _ in BANDS}) is None
     assert centroid_hz({}) is None
+
+
+def test_a_band_at_or_below_the_silence_floor_is_never_occupied() -> None:
+    # The floor has to be checked on the band itself and not only when picking
+    # the loudest one. With the loudest band at -80 dBFS the 12 dB cutoff is
+    # -92 dBFS, which sits below the -90 dBFS floor, so a band carrying nothing
+    # clears the cutoff and would be reported as occupied.
+    assert SILENCE_FLOOR_DB == -90.0
+    assert band_occupancy_window({"band_mid": -80.0, "band_sub": -90.0}, 12.0) == {
+        "band_mid": True,
+        "band_sub": False,
+    }
+    assert band_occupancy_window({"band_mid": -80.0, "band_sub": -95.0}, 12.0) == {
+        "band_mid": True,
+        "band_sub": False,
+    }
+    # A threshold wide enough to reach digital silence still does not reach it.
+    wide = band_occupancy_window({"band_mid": -80.0, "band_sub": DIGITAL_ZERO_DB}, 70.0)
+    assert wide["band_sub"] is False
+    assert wide["band_mid"] is True
+    # Nothing measured is nothing occupied, rather than an empty dictionary the
+    # caller has to tell apart from seven False values.
+    assert band_occupancy_window({"band_mid": None, "band_sub": None}, 12.0) == {
+        "band_mid": False,
+        "band_sub": False,
+    }
+
+
+def test_band_amplitude_means_averages_over_the_windows_it_had() -> None:
+    assert band_amplitude_means({"band_mid": 2.0, "band_air": 0.5}, 4) == {
+        "band_mid": 0.5,
+        "band_air": 0.125,
+    }
+    # A mean over no window is no measurement, not a quiet band. Seven zeroes
+    # would reach the spectrum as seven bands sitting at digital silence.
+    assert band_amplitude_means({"band_mid": 0.0}, 0) is None
+    assert band_amplitude_means({}, 0) is None
+    # The means are amplitudes and the spectrum is dBFS, so this is the figure
+    # to_dbfs is handed on an accumulated read.
+    means = band_amplitude_means({"band_mid": 2.0}, 4)
+    assert means is not None
+    assert to_dbfs(means["band_mid"]) == -6.02
+
+
+def test_window_coverage_pct_reports_a_share_or_reports_nothing() -> None:
+    assert window_coverage_pct(4000.0, 10.0) == 40.0
+    # Neither a span of no time nor windows covering none of it supports a
+    # share, and 0.0 or 100.0 would both read as a figure that was taken.
+    assert window_coverage_pct(0.0, 10.0) is None
+    assert window_coverage_pct(4000.0, 0.0) is None
+    # Windows adding up to more time than has elapsed. That is a fact about the
+    # sampling worth reading, so it is reported rather than clamped to 100.
+    assert window_coverage_pct(12000.0, 10.0) == 120.0
+
+
+def test_coverage_over_100_is_the_first_window_and_not_an_overlap() -> None:
+    """Over 100% is what one window reaching back before the start looks like.
+
+    The sampler takes a window every ``max(0.05, window_ms / 1000)`` seconds and
+    each window is at most that long, so two of its windows can never overlap. N
+    windows of 400 ms taken 400 ms apart and read just after the Nth add up to
+    400*N ms over an elapsed 400*(N-1) ms, which is over 100% with every window
+    abutting the next. The excess is at most one window, which is exactly the
+    audio window one covered before the accumulation began.
+
+    Measured with the production ``AudioAccumulator`` driven by a stub analyzer:
+    reads taken right after a sample landed gave 196.7, 147.6 and 131.1% at two,
+    three and four windows.
+    """
+    for n in (2, 3, 4, 10):
+        covered_ms = 400.0 * n
+        elapsed_s = 0.4 * (n - 1)
+        pct = window_coverage_pct(covered_ms, elapsed_s)
+        assert pct is not None
+        assert pct > 100.0
+        assert pct == pytest.approx(100.0 * n / (n - 1), abs=0.1)
+        # Never more than one window's worth over the span, which is the ceiling
+        # the reach-back explanation implies and an overlap would not respect.
+        assert covered_ms <= elapsed_s * 1000.0 + 400.0
+
+    # The published explanation has to name that cause. A caller reading
+    # "consecutive windows overlapped" concludes the sampler counted some audio
+    # twice and distrusts the spectrum, when nothing was counted twice.
+    described = AccumulationSpan.model_fields["coverage_pct"].description
+    assert described is not None
+    assert "reaches back" in described
+    assert "overlapped" not in described
+    assert window_coverage_pct.__doc__ is not None
+    assert "reaches back" in window_coverage_pct.__doc__
+    assert "overlapped" not in window_coverage_pct.__doc__

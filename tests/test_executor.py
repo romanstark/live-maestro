@@ -1,20 +1,16 @@
 """Executor tests against a fake client: no socket anywhere in this file.
 
-:mod:`live_maestro.executor` declares what it needs from the transport as a
-:class:`~live_maestro.executor.LomClient` protocol precisely so that it can be
-exercised with a hand-written stand-in, and :class:`FakeClient` is that stand-in: it
-records every call and hands back canned replies. A method the test did not arrange a
-reply for raises, so "nothing was sent" is provable rather than assumed, which is what
-the guard tests below actually assert.
+:class:`FakeClient` implements the :class:`~live_maestro.executor.LomClient`
+protocol, records every call and hands back canned replies. A method the test did
+not arrange a reply for raises, so "nothing was sent" is provable rather than
+assumed, which is what the guard tests below turn on.
 
-The catalog rows here are built by hand instead of loaded from
-``src/live_maestro/catalog/``. The subject is the executor, and a test that fails
-because somebody edited a YAML row would be testing the wrong thing.
+Catalog rows are built by hand rather than loaded from
+``src/live_maestro/catalog/``, so editing a YAML row cannot fail these tests.
 
-Two exception classes *are* imported from ``client.py``: the executor's contract is
-that a failure carrying a ``code`` becomes a failed :class:`Result` while anything
-else (a timeout above all) is re-raised, and the honest way to test that contract is
-against the exceptions the real client raises rather than against a look-alike.
+Two exception classes *are* imported from ``client.py``, because the contract under
+test is stated in terms of them: a failure carrying a ``code`` becomes a failed
+:class:`Result` while anything else, a timeout above all, is re-raised.
 """
 
 from __future__ import annotations
@@ -352,7 +348,7 @@ def test_out_of_range_value_never_reaches_the_client() -> None:
 
 
 def test_unknown_placeholder_never_reaches_the_client() -> None:
-    """A silently dropped keyword is the failure class this project exists to kill."""
+    """Reject an unknown keyword instead of dropping it and calling Live anyway."""
     client = FakeClient()
     with pytest.raises(ValueError, match="unknown argument"):
         execute(client, registry(volume_spec()), "track.volume", trak=0, value=0.5)
@@ -440,10 +436,10 @@ def test_read_back_fields_survive_into_the_result() -> None:
 def test_a_clamped_write_is_reported_as_clamped_not_as_success() -> None:
     """Report a clamped write as clamped, not as a success.
 
-    Measured: a requested 0.35 came back as 0.25. The handler ran, so
-    ``ok`` is True, but the value that is stored is not the value that was asked for,
-    and both ``clamped`` and a failed ``read_back`` say so. A caller that reports this
-    as "done" is exactly what docs/architecture.md, 'read-back as a principle' was written against.
+    Measured: a requested 0.35 came back as 0.25. The handler ran, so ``ok`` is True,
+    but the stored value is not the value that was asked for, and both ``clamped``
+    and a failed ``read_back`` say so (docs/architecture.md, 'read-back as a
+    principle').
     """
     client = FakeClient(
         set={
@@ -759,11 +755,11 @@ def test_execute_batch_is_exactly_one_round_trip() -> None:
 
 
 def test_batch_entries_keep_their_payload_when_status_is_stamped_on_it() -> None:
-    """Measured against Live 12.4.5, and it must not regress.
+    """A batch entry carries the handler's payload with a status stamped onto it.
 
-    ``lom_batch`` stamps ``status: "success"`` onto the handler's own payload rather
-    than nesting it under ``result``. Reading that as a §4 envelope drops every
-    batched value in silence, which would have hit every intent tool that batches.
+    On Live 12.4.5, ``lom_batch`` stamps ``status: "success"`` onto the handler's own
+    payload rather than nesting it under ``result``. Reading that as a §4 envelope
+    drops every batched value in silence.
     """
     entry = {"path": "song.tracks[3].name", "value": "03 Kick", "type": "string",
              "status": "success"}
@@ -1023,10 +1019,9 @@ def test_a_missing_code_is_not_invented() -> None:
 #
 # These four check a change rather than a state, so the executor reads a baseline
 # before dispatching and puts it in ``Result.before`` (see 'baselines for calls' in
-# executor.py). The expectations encoded per method were measured 2026-09-05 against
-# Live 12.4.5. The tests below pin the two that are easiest to get wrong: a removal
-# that legitimately removes nothing, and a stop that Live defers to the next
-# quantization boundary.
+# executor.py). The expectations encoded per method come from Live 12.4.5. The tests
+# below pin the two that are easiest to get wrong: a removal that legitimately
+# removes nothing, and a stop that Live defers to the next quantization boundary.
 
 
 class FakeClientWithNotes(FakeClient):
@@ -1096,11 +1091,11 @@ def test_notes_count_verifies_a_duplicate_by_the_count_it_left() -> None:
 
 
 def test_a_removal_that_removed_nothing_is_not_a_failure() -> None:
-    """Measured 2026-09-05 against Live 12.4.5.
+    """A removal that found nothing to remove still worked.
 
-    ``remove_notes_extended`` over an already empty beat range answered success and
-    left the count at six. Expecting the count to fall would report that working
-    call as a failed one, so removals expect 'did not grow'.
+    On Live 12.4.5, ``remove_notes_extended`` over an already empty beat range
+    answered success and left the count at six. Expecting the count to fall would
+    report that working call as a failed one, so removals expect 'did not grow'.
     """
     client = FakeClientWithNotes(
         notes_get=_counts(6, 6),
@@ -1150,7 +1145,7 @@ def test_a_client_without_notes_get_cannot_verify_a_note_count() -> None:
 
 
 def test_clip_length_verifies_that_duplicate_loop_grew_the_clip() -> None:
-    """Measured 2026-09-05 against Live 12.4.5: a 4-beat clip became 8 beats."""
+    """On Live 12.4.5 a 4-beat clip became 8 beats."""
     lengths = iter([4.0, 8.0])
     client = FakeClient(
         get=lambda path: {"path": path, "value": next(lengths)},
@@ -1168,12 +1163,12 @@ def test_clip_length_verifies_that_duplicate_loop_grew_the_clip() -> None:
 
 
 def test_crop_passes_when_the_length_did_not_move() -> None:
-    """Measured 2026-09-05 against Live 12.4.5.
+    """Crop can discard material without moving ``clip.length``.
 
-    ``clip.length`` on a looping clip already reports the loop length, so cropping a
-    clip whose loop was 0..4 of 8 beats left length at 4.0 on both sides and
-    discarded notes instead. Crop cannot lengthen a clip, so 'did not grow' is the
-    post-condition that holds.
+    On Live 12.4.5, ``clip.length`` on a looping clip already reports the loop
+    length, so cropping a clip whose loop was 0..4 of 8 beats left length at 4.0 on
+    both sides and discarded notes instead. Crop cannot lengthen a clip, so 'did not
+    grow' is the post-condition that holds.
     """
     client = FakeClient(
         get=lambda path: {"path": path, "value": 4.0},
@@ -1190,11 +1185,12 @@ def test_crop_passes_when_the_length_did_not_move() -> None:
 
 
 def test_a_stop_still_playing_is_unverified_rather_than_failed() -> None:
-    """Measured 2026-09-05 against Live 12.4.5, clip_trigger_quantization at one bar.
+    """A deferred stop is not a failed stop.
 
-    With the transport running, ``clip.stop`` left ``is_playing`` true immediately
-    after the call and false 0.5 s later: Live defers the stop to the quantization
-    boundary. Reporting False there would be a false alarm on a call that worked.
+    On Live 12.4.5, with ``clip_trigger_quantization`` at one bar and the transport
+    running, ``clip.stop`` left ``is_playing`` true immediately after the call and
+    false 0.5 s later: Live defers the stop to the quantization boundary. Reporting
+    False there would be a false alarm on a call that worked.
     """
     client = FakeClient(
         get=lambda path: {"path": path, "value": True},
@@ -1264,11 +1260,11 @@ def test_releasing_the_fire_button_has_no_post_condition_to_check() -> None:
 
 
 def test_a_midi_clip_leaves_the_warp_marker_count_unknown() -> None:
-    """Measured 2026-09-05 against Live 12.4.5.
+    """A MIDI clip has no warp markers to count.
 
-    Reading ``warp_markers`` on a MIDI clip fails with ``live_error`` ("Warp markers
-    are only available for Audio Clips"). That arrives as an unreadable baseline and
-    must leave the call unverified, not failed.
+    On Live 12.4.5, reading ``warp_markers`` on a MIDI clip fails with ``live_error``
+    ("Warp markers are only available for Audio Clips"). That arrives as an
+    unreadable baseline and must leave the call unverified, not failed.
     """
     failure = LiveCommandError(
         "lom_get",
@@ -1331,12 +1327,12 @@ def test_verify_false_takes_no_baseline_at_all() -> None:
 
 
 def test_a_removal_live_accepted_but_did_not_perform_is_reported() -> None:
-    """Measured 2026-09-05 against Live 12.4.5 on a scratch audio track.
+    """Live can accept a removal and perform none.
 
-    ``remove_warp_marker`` aimed at the last real marker of an 8-beat warped sample
-    answered success and removed nothing: the count stayed at 2. A status of success
-    proves the script did not raise, never that Live acted (protocol §10), and this
-    is the case the hook exists to catch.
+    On Live 12.4.5, ``remove_warp_marker`` aimed at the last real marker of an 8-beat
+    warped sample answered success and removed nothing: the count stayed at 2. A
+    status of success proves the script did not raise, never that Live acted
+    (protocol §10), and this is the case the hook exists to catch.
     """
     counts = iter([2, 2])
     client = FakeClient(
@@ -1356,7 +1352,7 @@ def test_a_removal_live_accepted_but_did_not_perform_is_reported() -> None:
 
 
 def test_move_warp_marker_keeps_the_marker_count() -> None:
-    """Measured 2026-09-05 against Live 12.4.5: a move left the count at three."""
+    """On Live 12.4.5 a move left the count at three."""
     counts = iter([3, 3])
     client = FakeClient(
         get=lambda path: {"path": path, "type": "list", "count": next(counts), "value": []},
@@ -1377,9 +1373,9 @@ def test_move_warp_marker_keeps_the_marker_count() -> None:
 def test_create_audio_clip_is_verified_by_the_slot_holding_a_clip() -> None:
     """The row is addressed at the ClipSlot and had no clip to measure beforehand.
 
-    Measured 2026-09-05 against Live 12.4.5: loading a sample into an empty slot of a
-    scratch audio track verified, and Live's warp analysis then settled the length
-    asynchronously over the following seconds, which is why warping is not the verdict.
+    On Live 12.4.5, loading a sample into an empty slot verified, and Live's warp
+    analysis then settled the length asynchronously over the following seconds, which
+    is why warping is not the verdict.
     """
     client = FakeClient(
         get=lambda path: {"path": path, "value": path.endswith(".has_clip")},

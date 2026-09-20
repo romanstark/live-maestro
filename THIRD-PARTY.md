@@ -16,11 +16,18 @@ Live Maestro is licensed under the **AGPL-3.0-or-later** license (see [LICENSE](
 - **Project:** https://github.com/yaml/pyyaml
 - **Usage:** Loads YAML path catalog files from `src/live_maestro/catalog/*.yaml` at runtime (see [docs/catalog.md](docs/catalog.md)). Installed as a dependency; not vendored.
 
+### Pydantic (`pydantic`)
+- **License:** MIT (permissive, compatible with AGPL-3.0)
+- **Project:** https://github.com/pydantic/pydantic
+- **Usage:** Validates tool argument models in `src/live_maestro/toolargs.py`. Installed as a dependency; not vendored.
+
 ---
 
 ## Development Dependencies
 
-Development tools include **pytest** (MIT), **ruff** (MIT), and **pyright** (MIT) for testing, linting, and type checking. These are used only in local development and CI environments.
+Development tools include **pytest** (MIT), **ruff** (MIT), **pyright** (MIT) and **pyrefly** (MIT) for testing, linting, and type checking. These are used only in local development and CI environments.
+
+One optional capability reaches outside these: `transcribe_stem` runs **basic-pitch** (Apache-2.0, https://github.com/spotify/basic-pitch) as a subprocess in an environment the user creates. It is neither a dependency nor vendored, and nothing else here needs it.
 
 ---
 

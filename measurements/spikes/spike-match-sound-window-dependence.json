@@ -1,0 +1,50 @@
+{
+  "spike": "match-sound-window-dependence",
+  "date": "2026-09-19",
+  "question": "How much of match_sound's ranking is a property of the recording, and how much of the window it was taken from?",
+  "method": "Five separated stems of one song, 229 s each. A 20 s window every 20 s gives 11 windows per stem. Each window was described and ranked against the preview index with the stem's own family given and kinds restricted to loadable items.",
+  "instability": {
+    "measure": "names shared between the top 10 of any two windows of one stem, averaged over all pairs",
+    "2 Drum Kit.wav": 1.1,
+    "4 Bass.wav": 0.8,
+    "5 Acoustic Guitar.wav": 1.3,
+    "6 Synth Pad.wav": 1.2,
+    "7 Synth Keys.wav": 1.5,
+    "distinct_names_across_all_top_tens": {
+      "drum_kit": 62, "bass": 81, "guitar": 59, "pad": 69, "keys": 62
+    }
+  },
+  "why": {
+    "measure": "the width of the candidate list against how far the stem's own descriptor moves between neighbouring windows, in the same distance unit",
+    "rows": [
+      {"stem": "2 Drum Kit.wav", "rank0": 0.0431, "rank29": 0.1053, "spread": 0.0622, "window_to_window": 0.167},
+      {"stem": "4 Bass.wav", "rank0": 0.075, "rank29": 0.1533, "spread": 0.0783, "window_to_window": 0.4981},
+      {"stem": "5 Acoustic Guitar.wav", "rank0": 0.1454, "rank29": 0.4213, "spread": 0.2759, "window_to_window": 0.8653},
+      {"stem": "6 Synth Pad.wav", "rank0": 0.0349, "rank29": 0.08, "spread": 0.0451, "window_to_window": 0.184},
+      {"stem": "7 Synth Keys.wav", "rank0": 0.0483, "rank29": 0.1261, "spread": 0.0779, "window_to_window": 0.2496}
+    ],
+    "finding": "On every stem the recording moves further from itself between two windows than the entire top thirty is wide, by a factor of 2.7 to 6.4. The ordering cannot survive the choice of window because the query moves more than the candidates are apart."
+  },
+  "aggregations_measured_and_rejected": {
+    "method": "split half: odd windows against even windows, both aggregated the same way, top 10 compared",
+    "single_window": [8, 0, 6, 1, 4],
+    "median_descriptor": [4, 0, 8, 4, 2],
+    "rank_fusion_depth_40": [0, 0, 1, 0, 1],
+    "vote_count_top_10": [4, 4, 2, 1, 5],
+    "order": ["2 Drum Kit.wav", "4 Bass.wav", "5 Acoustic Guitar.wav", "6 Synth Pad.wav", "7 Synth Keys.wav"],
+    "finding": "No aggregation makes the answer reproducible. Averaging does not help because the movement is the music changing, not noise around a stable point."
+  },
+  "loudest_is_not_busiest": {
+    "method": "20 s windows every 4 s, 53 per stem",
+    "rows": [
+      {"stem": "2 Drum Kit.wav", "loudest_at_s": 127.0, "onsets_there_hz": 2.2, "most_onsets_at_s": 80.0, "onsets_there_hz_max": 2.55},
+      {"stem": "4 Bass.wav", "loudest_at_s": 182.0, "onsets_there_hz": 2.85, "most_onsets_at_s": 180.0, "onsets_there_hz_max": 2.85},
+      {"stem": "5 Acoustic Guitar.wav", "loudest_at_s": 208.0, "onsets_there_hz": 0.25, "most_onsets_at_s": 68.0, "onsets_there_hz_max": 1.5},
+      {"stem": "6 Synth Pad.wav", "loudest_at_s": 97.8, "onsets_there_hz": 0.0, "most_onsets_at_s": 148.0, "onsets_there_hz_max": 0.1},
+      {"stem": "7 Synth Keys.wav", "loudest_at_s": 90.8, "onsets_there_hz": 0.0, "most_onsets_at_s": 120.0, "onsets_there_hz_max": 0.55}
+    ],
+    "finding": "On struck material the loudest window is also among the most eventful. On the guitar it holds a sixth of the events of the busiest window, and on the pad and the keys it holds none."
+  },
+  "consequence": "busiest_window is renamed loudest_window and the window argument reads 'loudest'. match_sound ranks a second, non-overlapping stretch of the same file and reports in elsewhere_in_the_file how many names the two share, how far the descriptor moved and how wide the answer is, so the instability is measured on the caller's own file instead of being a caveat. Each candidate carries also_elsewhere.",
+  "unchanged": "Given the family, the candidates are still instruments of the kind asked for. The family holds; the order does not."
+}

@@ -1,9 +1,7 @@
 """Turn the replies that arrived into the answer ``analyze_audio`` gives back.
 
-Everything in here is a pure function of the replies. No socket, no Ableton Live,
-no clock. That is what lets ``tests/test_analyzer_report.py`` check the thresholds,
-the track matching and the wording of every recommendation, which is the half of
-this feature that decides what a caller is told.
+Every function here is pure: no socket, no Ableton Live, no clock. The thresholds, the
+track matching and the wording of every recommendation are decided here.
 """
 
 from __future__ import annotations
@@ -20,13 +18,17 @@ from live_maestro.analyzer.metrics import (
     to_dbfs,
 )
 from live_maestro.analyzer.models import (
+    AccumulationSpan,
     AudioMeasurementResult,
+    BandOccupancy,
     Calibration,
     DynamicsMetrics,
     LoudnessMetrics,
     SpectralBalance,
     StereoMetrics,
     TrackAnswer,
+    TransportState,
+    TransportUnavailable,
 )
 from live_maestro.analyzer.protocol import (
     BANDS,
@@ -36,7 +38,13 @@ from live_maestro.analyzer.protocol import (
     REPLY_SCHEMA,
 )
 
-__all__ = ["MONO_CORRELATION_FLOOR", "POLARITY_SUSPECT", "build", "matches"]
+__all__ = [
+    "MONO_CORRELATION_FLOOR",
+    "POLARITY_SUSPECT",
+    "SINGLE_WINDOW_OCCUPANCY_NOTE",
+    "build",
+    "matches",
+]
 
 #: Below this, summing the low end to mono changes the level of what is there.
 #: A positive correlation this small already means the two channels are pulling
@@ -57,6 +65,16 @@ FLAT_CREST_DB = 6.0
 #: ``tests/test_analyzer_report.py`` carries the measurement this rests on.
 POLARITY_SUSPECT = -0.5
 
+#: What stands in the place of an occupancy that was never counted. A single
+#: window can say which bands carry energy in it, and that is not a share of
+#: time: turning one sample into 100% or 0% per band is a percentage with one
+#: observation behind it.
+SINGLE_WINDOW_OCCUPANCY_NOTE = (
+    "Occupancy is a share of time and one window is a sample of time rather than "
+    "a share of it: call analyze_audio(accumulate='start'), let the section play, "
+    "then analyze_audio(accumulate='read')."
+)
+
 
 def matches(reply: Reply, target: str) -> bool:
     """Determine whether a reply came from the requested track by name.
@@ -65,10 +83,8 @@ def matches(reply: Reply, target: str) -> bool:
     gives its main track. Anything else is matched against the track's name,
     ignoring case and surrounding space.
 
-    A number never matches here. The reply carries a name and an id and no index,
-    so an index is turned into a name over Channel A before matching, in
-    ``server.analyze_audio``, where the set can be read. Guessing an index from a
-    name would answer the wrong track without saying so.
+    A number never matches here. The reply carries a name and an id and no index, so
+    ``server.analyze_audio`` turns an index into a name over Channel A before matching.
 
     >>> reply = Reply(strings={"track_name": "01 SC Trigger"})
     >>> [matches(reply, t) for t in ("*", "01 sc trigger", " 01 SC Trigger ")]
@@ -119,10 +135,16 @@ def _lufs(value: float | None) -> float | None:
     return round(finite, 2)
 
 
-def _no_reply(target: str) -> AudioMeasurementResult:
+def _no_reply(
+    target: str,
+    transport: TransportState | None = None,
+    transport_unavailable: TransportUnavailable | None = None,
+) -> AudioMeasurementResult:
     return AudioMeasurementResult(
         status="device_not_found",
         track=target,
+        transport=transport,
+        transport_unavailable=transport_unavailable,
         summary=(
             "No LiveMaestro Analyzer answered. Every other Maestro tool is "
             "unaffected: this is the only one that needs the device."
@@ -147,11 +169,18 @@ def _no_reply(target: str) -> AudioMeasurementResult:
     )
 
 
-def _wrong_schema(replies: list[Reply], target: str) -> AudioMeasurementResult:
+def _wrong_schema(
+    replies: list[Reply],
+    target: str,
+    transport: TransportState | None = None,
+    transport_unavailable: TransportUnavailable | None = None,
+) -> AudioMeasurementResult:
     seen = sorted({int(reply.numbers.get("schema", 0)) for reply in replies})
     return AudioMeasurementResult(
         status="schema_mismatch",
         track=target,
+        transport=transport,
+        transport_unavailable=transport_unavailable,
         answered=[_answer(reply) for reply in replies],
         summary=(
             f"An analyzer answered with reply schema {seen} where this build reads "
@@ -282,23 +311,44 @@ def build(
     *,
     reset: bool,
     match_name: str | None = None,
+    occupancy_threshold_db: float | None = None,
+    transport: TransportState | None = None,
+    transport_unavailable: TransportUnavailable | None = None,
+    band_occupancy: BandOccupancy | None = None,
+    accumulated_bands: dict[str, float] | None = None,
+    accumulation: AccumulationSpan | None = None,
 ) -> AudioMeasurementResult:
     """Assemble one result from every reply that arrived.
 
-    ``match_name`` is the track name the target resolved to over Channel A, which
-    is how an index or "master" reaches a device that reports only a name. Where
-    it is given it decides the match on its own, and ``target`` is only what the
-    caller is told they asked for.
+    ``match_name`` is the track name the target resolved to over Channel A, which is
+    how an index or "master" reaches a device that reports only a name. Where it is
+    given it decides the match on its own, and ``target`` is only what the caller is
+    told they asked for.
+
+    ``band_occupancy``, ``accumulated_bands`` and ``accumulation`` travel together from
+    an accumulation the caller has been running. Given them, the spectrum is the mean of
+    the recorded windows' band amplitudes rather than the last window's, so spectrum,
+    occupancy and the ``status`` verdict all cover the one span ``accumulation`` names.
+    Given none of them, a result that measured something carries no occupancy at all and
+    ``band_occupancy_note`` says why and how to get one. A result that measured nothing,
+    such as the ``device_not_found`` below, carries neither.
 
     >>> build([], "master", reset=False).status
     'device_not_found'
     """
     if not replies:
-        return _no_reply(target)
+        return _no_reply(
+            target, transport=transport, transport_unavailable=transport_unavailable
+        )
 
     usable = [r for r in replies if int(r.numbers.get("schema", 0)) == REPLY_SCHEMA]
     if not usable:
-        return _wrong_schema(replies, target)
+        return _wrong_schema(
+            replies,
+            target,
+            transport=transport,
+            transport_unavailable=transport_unavailable,
+        )
 
     answered = [_answer(reply) for reply in usable]
     if match_name is not None:
@@ -313,6 +363,8 @@ def build(
         return AudioMeasurementResult(
             status="track_not_found",
             track=target,
+            transport=transport,
+            transport_unavailable=transport_unavailable,
             answered=answered,
             summary=(
                 f"{len(usable)} analyzer instance(s) answered, none of them on "
@@ -336,29 +388,25 @@ def build(
     true_peak = _finite(numbers.get("true_peak_db"))
     sample_peak = _finite(numbers.get("sample_peak_db"))
 
-    # The device measures its own error on every call, so the sample peak is read
-    # against a signal whose peak is known rather than trusted. Measured against
-    # Live 12.4.5: that outlet reports half the amplitude, a fixed 6.02 dB, in
-    # every condition tried. Subtracting the measured figure rather than a
-    # constant means a Max that fixes the outlet is followed instead of
-    # contradicted.
+    # The device measures its own error on every call, so the sample peak is corrected
+    # by the figure just measured rather than by a constant. Measured against Live
+    # 12.4.5: that outlet reports half the amplitude, a fixed 6.02 dB, in every
+    # condition tried.
     #
-    # The true peak is left alone. Its reference error is 0.00 dB with the
-    # transport stopped and 1.09 dB with it running, and it did not move when the
-    # audio changed level by 12 dB, so it is a transient the reference chain's
-    # peak hold latched rather than an offset the outlet applies. Correcting by it
-    # was measured to push a reading that had followed a 12 dB fader move exactly
-    # 1.09 dB past where the fader put it.
+    # The true peak is left alone. Its reference error is 0.00 dB with the transport
+    # stopped and 1.09 dB with it running, and it did not move when the audio changed
+    # level by 12 dB, so it is a transient the reference chain's peak hold latched and
+    # not an offset the outlet applies. Correcting by it pushed a reading that had
+    # tracked a 12 dB fader move exactly 1.09 dB past where the fader put it.
     calibration = _calibration(numbers)
     if calibration.sample_peak_error_db is not None and sample_peak is not None:
         sample_peak -= calibration.sample_peak_error_db
         calibration.sample_peak_corrected = True
 
-    # A reset clears every window the meter holds, not only the integration, so a
-    # reset call reports no loudness and no peak at all. Measured against Live
-    # 12.4.5: after a reset, all six of loudness~'s outlets read negative
-    # infinity, including both peak holds. The averaged figures below come from
-    # average~ instead and are untouched by it.
+    # A reset clears every window the meter holds, not only the integration, so a reset
+    # call reports no loudness and no peak at all. Measured against Live 12.4.5: after a
+    # reset all six of loudness~'s outlets read negative infinity, both peak holds
+    # included. The averaged figures below come from average~ and are untouched by it.
     integrated = None if reset else _lufs(numbers.get("integrated_lufs"))
     loudness = LoudnessMetrics(
         momentary_lufs=None if reset else _lufs(numbers.get("momentary_lufs")),
@@ -398,7 +446,13 @@ def build(
         low_end_correlation=low_band,
         mono_compatible=compatible,
     )
-    amplitudes = {name: numbers.get(name, 0.0) for name, _, _ in BANDS}
+    # An accumulated read averages the band amplitudes over the windows it
+    # counted, so the spectrum and the occupancy describe the same span. Without
+    # one, the bands come from the window this reply covers.
+    if accumulated_bands is not None:
+        amplitudes = {name: accumulated_bands.get(name, 0.0) for name, _, _ in BANDS}
+    else:
+        amplitudes = {name: numbers.get(name, 0.0) for name, _, _ in BANDS}
     spectrum = SpectralBalance(
         sub_dbfs=_band_db(amplitudes["band_sub"]),
         bass_dbfs=_band_db(amplitudes["band_bass"]),
@@ -410,25 +464,66 @@ def build(
         centroid_hz=centroid_hz(amplitudes),
     )
 
-    silent = dynamics.rms_dbfs is None
+    # A verdict has to cover the same span as the figures printed beside it. The reply
+    # is one window, while on an accumulated read the spectrum and the occupancy are the
+    # whole accumulation, so silence there means both: a section whose last window fell
+    # in a gap between two phrases is not a silent section.
+    last_window_silent = dynamics.rms_dbfs is None
+    if accumulation is None:
+        silent = last_window_silent
+    else:
+        silent = last_window_silent and all(
+            level is None for level in _band_levels(spectrum)
+        )
     status = "silent" if silent else ("clipping" if (true_peak or -99.0) > 0.0 else "ok")
     where = chosen.track_name or target
 
-    if silent:
+    # Nothing is synthesised where no accumulation was run. One window says which bands
+    # carry energy in it and not what share of time they do: 100.0 or 0.0 per band off a
+    # single sample is a percentage with one observation behind it.
+    note = None if band_occupancy is not None else SINGLE_WINDOW_OCCUPANCY_NOTE
+
+    if silent and accumulation is not None:
+        # Silence established over the counted windows, not over the last of them.
+        summary = f"{where} was silent over the accumulation."
+    elif silent:
         summary = (
             f"{where} was silent over the last {window_ms:.0f} ms."
             if window_ms
             else f"{where} was silent."
         )
     else:
-        parts = [f"{rms_db:.1f} dBFS RMS"]
+        parts: list[str] = []
+        if dynamics.rms_dbfs is not None:
+            parts.append(f"{dynamics.rms_dbfs:.1f} dBFS RMS")
         if true_peak is not None:
             parts.append(f"{true_peak:+.2f} dBFS true peak")
         if loudness.short_term_lufs is not None:
             parts.append(f"{loudness.short_term_lufs:.1f} LUFS short term")
         if broad is not None:
             parts.append(f"correlation {broad:+.2f}")
-        summary = f"{where}: " + ", ".join(parts) + "."
+        summary = (
+            f"{where}: " + ", ".join(parts) + "."
+            if parts
+            else f"{where} carried signal in the windows that were recorded."
+        )
+        if last_window_silent:
+            # Whatever is missing above is missing for one stated reason, rather
+            # than reading as a measurement that failed.
+            summary += (
+                " Loudness, dynamics and stereo come from the last recorded "
+                "window, and that window was silent."
+            )
+
+    if accumulation is not None:
+        noun = "window" if accumulation.windows == 1 else "windows"
+        span = (
+            f" Occupancy and spectrum cover {accumulation.windows} {noun} over "
+            f"{accumulation.elapsed_s:.1f} s"
+        )
+        if accumulation.coverage_pct is not None:
+            span += f", covering {accumulation.coverage_pct:.1f}% of it"
+        summary += f"{span}."
 
     return AudioMeasurementResult(
         status=status,
@@ -440,6 +535,15 @@ def build(
         dynamics=dynamics,
         stereo=stereo,
         spectrum=spectrum,
+        band_occupancy=band_occupancy,
+        band_occupancy_note=note,
+        occupancy_threshold_db=(
+            occupancy_threshold_db if band_occupancy is not None else None
+        ),
+        accumulated_windows=(None if accumulation is None else accumulation.windows),
+        accumulation=accumulation,
+        transport=transport,
+        transport_unavailable=transport_unavailable,
         calibration=calibration,
         answered=answered,
         summary=summary,
@@ -453,13 +557,12 @@ def build(
 def _ambiguity(chosen: Reply, candidates: list[Reply]) -> list[str]:
     """Warn when the reported track's name is shared by another answering instance.
 
-    Live allows two tracks to carry the same name, and the reply carries no
-    index. Measuring the first of them and saying nothing would report one track
-    under a description that fits two.
+    Live allows two tracks to carry the same name and the reply carries no index, so
+    measuring the first of them and saying nothing would report one track under a
+    description that fits two.
 
-    Several candidates is not itself ambiguous. ``"*"`` matches every instance on
-    purpose, so what decides is whether the name of the one being reported
-    identifies it: only a repeated name is worth a warning.
+    Several candidates is not itself ambiguous, because ``"*"`` matches every instance.
+    What decides is whether the reported track's name identifies it on its own.
     """
     name = chosen.track_name.strip().casefold()
     same = [r for r in candidates if r.track_name.strip().casefold() == name]
@@ -472,6 +575,26 @@ def _ambiguity(chosen: Reply, candidates: list[Reply]) -> list[str]:
             f"{ids}. The first is reported. Rename one of them to measure them "
             f"apart."
         )
+    ]
+
+
+def _band_levels(spectrum: SpectralBalance) -> list[float | None]:
+    """Every band level of a spectrum, so the seven can be judged together.
+
+    A band reads ``None`` where its amplitude sits at or under the silence floor,
+    so a spectrum whose seven levels are all ``None`` measured no energy at all.
+
+    >>> _band_levels(SpectralBalance(mid_dbfs=-20.0)).count(None)
+    6
+    """
+    return [
+        spectrum.sub_dbfs,
+        spectrum.bass_dbfs,
+        spectrum.low_mid_dbfs,
+        spectrum.mid_dbfs,
+        spectrum.high_mid_dbfs,
+        spectrum.presence_dbfs,
+        spectrum.air_dbfs,
     ]
 
 

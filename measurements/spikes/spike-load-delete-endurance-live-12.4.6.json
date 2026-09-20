@@ -1,0 +1,298 @@
+{
+ "record": "spike-measurement",
+ "schema_version": 1,
+ "id": "load-delete-endurance",
+ "title": "Live survives 425 load and delete cycles without drift, so the sweep needs no process restarts at that length",
+ "measured_on": "2026-09-17",
+ "live_version": "12.4.6",
+ "script_version": "0.1.2",
+ "protocol_version": 1,
+ "host": "macOS 26.6.2",
+ "set": "LM-Stress.als, in the user's Northlight Project folder, built for this spike: one MIDI track named LM-STRESS, no clips, no devices. The absolute path is in the journals and is deliberately not repeated here.",
+ "live_pid": 1645,
+ "question": "Does Live tolerate a long run of load and delete cycles, or does instrument_sweep have to be built around process restarts?",
+ "answers": {
+  "item": "validation 2",
+  "state_before_this_record": "open question",
+  "answered_in": "A question raised in working notes kept outside the repository, under \"9. Zuerst validieren\". This record is the published answer."
+ },
+ "subject": {
+  "device": "Utility",
+  "kind": "native audio effect",
+  "item_path": "app.browser.audio_effects.children[64]",
+  "root": "audio_effects",
+  "target_track": "song.tracks[0]"
+ },
+ "method": [
+  "A set was built for the spike and named so it cannot be confused with a music project: one MIDI track called LM-STRESS, no clips, no devices.",
+  "Before each stage a preflight checked nine conditions and refused to start unless all held: the sentinel name is not a Live default, the open set is the stress set, the transport is stopped and nothing is recording, song.tracks[0] is the sentinel, the selected track is the sentinel, the track is an ordinary MIDI track, its chain is empty, the browser item still reads 'Utility', and the set is as empty as a stress set should be.",
+  "The selection was aimed at song.tracks[0] by writing a handle to song.view.selected_track, because Browser.load_item takes no track argument. The aim was accepted on read_back: 'applied'.",
+  "Each cycle loaded the browser item, then deleted device 0, then sampled memory. Four guards ran before each cycle: the browser item still reads 'Utility', the selected track is still the sentinel, the chain is empty, the transport is stopped.",
+  "A cycle counted only on read-back evidence. The load counted only with selected_track_same true, displaced empty, and 'Utility' in the chain at index 0. The delete counted only with the chain going from one device to none.",
+  "Memory was sampled every cycle with /bin/ps -o rss=,vsz=,pmem= and /bin/ps -M against Live's pid, and the macOS footprint every 25 (stage a), 10 (stage b) or 20 (stage c) cycles.",
+  "Three stages were run back to back against the same Live process: 25 cycles, then 100, then 300."
+ ],
+ "acceptance_across_all_425_cycles": {
+  "cycles_accepted": 425,
+  "cycles_failed": 0,
+  "load_verdict_loaded": 425,
+  "delete_verdict_deleted": 425,
+  "selected_track_same_true": 425,
+  "chain_before_empty": 425,
+  "chain_after_exactly_utility": 425,
+  "delete_went_one_to_zero": 425,
+  "track_count_unchanged": 425,
+  "guards_all_ok": 425,
+  "displaced_non_empty": 0,
+  "configure_needed": 0,
+  "note": "Not one cycle was accepted on a weaker reading than the one the method states, and no cycle displaced a device or asked to be configured."
+ },
+ "stages": [
+  {
+   "stage": "a",
+   "cycles_planned": 25,
+   "cycles_completed": 25,
+   "stop_reason": "completed",
+   "started_at": "2026-09-17T09:24:14Z",
+   "cycle_seconds_total": 177.2,
+   "seconds_per_cycle": {
+    "median": 7.0788,
+    "min": 6.8753,
+    "max": 7.7478
+   },
+   "seconds_per_phase_median": {
+    "load": 2.4003,
+    "delete": 2.3987
+   },
+   "rss_mib": {
+    "first_cycle": 642.4,
+    "last_cycle": 644.5,
+    "min": 642.4,
+    "max": 644.5,
+    "decreases": 0
+   },
+   "threads": {
+    "first_cycle": 55,
+    "last_cycle": 54,
+    "min": 54,
+    "max": 55
+   },
+   "footprint_mib": [
+    {
+     "cycle": 25,
+     "footprint": 1314,
+     "peak": 2059
+    }
+   ],
+   "shape": "Monotone rise of 2.0 MiB over 25 cycles, with no reclaim anywhere in the stage. On its own this length reads as growth."
+  },
+  {
+   "stage": "b",
+   "cycles_planned": 100,
+   "cycles_completed": 100,
+   "stop_reason": "completed",
+   "started_at": "2026-09-17T09:28:35Z",
+   "cycle_seconds_total": 709.9,
+   "seconds_per_cycle": {
+    "median": 7.0881,
+    "min": 6.8815,
+    "max": 7.7055
+   },
+   "seconds_per_cycle_first_50_median": 7.0841,
+   "seconds_per_cycle_last_50_median": 7.0954,
+   "seconds_per_phase_median": {
+    "load": 2.4396,
+    "delete": 2.3874
+   },
+   "rss_mib": {
+    "first_cycle": 644.5,
+    "last_cycle": 645.1,
+    "min": 642.1,
+    "max": 645.3,
+    "min_at_cycle": 51,
+    "max_at_cycle": 49
+   },
+   "threads": {
+    "first_cycle": 54,
+    "last_cycle": 54,
+    "min": 52,
+    "max": 54
+   },
+   "footprint_mib": [
+    {
+     "cycle": 10,
+     "footprint": 1314
+    },
+    {
+     "cycle": 20,
+     "footprint": 1314
+    },
+    {
+     "cycle": 30,
+     "footprint": 1314
+    },
+    {
+     "cycle": 40,
+     "footprint": 1314
+    },
+    {
+     "cycle": 50,
+     "footprint": 1314
+    },
+    {
+     "cycle": 60,
+     "footprint": 1314
+    },
+    {
+     "cycle": 70,
+     "footprint": 1314
+    },
+    {
+     "cycle": 80,
+     "footprint": 1314
+    },
+    {
+     "cycle": 90,
+     "footprint": 1315
+    },
+    {
+     "cycle": 100,
+     "footprint": 1316
+    }
+   ],
+   "shape": "This is the stage that shows the rise is not monotone. RSS climbed to 645.30 MiB by cycle 49, then fell 3.2 MiB to 642.08 MiB at cycle 51, drifted back up through the fifties and sixties, and ended at 645.11 MiB, below the peak it had reached at cycle 49. Footprint sat flat at 1314 MiB from cycle 10 through cycle 80 before moving to 1315 and 1316. Threads dipped from 54 to 52 at cycles 94 to 97 and came back."
+  },
+  {
+   "stage": "c",
+   "cycles_planned": 300,
+   "cycles_completed": 300,
+   "stop_reason": "completed",
+   "started_at": "2026-09-17T09:50:29Z",
+   "cycle_seconds_total": 2129.4,
+   "seconds_per_cycle": {
+    "median": 7.0955,
+    "min": 6.7748,
+    "max": 7.7014
+   },
+   "seconds_per_cycle_first_50_median": 7.0817,
+   "seconds_per_cycle_last_50_median": 7.1038,
+   "seconds_per_phase_median": {
+    "load": 2.4402,
+    "delete": 2.3814
+   },
+   "rss_mib": {
+    "first_cycle": 609.8,
+    "last_cycle": 587.1,
+    "min": 584.0,
+    "max": 626.7,
+    "min_at_cycle": 221,
+    "max_at_cycle": 219
+   },
+   "threads": {
+    "first_cycle": 53,
+    "last_cycle": 52,
+    "min": 52,
+    "max": 53
+   },
+   "footprint_mib": [
+    {
+     "cycle": 20,
+     "footprint": 1286
+    },
+    {
+     "cycle": 40,
+     "footprint": 1288
+    },
+    {
+     "cycle": 60,
+     "footprint": 1288
+    },
+    {
+     "cycle": 80,
+     "footprint": 1288
+    },
+    {
+     "cycle": 100,
+     "footprint": 1288
+    },
+    {
+     "cycle": 120,
+     "footprint": 1288
+    },
+    {
+     "cycle": 140,
+     "footprint": 1288
+    },
+    {
+     "cycle": 160,
+     "footprint": 1289
+    },
+    {
+     "cycle": 180,
+     "footprint": 1289
+    },
+    {
+     "cycle": 200,
+     "footprint": 1289
+    },
+    {
+     "cycle": 220,
+     "footprint": 1290
+    },
+    {
+     "cycle": 240,
+     "footprint": 1290
+    },
+    {
+     "cycle": 260,
+     "footprint": 1290
+    },
+    {
+     "cycle": 280,
+     "footprint": 1290
+    },
+    {
+     "cycle": 300,
+     "footprint": 1290
+    }
+   ],
+   "shape": "The longest stage ended 22.7 MiB BELOW where it started: 609.8 MiB at cycle 1, 587.1 MiB at cycle 300, inside a band of 584.0 to 626.7 MiB. The slow climb to 626.72 MiB at cycle 219 was given back in two steps, 605.09 MiB at cycle 220 and 583.95 MiB at cycle 221, a reclaim of 42.8 MiB, after which the curve resumed the same slow climb and reached only 587.1 MiB by cycle 300. Footprint moved 1286 to 1290 MiB over the whole stage, 4 MiB across 300 cycles, and was flat at 1288 from cycle 40 to cycle 140."
+  }
+ ],
+ "cross_stage_readings": {
+  "same_process": "All three stages ran against pid 1645. Live was not restarted between them.",
+  "idle_interval": "Stage b's last cycle finished about 09:40:25Z and stage c's first sample was taken at 09:50:29Z. Across roughly ten minutes in which the harness ran nothing at all, RSS fell from 645.1 MiB to 609.8 MiB, a drop of 35.3 MiB. This is the largest single movement in the whole run and no cycle caused it.",
+  "why_that_matters": "It is the clearest reason not to read a before/after delta as growth: the same process gave back 35 MiB while doing nothing. It is one incidental observation and it is NOT an idle control arm.",
+  "total": "425 accepted cycles over about 62 minutes of wall clock, 09:24:14Z to about 10:25:58Z including the gaps between stages."
+ },
+ "result": {
+  "verdict": "no restarts needed at this length",
+  "means": "Live took 425 load and delete cycles in one process without a single failure, without a trend in cycle time, and without a memory curve that grows without giving anything back. instrument_sweep does not have to be designed around process restarts for a run of this length.",
+  "stability": "Nothing broke and nothing degraded. Every cycle was accepted on read-back, the chain returned to empty every time, the selection never wandered, and the browser item at app.browser.audio_effects.children[64] still read 'Utility' before every one of the 425 cycles.",
+  "no_slowdown": "Cycle time is flat. In the 300-cycle stage the first fifty cycles have a median of 7.0817 s and the last fifty 7.1038 s, a difference of 22 ms, which is inside the spread of a single stage (6.77 s to 7.70 s). The three stage medians, 7.0788, 7.0881 and 7.0955 s, differ by 17 ms across a twelvefold change in stage length.",
+  "memory": "Read the shape, not the endpoints. Stage a alone looks like monotone growth; stage b shows a reclaim at cycle 51; stage c ends lower than it started and gives back 42.8 MiB in two cycles around cycle 220. Footprint moved 4 MiB over 300 cycles. That is a bounded curve with reclaim in it, not unbounded growth.",
+  "cost": "A load and delete cycle costs about 7.1 s end to end, of which about 2.44 s is the load and about 2.38 s the delete, the rest being the guard reads and the memory samples. The harness projects 1000 cycles at 1.97 h from that median. The projection is arithmetic on the measured median and is not itself a measurement."
+ },
+ "scope_and_weakness": [
+  "1000 cycles were NOT run. The spec's validation 2 asks about a thousand; this record answers to 425 and says so rather than extrapolating. Nothing here rules out a threshold between 425 and 1000.",
+  "No idle control arm was run. A Live process left open for the same wall-clock time with no cycles in it was never sampled, so the memory figures rest on the shape of the curve, plateau and reclaim against unbounded growth, and not on a subtraction.",
+  "One device, and the cheapest kind. Utility is a native audio effect. An instrument allocates more and a third-party plugin more again, and a sweep loads instruments, not Utility. Nothing here measures what 425 instrument loads do.",
+  "One track, one set, one machine, one Live version, one session. The set was empty by construction, which is the friendliest case: no clips, no other devices, no plugin windows.",
+  "Cycle time was measured with the harness pacing itself at 1.0. It is the cost of a paced cycle from this client, not the fastest Live can do the work.",
+  "Nothing here says anything about the undo stack's own cost, because nothing here can read it."
+ ],
+ "attribution": {
+  "harness_note_verbatim": "A memory delta over this run cannot be attributed. Nothing in the Live Object Model clears or reports the undo stack, and a thousand cycles push roughly two thousand undo steps. Read the curve's shape, a bounded plateau against unbounded growth, and subtract an idle control arm of the same wall-clock length. A before/after pair says nothing.",
+  "note_source": "The summary record of each of the three journals, identical in all three.",
+  "as_it_applies_to_this_run": "The note is worded for the thousand-cycle run that was planned. At the two undo steps per cycle it counts, a load and a delete, the 425 cycles actually run push roughly 850 undo steps. The second half of its instruction was not carried out: the curve's shape was read, the control arm was not run."
+ },
+ "journals": [
+  "stage-a.jsonl, 29 lines: header, preflight, aim, 25 cycle records, summary",
+  "stage-b.jsonl, 104 lines: header, preflight, aim, 100 cycle records, summary",
+  "stage-c.jsonl, 304 lines: header, preflight, aim, 300 cycle records, summary"
+ ],
+ "journal_location_note": "The journals were written to the session scratchpad and are not in the repository. Every figure in this record was computed from them; this record is what survives them.",
+ "recorded_also_in": [
+  "docs/limits.md, section 5, 'Does Live survive a long run of load and delete cycles?'"
+ ]
+}

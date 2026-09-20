@@ -4,11 +4,27 @@ build-backend = "hatchling.build"
 
 [project]
 name = "live-maestro"
-version = "0.1.1"
+version = "0.1.2"
 description = "MCP server connecting AI assistants to Ableton Live through the Live Object Model."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "AGPL-3.0-or-later" }
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "THIRD-PARTY.md"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+    "Typing :: Typed",
+]
 authors = [{ name = "Roman Stark", email = "mail@romanstark.de" }]
 keywords = ["live", "ableton-live", "mcp", "lom", "music", "daw", "production"]
 
@@ -53,6 +69,9 @@ live-maestro = "live_maestro.server:main"
 # Live needs two files in its User Library before any of this works, and a user who
 # installed the wheel has no checkout to run a script from. This is that step.
 live-maestro-install = "live_maestro.installer:main"
+# match_sound answers "no index" with the name of the thing that builds one. A caller
+# who installed the wheel has no checkout, so that name has to be a command.
+live-maestro-index = "live_maestro.indexer:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/live_maestro"]
@@ -64,7 +83,11 @@ artifacts = ["src/live_maestro/catalog/*.yaml", "src/live_maestro/**/*.yaml"]
 # the Remote Script runs in Live's own interpreter and is never imported from here.
 # Neither can be resolved from a checkout at install time, because a user installing
 # with uv tool install has no checkout.
-force-include = { "devices" = "live_maestro/devices", "live-remote-script" = "live_maestro/live-remote-script" }
+# Only the analyzer, which analyze_audio talks to and live-maestro-install places.
+# devices/ also holds LiveMaestro_Probe, a throwaway used by the validation spikes and
+# driven only from a checkout, and shipping the whole directory put it in every user's
+# site-packages with nothing to talk to it.
+force-include = { "devices/LiveMaestro_Analyzer.amxd" = "live_maestro/devices/LiveMaestro_Analyzer.amxd", "devices/LiveMaestro_Analyzer.maxpat" = "live_maestro/devices/LiveMaestro_Analyzer.maxpat", "live-remote-script/__init__.py" = "live_maestro/live-remote-script/__init__.py", "live-remote-script/README.md" = "live_maestro/live-remote-script/README.md" }
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -74,11 +97,25 @@ include = [
     "docs",
     "devices",
     "tests",
+    "measurements",
     "README.md",
     "LICENSE",
     "THIRD-PARTY.md",
     "CLA.md",
     "CONTRIBUTING.md",
+]
+# The include list above names directories, and hatchling fills them from the filesystem
+# rather than from git. Working documents that are deliberately kept out of the
+# repository therefore reach the sdist anyway unless they are named here. Keep this in
+# step with DELIBERATELY_UNTRACKED in tests/test_repository_claims.py, which fails when
+# it is not.
+exclude = [
+    "docs/PRD.md",
+    "docs/audio_perception_spec.md",
+    "docs/implementation_plan.md",
+    "docs/live-maestro-contract-hardening-spec.md",
+    "docs/live-maestro-instrument-sweep-spec.md",
+    "docs/live-maestro-sound-rebuild-spec.md",
 ]
 
 [tool.pytest.ini_options]

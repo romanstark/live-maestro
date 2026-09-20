@@ -84,8 +84,8 @@ _XML_DECLARATION = b'<?xml version="1.0" encoding="UTF-8"?>\n'
 _GZIP_LEVEL = 6
 _GZIP_OS_BYTE = 0x0A
 
-# A set saved seconds ago was almost certainly saved by Live, just now. Chosen, not
-# measured: there is no measurement behind the number, only caution.
+# A set saved seconds ago was almost certainly saved by Live just now. Chosen out of
+# caution, not measured.
 _RECENT_WRITE_SECONDS = 60.0
 
 # Substring searched for in the process table, case-folded.
@@ -686,11 +686,11 @@ def _sidechain_devices(track: ET.Element) -> list[ET.Element]:
 
     Descends the whole track, so devices nested inside racks are included. Measured on
     one project: every wired compressor sat one to three rack levels deep on a group
-    track, out of 62 sidechain-capable devices in the set. A walk of the top device
+    track, out of 62 sidechain-capable devices in the set, so a walk of the top device
     chain alone reaches none of them.
 
-    Live hangs a sidechain input on every plugin, so this list is long and most of it is
-    unwired. It is a list of slots, not of findings.
+    Live hangs a sidechain input on every plugin, so this is a list of slots, most of
+    them unwired, and not a list of findings.
     """
     return [element for element in track.iter() if element.find("./SideChain") is not None]
 
@@ -783,10 +783,9 @@ def _plugin_name(device: ET.Element) -> str:
 def _slot_attr(slot: ET.Element, child: str) -> str:
     """Return a plugin slot child attribute, or the empty string where absent.
 
-    A free slot carries an empty ``ParameterName``, so absence is ordinary here
-    and not an error. A missing child element and a missing ``Value`` attribute
-    both answer the empty string, so a slot value is never an exception and never
-    the text ``"None"`` standing in for a parameter id.
+    A free slot carries an empty ``ParameterName``, so absence is ordinary and not an
+    error. A missing child element and a missing ``Value`` attribute both answer the
+    empty string, never an exception and never the text ``"None"``.
     """
     node = slot.find(child)
     if node is None:
@@ -866,11 +865,9 @@ def configure_plugin_parameters(
     Note:
         Nothing is inserted. Live allocates the slot array up front (128 slots per
         instance, measured 2026-09-01) and an unconfigured slot is a complete element
-        already carrying its own automation and modulation targets. This fills three
-        fields of a slot that is already there, which is why it is a small edit rather
-        than a structural one.
+        already carrying its own automation and modulation targets.
 
-        Three fields, and deliberately not more: ``ParameterName``, ``ParameterId`` and
+        Three fields are filled and no more: ``ParameterName``, ``ParameterId`` and
         ``VisualIndex``. The slot's ``Manual`` value and its ``MidiControllerRange`` are
         left exactly as Live wrote them.
     """
@@ -1022,16 +1019,14 @@ def set_sidechain_source(
         AlsWriteError: If track/device cannot be found or routing is invalid.
 
     Note:
-        The input gain at ``RoutedInput/Volume/Manual`` is deliberately left alone:
-        99 % of 794 corpus occurrences sit at 1, and the strength of a pump comes from
-        threshold and ratio on the compressor, not from the sidechain input.
+        The input gain at ``RoutedInput/Volume/Manual`` is left alone: 99 % of 794 corpus
+        occurrences sit at 1, and the strength of a pump comes from threshold and ratio
+        on the compressor, not from the sidechain input.
 
-        This is not a write the LOM cannot do, however often it is described that way.
-        Measured 2026-08-30 against Live 12.4.5: a device carries ``input_routing_type``
-        and ``input_routing_channel``, and both are writable over Channel A. For a set
-        Live has open, do it there: it needs no backup, no closing of the set and no restart.
-        This function is for the set Live does not have open, where there is no LOM to
-        ask.
+        Use this only for a set Live does not have open. Measured 2026-08-30 against
+        Live 12.4.5: a device carries ``input_routing_type`` and
+        ``input_routing_channel``, both writable over Channel A, which needs no backup,
+        no closing of the set and no restart.
 
         What this does not do, because none of it lives in the file: load the compressor
         (Channel A can, and must, do that first), give the trigger track an instrument,

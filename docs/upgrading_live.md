@@ -85,6 +85,8 @@ Loading a device *inside* a rack chain is also out of reach from here: writing `
 
 Build the specimen set once, save it under a name of its own, and reuse it for every upgrade. Three of the four manual steps survive a save, so a saved specimen set turns them into a one-time cost. Note in the commit which specimen set a report was measured against.
 
+That has not been done yet. Searched 2026-09-17: no saved specimen set exists on this machine. No set carries a matching name, and the seven non-factory sets are music projects. The next upgrade therefore starts by building the set from the table above, and this recommendation only begins to pay from the upgrade after that one.
+
 ---
 
 ## 3. Deploy the Remote Script
@@ -248,6 +250,8 @@ Do **not** pass `--write-back` on a first pass. It appends to `doc` and rewrites
 ```
 
 The tool names the file from the `live_version` the runs carry, so it writes `measurements/catalog-live-<new version>.json` without being told the version. It prints the outcome counts and refuses to write if any value read out of the set has leaked into the report.
+
+What it does not record is which set produced it. `measurements/catalog-live-12.4.5.json` carries `live_version`, `script_version` and `rows`, and no field naming the specimen set, so that run cannot be reproduced and a later comparison against it cannot separate a Live change from a set difference. Until the report carries the set, name it in the commit message, and read a comparison against an older report as evidence about two sets rather than about two Live versions.
 
 **Delete the superseded report in the same commit.** `tests/test_catalog.py` resolves the report by looking for exactly one `catalog-live-*.json` and fails on any other count. One report describes the version the catalog currently stands on.
 

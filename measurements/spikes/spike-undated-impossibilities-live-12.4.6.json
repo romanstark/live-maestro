@@ -1,0 +1,107 @@
+{
+ "record": "spike",
+ "schema_version": 1,
+ "id": "undated-impossibility-rows",
+ "title": "Ten of the fourteen undated impossibility rows probed: nine hold, return.devices does not reproduce",
+ "measured_on": "2026-09-19",
+ "live_version": "12.4.6",
+ "script_version": "0.1.2",
+ "host": "macOS 25.6.0, Apple silicon",
+ "set": "empty set, four tracks, two return tracks carrying Reverb and Delay",
+ "question": "Fourteen catalog rows told a caller something cannot be done, with an attribution and no measurement. Which of them is true of this Live?",
+ "why_it_matters": "A false 'cannot' stops a caller from trying, and a catalog row is inherited as fact. The contract hardening spec's acceptance criterion 8.3 asks for every impossibility to be dated and measured, and expects at least one to be wrong.",
+ "specimens": [
+  "Operator and EQ Eight on MIDI track 0",
+  "Reverb on return track A, and the same Reverb loaded onto ordinary track 2",
+  "Oxi Bass Rack on track 0 for a nested chain device",
+  "Simpler on MIDI track 1, made by dropping a sample onto it",
+  "one-shot sample dropped onto audio track 3 for an unwarped audio clip"
+ ],
+ "method": "lom_set on the path, with its read-back, through the raw tool, which does not consult the row's access list. Values were restored where anything was stored.",
+ "results": [
+  {
+   "rows": [
+    "param.value",
+    "eq8.frequency_hint",
+    "return_device.on",
+    "return_device.parameter",
+    "chain.device_on"
+   ],
+   "claim": "the parameter object is read-only and lom_set answers not_settable",
+   "probe": "lom_set on the parameter object, then on the same parameter's .value",
+   "answer": "object: not_settable on all five. .value: applied, except the on/off parameter which answered clamped for 0.42 because it holds 0 or 1",
+   "outcome": "held"
+  },
+  {
+   "rows": [
+    "track.is_grouped",
+    "track.group_track",
+    "track.has_midi_input"
+   ],
+   "claim": "read-only",
+   "probe": "lom_set with a plausible value, and a track handle for group_track",
+   "answer": "not_settable on all three, with Live naming the attribute in its own message",
+   "outcome": "held"
+  },
+  {
+   "rows": [
+    "simpler.sample_file_path"
+   ],
+   "claim": "read-only, taken from Ableton's documentation rather than measured",
+   "probe": "read, then lom_set with another path",
+   "answer": "read returned the file on disk; the write answered not_settable. A Simpler with no sample loaded has no .sample at all and answers no_such_path",
+   "outcome": "held, and now measured rather than attributed"
+  },
+  {
+   "rows": [
+    "clip.looping"
+   ],
+   "claim": "an unwarped audio clip cannot loop meaningfully, and Live is expected to allow the flag anyway",
+   "probe": "warping set to false on an audio one-shot, then looping set to true",
+   "answer": "applied and changed, reads back true",
+   "outcome": "the expectation is now a reading. The flag is not a guard, so a clip carrying it is no evidence that anything loops"
+  },
+  {
+   "rows": [
+    "return.devices"
+   ],
+   "claim": "a return device's parameters have been seen without display_value where the same device on a normal track provides it, so a dB or Hz target cannot be searched for on a return at all",
+   "probe": "first four parameters of a Reverb in return track A and of the same Reverb loaded onto ordinary track 2",
+   "answer": "the same display_value on both, Predelay reading 2.5 either way, across all four",
+   "outcome": "did not reproduce"
+  }
+ ],
+ "not_probed": [
+  {
+   "row": "song.tempo",
+   "why": "the claim is about writing tempo automation, not about writing tempo"
+  },
+  {
+   "row": "clip.color",
+   "why": "the claim is about Live 10 and earlier snapping to a 70-entry palette, which an installation running 12.4.6 cannot show"
+  },
+  {
+   "row": "chain.send",
+   "why": "advice about planning send levels in dB rather than in 0 to 1, which is not an impossibility claim. The check matches it on wording"
+  },
+  {
+   "row": "an Instrument Rack chain's sends",
+   "why": "song.tracks[N].devices[0].chains[0].mixer_device.sends[0] answered index_out_of_range on the rack probed, so no send was there to read"
+  }
+ ],
+ "result": [
+  "The roster falls from fourteen to three. Nine claims hold and now carry a date and a version; one does not reproduce and its row is replaced by the reading.",
+  "return.devices carried no date and no version, so what it was true of cannot be established. It is not true of Live 12.4.6 with a Reverb.",
+  "The shared sentence behind five of the rows is true and was true for a dull reason: the path names the DeviceParameter object and the number lives one level in, at .value. The rows say so already; what they lacked was the reading."
+ ],
+ "scope_and_weakness": [
+  "One device of each kind. return.devices was probed with Reverb alone, so a device whose return instance does drop display_value would not have been seen.",
+  "One machine, one Live version, one session, one empty set.",
+  "Only the writes were probed. Whether lom_get suffers any asymmetry of its own was not measured.",
+  "The three remaining rows are not measured and are not claimed to be right. Two of them cannot be probed on this installation at all."
+ ],
+ "recorded_also_in": [
+  "docs/catalog.md",
+  "tests/test_catalog.py"
+ ]
+}

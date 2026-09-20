@@ -13,7 +13,13 @@ import pytest
 
 from live_maestro.analyzer import report
 from live_maestro.analyzer.client import Reply
-from live_maestro.analyzer.protocol import NUMERIC_REPLY_FIELDS, REPLY_SCHEMA
+from live_maestro.analyzer.metrics import to_dbfs
+from live_maestro.analyzer.models import (
+    AccumulationSpan,
+    AudioMeasurementResult,
+    BandOccupancy,
+)
+from live_maestro.analyzer.protocol import BANDS, NUMERIC_REPLY_FIELDS, REPLY_SCHEMA
 
 #: A reply from a healthy master: comfortable level, peak under the ceiling,
 #: correlated low end, nothing to warn about.
@@ -80,7 +86,7 @@ def test_nothing_answering_is_reported_as_the_device_missing() -> None:
     #
     # Assert the installed command, not the checkout script: this reply reaches
     # every caller, and most of them installed a wheel and have no scripts/
-    # directory. Pinning "install_script.py" alone is what let that slip.
+    # directory.
     assert any("live-maestro-install" in line for line in result.recommendations)
     assert any("last in the chain" in line for line in result.recommendations)
     # The other 36 tools do not need this device, and a caller reading this
@@ -141,11 +147,12 @@ def test_a_decorrelated_low_end_is_named_with_its_number() -> None:
 def test_an_inverted_channel_is_not_treated_as_a_wide_image() -> None:
     """Bass Mono cures a decorrelated low end and destroys an opposed one.
 
-    Measured 2026-09-07 against Live 12.4.5 with Utility's Right Inv on a mono
-    bass: both correlations read -0.999, and the mono sum of that bass was 30 dB
-    below the same bass with the inversion cleared. Summing L and -L below a
-    crossover leaves nothing, so naming Bass Mono here would silence the part of
-    the mix the caller is asking about.
+    Measured 2026-09-07 against Live 12.4.5 with Utility's Right Inv on a mono bass:
+    both
+    correlations read -0.999, and the mono sum of that bass was 30 dB below the
+    same bass with the inversion cleared. Summing L and -L below a crossover
+    leaves nothing, so naming Bass Mono here would silence the part of the mix
+    the caller is asking about.
     """
     # rms_l = rms_r = 0.15 and rms_low = 0.10, so these products give -0.999.
     result = report.build(
@@ -173,12 +180,12 @@ def test_a_merely_decorrelated_low_end_still_gets_the_bass_mono_advice() -> None
 
 
 def test_a_negative_whole_band_correlation_is_not_called_mono_compatible() -> None:
-    """The state a planted polarity flip produced through a mono kick.
+    """A low band above the floor does not make an opposed mix summable.
 
-    Measured 2026-09-07 against Live 12.4.5: the inverted bass sat under a mono
-    kick, so the band below 120 Hz read +0.23 while the whole band read -0.22.
-    A low band figure above the floor is not enough to call that mix summable,
-    and reading only the low band reported it as compatible.
+    Measured 2026-09-07 against Live 12.4.5 with a polarity flip through a mono kick:
+    the
+    inverted bass sat under the kick, so the band below 120 Hz read +0.23 while
+    the whole band read -0.22. Reading only the low band calls that compatible.
     """
     result = report.build(
         [make(mean_lr=-0.0225 * 0.222, mean_low_lr=0.01 * 0.231)], "master", reset=False
@@ -469,3 +476,294 @@ def test_a_digit_never_matches_on_its_own() -> None:
     for reply in (Reply(strings={"track_name": "Bass"}), Reply(strings={"track_name": "0"})):
         assert not report.matches(reply, "0")
         assert not report.matches(reply, "7")
+
+
+def test_a_single_window_reports_no_occupancy_and_says_why() -> None:
+    """One window is a sample of time, so it cannot be turned into a share of it.
+
+    Publishing 100.0 or 0.0 per band off the seven bands of a single reply gives
+    each percentage exactly one observation, and a band that happened to carry
+    energy in that one window would read as present through the whole section.
+    """
+    result = report.build([make()], "master", reset=False)
+    assert result.band_occupancy is None
+    assert result.band_occupancy_note == report.SINGLE_WINDOW_OCCUPANCY_NOTE
+    # The note has to say how to get a real occupancy, not only that this is not
+    # one, so both halves of the call sequence are named in it.
+    assert "accumulate='start'" in report.SINGLE_WINDOW_OCCUPANCY_NOTE
+    assert "accumulate='read'" in report.SINGLE_WINDOW_OCCUPANCY_NOTE
+    # A window count of an accumulation that never ran is not zero windows.
+    assert result.occupancy_threshold_db is None
+    assert result.accumulated_windows is None
+    assert result.accumulation is None
+    # A threshold nothing was compared against describes no measurement, so it is
+    # dropped rather than echoed back. Passed in here, because the default alone
+    # would satisfy the assertion above without the rule being exercised at all.
+    threshold_only = report.build(
+        [make()], "master", reset=False, occupancy_threshold_db=12.0
+    )
+    assert threshold_only.band_occupancy is None
+    assert threshold_only.band_occupancy_note == report.SINGLE_WINDOW_OCCUPANCY_NOTE
+    assert threshold_only.occupancy_threshold_db is None
+    # Only the occupancy was removed. The bands themselves are still measured
+    # over this window and still reach the caller.
+    assert result.spectrum is not None
+    assert result.spectrum.mid_dbfs is not None
+
+    # Silence is the same answer. Seven zeroes here would read as "every band
+    # was measured and none of them ever played", which is a share of time this
+    # single window never established either.
+    silence_bands: dict[str, float] = {name: 0.0 for name, _, _ in BANDS}
+    silence_bands.update({"rms_l": 0.0, "rms_r": 0.0})
+    silent = report.build([make(extra=silence_bands)], "master", reset=False)
+    assert silent.status == "silent"
+    assert silent.band_occupancy is None
+    assert silent.band_occupancy_note == report.SINGLE_WINDOW_OCCUPANCY_NOTE
+    assert silent.occupancy_threshold_db is None
+    assert silent.accumulated_windows is None
+    assert silent.accumulation is None
+
+
+def test_an_accumulated_read_reports_the_accumulated_spectrum_and_its_span() -> None:
+    """The spectrum has to cover the windows the occupancy was counted over.
+
+    Built the way ``server.analyze_audio`` builds it on accumulate='read': the
+    occupancy, the averaged band amplitudes and the span all come from the same
+    recorded windows, and the single reply only supplies the loudness, dynamics
+    and stereo figures.
+    """
+    occupancy = BandOccupancy(
+        sub_pct=0.0,
+        bass_pct=97.0,
+        low_mid_pct=100.0,
+        mid_pct=100.0,
+        high_mid_pct=39.0,
+        presence_pct=12.0,
+        air_pct=0.0,
+    )
+    # Deliberately unlike the fixture's own band_mid of 0.04, so a spectrum that
+    # came from the last window instead of the accumulation is visible.
+    means: dict[str, float] = {name: 0.0 for name, _, _ in BANDS}
+    means["band_mid"] = 0.5
+    span = AccumulationSpan(windows=60, elapsed_s=30.0, window_ms=400.0, coverage_pct=80.0)
+
+    result = report.build(
+        [make()],
+        "master",
+        reset=False,
+        occupancy_threshold_db=12.0,
+        band_occupancy=occupancy,
+        accumulated_bands=means,
+        accumulation=span,
+    )
+
+    assert result.spectrum is not None
+    assert result.spectrum.mid_dbfs == to_dbfs(0.5) == -6.02
+    assert result.spectrum.mid_dbfs != to_dbfs(CLEAN["band_mid"])
+    assert result.band_occupancy is not None
+    assert result.band_occupancy.high_mid_pct == 39.0
+    # An occupancy that was counted needs no note explaining its absence.
+    assert result.band_occupancy_note is None
+    assert result.occupancy_threshold_db == 12.0
+    # Derived from the span rather than passed alongside it, so the two cannot
+    # disagree about how many windows were counted.
+    assert result.accumulated_windows == 60
+    assert result.accumulation is not None
+    assert result.accumulation.coverage_pct == 80.0
+    # A caller reading the summary alone still learns what the figures cover.
+    assert "60 windows over 30.0 s" in result.summary
+    assert "80.0%" in result.summary
+
+
+#: A reply from a window that carried nothing: no band, no level, no channel to
+#: correlate. The peak holds are left where they are, because a meter that is not
+#: being reset keeps the highest peak it has seen through a silent window.
+SILENT_WINDOW: dict[str, float] = dict(
+    {name: 0.0 for name, _, _ in BANDS},
+    rms_l=0.0,
+    rms_r=0.0,
+    mean_lr=0.0,
+    rms_low_l=0.0,
+    rms_low_r=0.0,
+    mean_low_lr=0.0,
+    momentary_lufs=-120.0,
+    short_term_lufs=-120.0,
+    integrated_lufs=-120.0,
+)
+
+
+def test_an_accumulated_read_decides_silence_over_the_windows_it_counted() -> None:
+    """The verdict has to cover the same span as the figures printed beside it.
+
+    On accumulate='read' the single reply is the last window the sampler caught,
+    and the spectrum and the occupancy are the whole accumulation. Reading
+    ``status`` off that one window makes a section whose last window fell in a
+    gap answer 'silent' while its own occupancy says a band carried energy in it,
+    and it empties the advice that was derived from the accumulated spectrum. The
+    same eight windows in a different order then get opposite verdicts.
+    """
+    # 12 dB of sub over bass in the accumulated mean, which is advice the spectrum
+    # supports and the last window cannot contradict: it measured nothing.
+    means: dict[str, float] = {name: 0.0 for name, _, _ in BANDS}
+    means["band_sub"] = 0.2
+    means["band_bass"] = 0.05
+    occupancy = BandOccupancy(sub_pct=87.5, bass_pct=87.5, mid_pct=0.0)
+    span = AccumulationSpan(windows=8, elapsed_s=3.2, window_ms=400.0, coverage_pct=100.0)
+
+    result = report.build(
+        [make(extra=SILENT_WINDOW)],
+        "master",
+        reset=False,
+        occupancy_threshold_db=12.0,
+        band_occupancy=occupancy,
+        accumulated_bands=means,
+        accumulation=span,
+    )
+
+    # Eight windows that carried energy are not a silent track, whichever of them
+    # happened to be last.
+    assert result.status == "ok"
+    assert result.spectrum is not None and result.spectrum.sub_dbfs is not None
+    # The track itself is never called silent, only the one window that was.
+    assert "Main was silent" not in result.summary
+    assert "silent over the accumulation" not in result.summary
+    # The advice rests on the accumulated spectrum, so the last window cannot
+    # delete it.
+    assert any("20 to 60 Hz" in line for line in result.recommendations)
+    # The null level figures are a fact about the last window, and the summary
+    # says which span they came from rather than leaving the reader to guess.
+    assert result.dynamics is not None and result.dynamics.rms_dbfs is None
+    assert "last recorded window, and that window was silent" in result.summary
+    # Still the same span statement as any other accumulated read.
+    assert "8 windows over 3.2 s" in result.summary
+
+
+def test_an_accumulation_that_recorded_only_silence_is_still_reported_silent() -> None:
+    """The looser verdict must not turn a genuinely silent section into a measurement."""
+    means: dict[str, float] = {name: 0.0 for name, _, _ in BANDS}
+    span = AccumulationSpan(windows=8, elapsed_s=3.2, window_ms=400.0, coverage_pct=100.0)
+    result = report.build(
+        [make(extra=SILENT_WINDOW)],
+        "master",
+        reset=False,
+        occupancy_threshold_db=12.0,
+        band_occupancy=BandOccupancy(),
+        accumulated_bands=means,
+        accumulation=span,
+    )
+    assert result.status == "silent"
+    # Silence over eight windows is not silence over the last 400 ms of them, and
+    # the sentence says which of the two was established.
+    assert "was silent over the accumulation" in result.summary
+    assert result.recommendations == []
+
+
+def test_one_recorded_window_is_counted_in_the_singular() -> None:
+    # The first read after accumulate='start' reaches this, and "1 windows" is
+    # what the caller is shown.
+    means: dict[str, float] = {name: 0.0 for name, _, _ in BANDS}
+    means["band_mid"] = 0.5
+    span = AccumulationSpan(windows=1, elapsed_s=0.1, window_ms=400.0, coverage_pct=399.6)
+    result = report.build(
+        [make()],
+        "master",
+        reset=False,
+        occupancy_threshold_db=12.0,
+        band_occupancy=BandOccupancy(mid_pct=100.0),
+        accumulated_bands=means,
+        accumulation=span,
+    )
+    assert "cover 1 window over 0.1 s" in result.summary
+    assert "1 windows" not in result.summary
+
+
+def test_report_does_not_re_export_the_metrics_helpers() -> None:
+    # band_occupancy_percentages and band_occupancy_window were imported into
+    # report.py only so server.py could reach them through this module. Ruff
+    # reports such an import as unused and `ruff check --fix` deletes it, which
+    # takes analyze_audio(accumulate='read') with it. Reaching them through
+    # report is the habit this pins shut: import them from metrics.
+    assert not hasattr(report, "band_occupancy_percentages")
+    assert not hasattr(report, "band_occupancy_window")
+
+
+def test_band_occupancy_sine_continuous_vs_pulsed_duty_cycle() -> None:
+    from live_maestro.analyzer.metrics import band_occupancy_percentages
+    # A continuous 3 kHz sine against a 1-in-8 pulsed one.
+    # High-mid band (2-6 kHz) holds 3 kHz.
+    # Over 8 windows:
+    # Continuous is active in all 8 windows.
+    # Pulsed is active in 1 of 8 windows.
+    counts_continuous = {"band_high_mid": 8}
+    counts_pulsed = {"band_high_mid": 1}
+
+    pct_continuous = band_occupancy_percentages(counts_continuous, 8)["band_high_mid"]
+    pct_pulsed = band_occupancy_percentages(counts_pulsed, 8)["band_high_mid"]
+
+    assert pct_continuous is not None
+    assert pct_pulsed is not None
+    assert pct_continuous == 100.0
+    assert pct_pulsed == 12.5
+    # Factor is exactly 8
+    assert round(pct_continuous / pct_pulsed, 1) == 8.0
+
+
+def test_transport_forwarded_in_report() -> None:
+    from live_maestro.analyzer.models import TransportState
+    ts = TransportState(
+        is_playing=True,
+        tracks_sounding=3,
+        tracks_total=18,
+        in_transition=True,
+    )
+    result = report.build([make()], "master", reset=False, transport=ts)
+    assert result.transport is not None
+    assert result.transport.is_playing is True
+    assert result.transport.tracks_sounding == 3
+    assert result.transport.tracks_total == 18
+    assert result.transport.in_transition is True
+
+
+
+def test_a_result_that_measured_nothing_carries_no_occupancy_and_no_note() -> None:
+    """A note that says why the occupancy is missing is for results that measured.
+
+    ``device_not_found``, ``schema_mismatch`` and ``track_not_found`` carry no
+    measurement at all, so there is no occupancy to explain the absence of and no
+    accumulation that would produce one: pointing the caller at accumulate='start'
+    there sends them down a path that can only answer 'no_windows_yet'. The
+    summary and the recommendations already say what went wrong. What the field
+    descriptions promise has to match that, or a caller reading them treats a
+    missing note as a bug.
+    """
+    for result in (
+        report.build([], "master", reset=False),
+        report.build([make(name="Bass")], "Drums", reset=False),
+        report.build([make(schema=0.0)], "master", reset=False),
+    ):
+        assert result.status in ("device_not_found", "track_not_found", "schema_mismatch")
+        assert result.band_occupancy is None
+        assert result.band_occupancy_note is None
+        assert result.summary
+
+    fields = AudioMeasurementResult.model_fields
+    occupancy_note = fields["band_occupancy_note"].description
+    occupancy = fields["band_occupancy"].description
+    assert occupancy_note is not None and occupancy is not None
+    # Both descriptions have to name the case the three statuses above produce.
+    assert "measured nothing" in occupancy_note
+    assert "measured nothing" in occupancy
+
+
+def test_the_status_says_which_span_it_was_taken_over() -> None:
+    """A verdict that covers a different span than the numbers beside it needs saying.
+
+    On accumulate='read' ``status`` covers the accumulated windows, the same span
+    as the spectrum and the occupancy, while the loudness and stereo figures cover
+    the last recorded window alone. A caller branching on ``status`` before
+    trusting the numbers has to be able to read which of the two it just got.
+    """
+    described = AudioMeasurementResult.model_fields["status"].description
+    assert described is not None
+    assert "accumulate='read'" in described
+    assert "accumulation" in described

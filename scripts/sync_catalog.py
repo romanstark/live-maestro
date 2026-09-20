@@ -1,17 +1,17 @@
 #!/usr/bin/env python
 """Reconcile the YAML path catalog against an active Ableton Live session.
 
-Catalog rows are discovered, verified and updated with ``lom_describe`` and
-``lom_get`` against specimen objects in the open Live session.
+Rows are discovered, verified and updated with ``lom_describe`` and ``lom_get`` against
+specimen objects in the open session.
 
-Catalog update policies:
-- ``no_such_path``: property is absent on confirmed specimen -> proposed for catalog deletion.
-- ``live_error``: property exists but Live rejects access -> marked as ``status: broken``.
-- ``index_out_of_range`` / missing container: inconclusive -> row left unchanged as ``untested``.
+Update policies by outcome:
+- ``no_such_path``: absent on a confirmed specimen, proposed for deletion.
+- ``live_error``: present but Live rejects access, marked ``status: broken``.
+- ``index_out_of_range`` or a missing container: inconclusive, left ``untested``.
 
-Evidence grades:
-- Determined probes (exact specimen matches): permit status flips and deletions.
-- Derived probes (polymorphic collections like devices[i]): permit additions and confirmations only.
+Determined probes, which matched an exact specimen, permit status flips and deletions.
+Derived probes over polymorphic collections such as ``devices[i]`` permit additions and
+confirmations only.
 
 Usage:
     python scripts/sync_catalog.py                    # reconcile and report

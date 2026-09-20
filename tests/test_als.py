@@ -1,33 +1,20 @@
 """Test Channel B, the ``.als`` reader and writer.
 
-Covers :mod:`live_maestro.als.read` and :mod:`live_maestro.als.write`.
+Covers :mod:`live_maestro.als.read` and :mod:`live_maestro.als.write`. No Live,
+no real set: every fixture is a constructed ``.als``, every write to ``tmp_path``.
+The 174-project corpus the measured figures come from is not in this repository and
+must not be added: someone else's sets are not ours to ship.
 
-No Live, no real project file, no network. There is no corpus in this
-repository and there never will be, because someone else's sets are not ours to
-ship. Every fixture here is a constructed ``.als``: gzip-compressed XML shaped
-like Live's own, small enough to read in one screen and complete enough to reach
-the code paths that matter. Every write goes to ``tmp_path``.
+The fixtures reproduce the measured list in ``als/read.py`` and ``docs/limits.md`` §2:
+gzip not ZIP; the ``Time = -63072000`` lead-in outside the curve; every time point written
+twice; ``FloatEvent``/``BoolEvent``/``EnumEvent`` in track automation; pad notes mirrored
+as ``128 - value``; the pitch on the ``KeyTrack``, not the note event; ``MainTrack`` for
+Live 12's ``MasterTrack``; ``session_clips`` already holding the Arrangement clips; and two
+automation layers, only the track layer script-writable, which a clip-envelope-only reader
+misses on 110 of 174 corpus projects.
 
-The fixtures reproduce the measured list from ``als/read.py``'s module docstring
-and ``docs/limits.md`` §2:
-
-* ``.als`` is gzip, not ZIP.
-* Automation lives in two places and only one of them is script-writable. The
-  fixture :func:`track_only_als` is the case that matters, because a reader that
-  counts clip envelopes alone reports 110 of 174 corpus projects as unautomated.
-* The lead-in point at ``Time = -63072000`` is not part of the curve.
-* Live writes every time point twice.
-* ``FloatEvent`` / ``BoolEvent`` / ``EnumEvent`` all occur in track automation.
-* Drum pad notes are stored mirrored, as ``128 - value``.
-* The pitch hangs on the ``KeyTrack``, not on the note event.
-* ``MainTrack`` is Live 12's name for ``MasterTrack``.
-* ``session_clips`` also contains the Arrangement clips.
-
-On the writing side the safety net is under test: a backup before the write
-(proven by comparing the backup's bytes against the original's), a read-back
-from disk afterwards, and a refusal when the set looks like Live has it open. The
-process table is faked, exactly as the socket is faked elsewhere. A test must
-never depend on whether the machine running it happens to have Live open.
+The write side exercises the safety net: backup first, read-back from disk, a
+refusal when Live looks to hold the set, and a faked process table.
 """
 
 from __future__ import annotations
@@ -550,9 +537,8 @@ def _fake_process_table(monkeypatch: pytest.MonkeyPatch, listing: str) -> None:
 
     The module shells out to ``tasklist``/``ps`` to ask whether a process called
     "Ableton Live" is alive. Whether one *is* alive on the machine running the
-    tests must never decide the outcome, so the whole ``subprocess`` reference
-    inside the module is swapped for a shim. This is the Channel B equivalent of
-    faking the socket.
+    tests must never decide the outcome, so the module's whole ``subprocess``
+    reference is swapped for a shim.
     """
     def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 0, stdout=listing, stderr="")
@@ -874,10 +860,10 @@ def test_a_windows_authored_sample_path_yields_its_basename() -> None:
 
 
 def test_a_macos_authored_sample_path_yields_its_basename() -> None:
-    """The other half, which no test covered.
+    """The macOS half: a set saved there stores a POSIX path.
 
-    A set saved by Live on macOS stores a POSIX path. Nothing in the reader may
-    depend on the separator the authoring machine happened to use.
+    Nothing in the reader may depend on the separator the authoring machine
+    happened to use.
     """
     pads = read._drum_pads_of(
         _drum_rack_with_sample("/Users/username/Music/Samples/Kick Analog 4.aif")
@@ -1319,8 +1305,8 @@ def test_a_file_another_process_holds_open_is_refused_without_an_override(
     """The one refusal with no override: the file cannot be opened for writing at all.
 
     Simulated with a read-only file, which is the same ``OSError`` from the same
-    probe. (This says nothing about Live: measured 2026-08-29, Live holds no lock
-    on a set it has open: it reads the file and closes the handle.)
+    probe. It says nothing about Live, which holds no lock on a set it has open
+    (see ``als/write.py``, ``_inspect_environment``).
     """
     age(sidechain_als)
     original = sidechain_als.read_bytes()
@@ -1617,16 +1603,15 @@ def test_als_write_refuses_the_set_live_has_open_even_when_overridden(
 ) -> None:
     """``allow_live_running=True`` must not reach the one dangerous case.
 
-    The file cannot answer which set Live holds: measured 2026-08-29 against Live
-    12.4.5, an exclusive open succeeds on the very set Live has loaded, because
-    Live reads the ``.als`` into memory and closes the handle. Live can answer it
-    exactly (``song.file_path``) and it is asked before the file layer falls
-    back to "is a Live process alive".
+    The file cannot answer which set Live holds: an exclusive open succeeds on
+    the very set Live has loaded, because Live reads the ``.als`` into memory and
+    closes the handle (see ``als/write.py``, ``_inspect_environment``, for the
+    dated reading). Live answers it exactly through ``song.file_path``, and is
+    asked before the file layer falls back to "is a Live process alive".
 
-    What makes this worth a test: a write into the open set is not corruption. It
-    lands on disk, Live saves over it, and the change is gone with no error
-    anywhere. So the refusal has to be unconditional, and the override that
-    existed for the coarse check must not survive into this one.
+    A write into the open set is not corruption: it lands on disk, Live saves
+    over it, and the change is gone with no error anywhere. So the refusal is
+    unconditional and the override for the coarse check does not reach it.
     """
     from live_maestro import server
 
@@ -1655,9 +1640,8 @@ def test_als_write_stops_asking_the_file_when_live_says_another_set(
 ) -> None:
     """A running Live holding a different set is not a reason to refuse.
 
-    This is the half that saves work: the requirement is that the set is closed,
-    not that the application is. Quitting Live to edit an unrelated project costs
-    a full plugin rescan and buys nothing.
+    The requirement is that the set is closed, not that the application is:
+    quitting Live to edit an unrelated project costs a full plugin rescan.
     """
     from live_maestro import server
 

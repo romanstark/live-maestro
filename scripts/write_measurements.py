@@ -1,26 +1,18 @@
 """Fold ``probe_paths.py --json`` runs into the report the catalog is checked against.
 
-``probe_paths.py --json`` prints one run. A full pass over the catalog takes many
-runs, because a row is only measured when the probe is aimed at an object of the
-right kind, and one open set cannot present every kind at once. This reads every
-run, keeps the best evidence each produced, and writes
-``measurements/catalog-live-<version>.json``.
+One run measures only the rows whose probe met an object of the right kind, and one open
+set cannot present every kind at once. This reads every run, keeps the best evidence each
+produced, and writes ``measurements/catalog-live-<version>.json``.
+``tests/test_catalog.py`` fails when a row's ``proven`` disagrees with that report.
 
-``tests/test_catalog.py`` reads that report and fails when a row's ``proven``
-disagrees with it, so the report is what stands behind every ``proven`` in the
-catalog. Two rules follow from that.
+Evidence accumulates and verdicts compete: a read-only run proves the read and must not
+displace a write run's result. ``proven`` lists ``get`` for a read, ``set`` for a write
+that was restored, and ``call`` for a method invoked. ``observe`` and ``automate`` never
+appear, because the probe subscribes to no listener and writes no envelope.
 
-The first is what counts as proof. Evidence accumulates and verdicts compete: a
-read-only run proves the read and says nothing about the write, so it must not
-displace a write run's result. ``proven`` lists ``get`` where a read came back,
-``set`` where a write came back and was restored, and ``call`` where a method was
-invoked. ``observe`` and ``automate`` never appear, because nothing in the probe
-subscribes to a listener or writes an envelope.
-
-The second is what may be written down. No value read out of the open set enters
-the report. A measured ``clip.file_path`` carried an absolute path into a
-commercial sample library, and a track name is somebody's work. The report holds
-verdicts, not contents.
+No value read out of the open set enters the report. A measured ``clip.file_path``
+carried an absolute path into a commercial sample library, and a track name is somebody's
+work. The report holds verdicts, not contents.
 
 Usage:
     python scripts/write_measurements.py run1.json run2.json ...

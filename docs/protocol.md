@@ -135,7 +135,7 @@ The ping handler operates independently of Live's main thread and LOM locks, all
     "live_version": "12.4.5",
     "host": "127.0.0.1",
     "port": 9878,
-    "allowlist_size": 140
+    "allowlist_size": 142
   }
   ```
 
@@ -232,6 +232,10 @@ Each entry in `results` is that operation's own unwrapped result with a `status`
 
 Executes multiple operations in a single round trip. An `op` is `get`, `set` or `call` and nothing else, and any other value answers `unknown_handler` for that entry. `atomic` is advisory, not a transaction: the LOM has no rollback, so operations that already ran stay applied. With `atomic: true` the batch stops at the first error and the remaining results carry the code `skipped`. `rolled_back` is always `false`. A `set` inside a batch never takes the second read a lone `lom_set` takes, because the batch holds Live's main thread until every op is done, so the same write can answer `not_observed` here and `applied` on its own.
 
+The wire handler sets no upper bound on the number of operations in `ops`. The cap a caller meets through the MCP tools is a tool-layer policy (`MAX_BATCH_OPS` in `src/live_maestro/server.py`), enforced before the request is built, and a client that speaks this protocol directly does not get it.
+
+Measured 2026-09-16 against Live 12.4.5 on a four-track set: one request costs about 400 ms whatever its size, plus about 0.44 ms per `song.tempo` read and about 0.72 ms per mixed real read (track name, mixer volume and panning value, `playing_slot_index`). 200 operations took 500 ms, 1600 took 1506 ms and 3200 cheap ones took 1718 ms, all with `error_count` 0. Write and call operations were not measured, because measuring them would have changed the open set. The ceiling is the main-thread budget of §8, which for this handler is `min(18 s, 4 s + 0.4 s per operation)`, not an operation count, and how many writes or calls fit inside that budget has not been measured.
+
 ### 5.8 `notes_get` / `notes_set`
 - **`notes_get`:**
   - `params: {path, from_time?, time_span?, count_only?}`
@@ -270,6 +274,8 @@ Note structure:
 ### 5.10 `browser_walk`
 - **Request:** `{"type": "browser_walk", "params": {"root": "drums", "query": "909", "limit": 10}}`
 - **Response:** An object, never a bare list. Four request shapes share one walk and `mode` names the one that ran: `uri` resolves a single item and reports where it sits, `path` navigates `Folder/Subfolder` below one root, `query` answers `matches` ranked best first with `count`, `considered`, `matched` and `depth_reached`, and the default `tree` walks the roots `depth` levels. Every shape reports `truncated` and `truncated_by`, because a walk that ran out of budget and a walk that found nothing are different answers.
+
+Every shape also reports `status`, and the three that walk the roots (`uri`, `query` and the default `tree`) report `unreached_roots` beside it. `status` is `complete` only when nothing stopped the walk short and every root was walked to the end; otherwise it is `incomplete` and the answer is a lower bound, so `count: 0` together with `status: "incomplete"` does not mean the item is absent. `unreached_roots` names the roots whose subtree was **not fully searched**. That includes a root the walk entered and left half walked, not only one it never opened: the part that was skipped is where the answer may be. Pass such a name back as `root` to search that category on a budget of its own. Four details follow from how the walk works. `status` is about the walk that was asked for, so a request that sets `depth` narrows the search space and a walk that covered that space reports `complete`. A `uri` hit reports `status: "complete"` with an empty `unreached_roots`, because the walk stops on the item it was looking for and the roots it did not finish are not a gap in that answer. `path` mode carries `status` without `unreached_roots`, because it walks one named folder rather than the roots. And `truncated` is not `status`: the `limit` a caller asked for cuts the ranked list after the walk is over, so a `query` cut by it alone answers `truncated: true` with `truncated_by: "limit"` and `status: "complete"`. `truncated_by: "match_pool"` is the cut that looks the same and is not: collection stops there, so the walk really did stop short and `status` reads `incomplete`. Where a walk filled the pool and the caller's `limit` cut the list as well, `truncated_by` names `limit` and only `status` and `unreached_roots` still report the shortfall, which is why coverage is read off those two and never off `truncated_by`. In the other three modes `truncated` comes from the budget alone, and `complete` beside `truncated: true` is a pairing they never report.
 
 Performs breadth-first searches of Live's internal library. Every entry carries a `kind`: `device`, `preset`, `sample`, `folder`, `other` or `unknown`. The optional `kind` filter accepts only the first four plus `any`, so filtering cannot reach an `other` or `unknown` entry.
 
@@ -311,6 +317,8 @@ Primitive JSON values are passed directly. LOM objects are represented as handle
 {"__lom__": "Track", "path": "song.tracks[3]", "name": "Bass"}
 ```
 
+`path` is the key a handle carries when Live hands it back. `__path__` is the key that passes a handle the other way, as a method argument (§5.5). A reply never carries `__path__`, and an argument is never written as `path`.
+
 Parameter value scales:
 - Most continuous Live parameters are normalized between 0.0 and 1.0.
 - Decibel and frequency readings from `str_for_value()` are provided in the `display` field.
@@ -345,6 +353,8 @@ Live compiles and caches Remote Scripts on startup. Modifications to `live-remot
 ## 10. What a successful response proves
 
 A response with `"status": "success"` confirms that the Remote Script executed without raising an exception. For `lom_set`, what is stored is whatever `read_back` names: `applied` means the requested value is in memory, `clamped` means Live stored a different value, and `not_observed` means the property still reads its previous value and nothing about the write has been proved.
+
+One refusal a caller may have met through the MCP tools is not part of this protocol. `src/live_maestro/server.py` rejects a write to `song.tracks[i].arrangement_clips[j].end_marker`; the wire handler does not. Over this protocol `lom_set` accepts that write, and observed 2026-09-10 to 2026-09-13 against Live 12.4.5 it raises no error and `end_time` does not move. What `read_back` answers for it has not been recorded, so a direct client has to read `end_time` back to learn that nothing happened.
 
 It does not indicate:
 - Whether the result is audible (e.g., if a track is muted or an effect is bypassed).
