@@ -15,8 +15,8 @@ All invocations go through the repository's virtual environment, written here in
 | `live-remote-script/__init__.py` | Installed under the new Live version's User Library, byte-identical to the repository |
 | `src/live_maestro/catalog/*.yaml` | Rows added, removed or re-statused to match the new object model, each `proven` field written from a run |
 | `measurements/` | Exactly one report, `catalog-live-<new version>.json` |
-| `docs/limits.md` | Limits that the new version lifted are marked as lifted, with the measurement that showed it |
-| Prose that states a current version | Updated. Prose that records a past measurement is left alone. See [step 8](#8-update-the-prose-that-states-a-version) |
+| `docs/limits.md` | Current constraints and verified alternatives match the supported version |
+| Compatibility documentation | Current behavior and coverage updated; raw measurement provenance retained in reports. See [step 9](#9-update-the-prose-that-states-a-version). |
 | `pytest`, `ruff`, `pyright` | Green |
 
 ---
@@ -72,20 +72,22 @@ The table lists what has to be present, how many rows depend on it, and who can 
 
 A script can create tracks, return tracks and scenes, create clips, write notes and envelopes, set names, park the playhead, and load a device from the browser onto the selected track. `.adg` files in the browser are device groups and arrive with their chains and pads already populated, which is how a rack with chains is built without touching the interface.
 
-Four things the LOM cannot do, so a person does them in Live:
+Prepare these objects through Live's GUI where the specimen builder does not supply them:
 
 1. **A return chain inside a rack.** Right-click in the rack's chain list, "Create Return Chain". No LOM method creates one.
-2. **A bare Simpler on a drum pad.** Drag any sample onto an empty pad. Every factory kit wraps its pads in an Instrument Rack instead, so a preset does not produce this shape.
+2. **A bare Simpler on a drum pad.** Drag a sample onto an empty pad or use the specialized `load_drum_pad` workflow. Factory kit presets can wrap pads in nested racks instead of producing this shape.
 3. **A group track**, if `track.fold_state` is to be measured. Select two tracks and press Ctrl+G. Grouping is read-only in the LOM (see [limits.md section 2](limits.md)).
 4. **A groove in the Groove Pool.** Drag a groove file into the pool.
 
-Loading a device *inside* a rack chain is also out of reach from here: writing `rack.view.selected_chain` reads back correctly and the load still lands on the track. [limits.md section 2](limits.md) records the measurement.
+General loading into an arbitrary rack chain is not provided by track selection.
+Use a populated preset or the GUI. The specialized `load_drum_pad` route supports
+empty or single-Simpler pads; see [limits.md section 2](limits.md).
 
 ### Recommendation
 
-Build the specimen set once, save it under a name of its own, and reuse it for every upgrade. Three of the four manual steps survive a save, so a saved specimen set turns them into a one-time cost. Note in the commit which specimen set a report was measured against.
-
-That has not been done yet. Searched 2026-09-17: no saved specimen set exists on this machine. No set carries a matching name, and the seven non-factory sets are music projects. The next upgrade therefore starts by building the set from the table above, and this recommendation only begins to pay from the upgrade after that one.
+Build the specimen set once, save it under a name of its own, and reuse it for
+every upgrade. Saved tracks, racks and clips reduce setup work and make version
+comparisons reproducible. Keep the specimen identity with the measurement records.
 
 ---
 
@@ -251,7 +253,9 @@ Do **not** pass `--write-back` on a first pass. It appends to `doc` and rewrites
 
 The tool names the file from the `live_version` the runs carry, so it writes `measurements/catalog-live-<new version>.json` without being told the version. It prints the outcome counts and refuses to write if any value read out of the set has leaked into the report.
 
-What it does not record is which set produced it. `measurements/catalog-live-12.4.5.json` carries `live_version`, `script_version` and `rows`, and no field naming the specimen set, so that run cannot be reproduced and a later comparison against it cannot separate a Live change from a set difference. Until the report carries the set, name it in the commit message, and read a comparison against an older report as evidence about two sets rather than about two Live versions.
+The report carries `live_version`, `script_version` and `rows`, but no specimen
+identity. Keep that context alongside the raw run records. Comparing reports from
+different sets cannot by itself isolate a change in Live's object model.
 
 **Delete the superseded report in the same commit.** `tests/test_catalog.py` resolves the report by looking for exactly one `catalog-live-*.json` and fails on any other count. One report describes the version the catalog currently stands on.
 
@@ -269,25 +273,27 @@ Then write the fields back into the catalog:
 
 Read [docs/limits.md](limits.md) top to bottom against the new version. Sections 1 and 2 are the ones a release can change: a limit Live lifts is a row this project can gain.
 
-For each entry, either leave it standing or retract it the way it was made, by asking Live again and writing down the answer. Leave the entry in place when it is lifted rather than deleting it: somebody planned around that limit and needs to find out it is gone. `docs/limits.md` already carries device reordering that way, with the call that disproved it stated in place.
+For each entry, retain the supported constraint or replace it with the newly
+verified behavior and usable route. Keep dated observations in measurement
+reports; the limits reference should describe the current interface.
 
-Section 5 lists open questions with the procedure that would settle each. A new version is the occasion to run those procedures.
+Section 5 lists unverified boundaries. Revisit them when extending compatibility,
+using a specimen that exposes the relevant state and recording the actual result.
 
 ---
 
 ## 9. Update the prose that states a version
 
-This is the step most likely to go wrong, because two kinds of sentence mention a Live version and only one of them may change.
-
-**A sentence that records when something was measured keeps its version.** "Measured 2026-09-05 against Live 12.4.5: a 4-beat clip became 8 beats" stays true under Live 13. It is a record of a run, not a claim about the present. The overwhelming majority of version mentions in this repository are of this kind.
-
-**A sentence that states what is true now moves.** Find them with:
+Update public setup, compatibility and API references to the supported version.
+Keep run dates and recorder versions in structured measurement provenance rather
+than appending a chronological account to user documentation. Find version mentions with:
 
 ```powershell
 .venv\Scripts\python.exe -c "import re,pathlib; [print(f'{p}:{i}: {l.strip()[:100]}') for p in pathlib.Path('.').rglob('*') if p.suffix in ('.md','.py','.yaml') and '.venv' not in p.parts for i,l in enumerate(p.read_text(encoding='utf-8').splitlines(),1) if re.search(r'Live\s+\d+\.\d+', l) and not re.search(r'(Measured|verified|probed)\s+\d{4}-\d\d-\d\d', l)]"
 ```
 
-Read each hit and decide. The ones that state a current version are few, and the catalog file headers and `docs/catalog.md` are where they concentrate.
+Review each hit against its purpose. Catalog provenance records the version
+actually measured; compatibility documentation records the supported coverage.
 
 **A version inside test data never moves.** `tests/test_als.py` carries `Creator="Ableton Live <version>"` inside fixture XML. Those strings are inputs, and changing them changes what the test exercises.
 
@@ -315,7 +321,9 @@ It does not catch every phrasing. When you write a new figure into a document, p
 
 `pytest` piped into another command hides its exit code, so read the summary line or check the code directly.
 
-One commit per class of change keeps the diff reviewable: the Remote Script deployment, the catalog reconciliation, the measurement report, the limits review, the prose. Say in the commit message which Live version and which operating system the run was made on, and which specimen set it used.
+Keep connected changes reviewable and keep the Remote Script, catalog and public
+documentation consistent. Record the Live version, operating system and specimen
+context in measurement provenance before preparing the release commit.
 
 ---
 

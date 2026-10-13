@@ -1,7 +1,7 @@
 """Live Maestro: a generic Live Object Model bridge, running as a Remote Script.
 
 Runs inside Live's embedded Python runtime: a loopback TCP server on port 9878, path
-resolution across the Live Object Model, and the seventeen protocol handlers, which
+resolution across the Live Object Model, and the protocol handlers, which
 cover what a path cannot express (notes, envelopes, browser hierarchy, events, enum
 reflection).
 
@@ -18,6 +18,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import codecs
 import json
+import math
 import re
 import socket
 import sys
@@ -51,7 +52,7 @@ SCRIPT_NAME = "live-maestro"
 #: Live has not been restarted since the script was copied in.
 #: ``python scripts/install_script.py --diff`` compares the file against the repo and
 #: settles it outright.
-SCRIPT_VERSION = "0.1.2"
+SCRIPT_VERSION = "0.1.3"
 
 #: What protocol 1 means for a caller, the shapes it may rely on:
 #:
@@ -115,6 +116,7 @@ HANDLERS = (
     "events_drain",
     "events_clear",
     "enum_names",
+    "warp_markers_set",
 )
 
 RECV_CHUNK = 8192
@@ -300,6 +302,7 @@ METHOD_ALLOWLIST = frozenset([
     # is verified against Live 12.4.5. On an older Live the method may be
     # absent, and lom_call then says so instead of blaming policy.
     "Track.create_midi_clip",
+    "Track.create_audio_clip",
     # Copying a device with its settings. There is no other way to do it, and
     # it changes nothing that was there before.
     "Track.duplicate_device",
@@ -342,6 +345,7 @@ METHOD_ALLOWLIST = frozenset([
     # a number and touch nothing; warping an audio clip needs both.
     "Clip.beat_to_sample_time",
     "Clip.sample_to_beat_time",
+    "SimplerDevice.replace_sample",
 
     # -- Scenes -----------------------------------------------------------
     "Scene.fire",
@@ -1639,7 +1643,7 @@ def create_instance(c_instance):
 
 
 class LiveMaestro(ControlSurface):
-    """The socket server and the seventeen handlers of protocol §5.
+    """The socket server and the handlers of protocol §5.
 
     Lifecycle. The server runs on a daemon thread, each client gets its own
     daemon thread, and :meth:`disconnect` closes the listening socket, drops
@@ -1799,6 +1803,7 @@ class LiveMaestro(ControlSurface):
             "events_drain": (self._handle_events_drain, False),
             "events_clear": (self._handle_events_clear, True),
             "enum_names": (self._handle_enum_names, True),
+            "warp_markers_set": (self._handle_warp_markers_set, True),
         }
 
         self.log_message("Live Maestro {0} initialising".format(SCRIPT_VERSION))
@@ -2350,7 +2355,110 @@ class LiveMaestro(ControlSurface):
             "host": HOST,
             "port": DEFAULT_PORT,
             "allowlist_size": len(METHOD_ALLOWLIST),
+            "warp_marker_constructor": self._warp_constructor_info(),
+            "file_method_docs": self._file_method_docs(),
         }
+
+    def _file_method_docs(self):
+        result = {}
+        for module_name, class_name_, method in (
+                ("Track", "Track", "create_audio_clip"),
+                ("Track", "Track", "create_midi_clip"),
+                ("SimplerDevice", "SimplerDevice", "replace_sample")):
+            module = _safe_getattr(Live, module_name)
+            cls = _safe_getattr(module, class_name_)
+            attribute = _safe_getattr(cls, method)
+            result["{0}.{1}".format(class_name_, method)] = str(
+                _safe_getattr(attribute, "__doc__"))[:2000]
+        return result
+
+    def _warp_constructor_info(self):
+        ctor = _safe_getattr(_safe_getattr(Live, "Clip"), "WarpMarker")
+        return {"available": ctor is not None,
+                "init_doc": str(_safe_getattr(_safe_getattr(ctor, "__init__"), "__doc__"))[:2000]}
+
+    def _handle_warp_markers_set(self, params):
+        """Construct verified Live value objects before touching an audio clip."""
+        path = params.get("path")
+        clip, canonical = self.resolve_clip(path)
+        if not bool(getattr(clip, "is_audio_clip", False)):
+            raise LomError("type_error", "warp markers require an audio clip", path=path)
+        points = params.get("markers")
+        if not isinstance(points, list) or not 2 <= len(points) <= 2000:
+            raise LomError("type_error", "markers needs 2-2000 points", path=path)
+        validated = []
+        for item in points:
+            try:
+                seconds, beat = float(item["seconds"]), float(item["beat"])
+            except (TypeError, ValueError, KeyError):
+                raise LomError("type_error", "each marker needs seconds and beat", path=path)
+            if (math.isnan(seconds) or math.isinf(seconds) or math.isnan(beat)
+                    or math.isinf(beat) or seconds < 0 or beat < 0
+                    or (validated and (seconds <= validated[-1][0] or beat <= validated[-1][1]))):
+                raise LomError("type_error", "markers must be finite and strictly ordered", path=path)
+            validated.append((seconds, beat))
+        if validated[0] != (0.0, 0.0):
+            raise LomError("type_error", "replacement mapping must start at seconds/beat zero", path=path)
+        duration = float(clip.sample_length) / float(clip.sample_rate)
+        if validated[-1][0] > duration + 1.0 / float(clip.sample_rate):
+            raise LomError("type_error", "marker exceeds the source audio duration", path=path)
+        if not isinstance(params.get("replace", True), bool):
+            raise LomError("type_error", "replace must be a boolean", path=path)
+        ctor = _safe_getattr(_safe_getattr(Live, "Clip"), "WarpMarker")
+        if ctor is None:
+            raise LomError("unsupported", "this Live has no WarpMarker constructor", path=path)
+        objects = []
+        attempts = []
+        for seconds, beat in validated:
+            marker = None
+            for label, args, kwargs in (
+                    ("keywords", (), {"sample_time": seconds, "beat_time": beat}),
+                    ("sample,beat", (seconds, beat), {}),
+                    ("beat,sample", (beat, seconds), {})):
+                try:
+                    candidate = ctor(*args, **kwargs)
+                    if (abs(float(candidate.sample_time) - seconds) <= 1e-8
+                            and abs(float(candidate.beat_time) - beat) <= 1e-8):
+                        marker = candidate
+                        break
+                except Exception as exc:
+                    attempts.append("{0}: {1}".format(label, str(exc)))
+            if marker is None:
+                raise LomError("unsupported", "Live cannot construct the requested WarpMarker",
+                               path=path, constructor=self._warp_constructor_info(),
+                               attempts=attempts[-3:])
+            objects.append(marker)
+        before = [{"seconds": float(m.sample_time), "beat": float(m.beat_time)}
+                  for m in sequence_items(clip.warp_markers)]
+        try:
+            if not clip.warping:
+                clip.warping = True
+            requested_beats = [beat for seconds, beat in validated]
+            existing = sequence_items(clip.warp_markers)
+            if params.get("replace", True):
+                # Live owns the highest shadow marker. It cannot be removed.
+                for marker in existing[:-1]:
+                    if not any(abs(marker.beat_time - beat) <= 1e-8 for beat in requested_beats):
+                        clip.remove_warp_marker(marker.beat_time)
+            for marker in objects:
+                current = sequence_items(clip.warp_markers)
+                if any(abs(m.beat_time - marker.beat_time) <= 1e-8
+                       and abs(m.sample_time - marker.sample_time) <= 1e-8 for m in current):
+                    continue
+                clip.add_warp_marker(marker)
+            after = [{"seconds": float(m.sample_time), "beat": float(m.beat_time)}
+                     for m in sequence_items(clip.warp_markers)]
+        except Exception as exc:
+            raise LomError("live_error", str(exc), path=path, partial=True, before=before)
+        missing = [point for point in validated if not any(
+            abs(m["seconds"] - point[0]) <= 1e-7 and abs(m["beat"] - point[1]) <= 1e-7
+            for m in after)]
+        extra = [m for m in after[:-1] if not any(
+            abs(m["seconds"] - point[0]) <= 1e-7 and abs(m["beat"] - point[1]) <= 1e-7
+            for point in validated)] if params.get("replace", True) else []
+        return {"path": canonical, "before": before, "markers": after,
+                "verified": not missing and not extra, "missing": missing, "extra": extra,
+                "shadow_marker": after[-1] if after else None}
 
     def _read_live_version(self):
         """The Live version string, or ``None``. Reads the LOM - main thread only.
@@ -2605,8 +2713,11 @@ class LiveMaestro(ControlSurface):
         a value"``.
         """
         value_path = requested.get("__path__")
-        new_object = self.resolve(value_path)
-        if not is_lom_object(new_object):
+        # Clearing the browser target is a measured nullable reference, not a
+        # generic permission to replace arbitrary Live objects with null.
+        clearing_browser = value_path is None and path == "app.browser.hotswap_target"
+        new_object = None if clearing_browser else self.resolve(value_path)
+        if not clearing_browser and not is_lom_object(new_object):
             raise LomError(
                 "type_error",
                 "{0!r} resolves to a {1}, which is a value and not a Live object - "

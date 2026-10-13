@@ -55,13 +55,18 @@ Maestro reaches Live through three complementary channels, expanding on the orig
 
 Channel B complements the live bridge by handling data that the LOM does not expose in the open set, such as track automation in arrangements or reading unopened projects. Channel C answers what neither of the others can: how the audio measures. A parameter value is not a level, and a level is not a loudness.
 
-**Two tools use none of the three.** `match_sound` reads Ableton's own preview renders off the disk and compares them with audio the caller names, and `transcribe_stem` runs a transcriber in a separate Python interpreter. Neither asks Live anything, and both work while Live is closed. They are here because the question they answer, which instrument in this library sounds like this recording, has no answer anywhere in the object model. What they produce is then loaded and written over Channel A like anything else.
+File workflows also operate independently of the three channels. `match_sound`
+compares library previews and `transcribe_stem` runs a separate transcriber.
+`analyze_drums` uses its own optional NumPy/SciPy worker, with persisted progress,
+cancellation, JSON/MIDI and one-shot outputs. They work while Live is closed.
+`write_drum_clip` then places reviewed events through Channel A. See
+[drum workflows](drum-workflows.md) for the shared source timeline and tempo import.
 
 ### Channel C: Audio measurement
 
 Channels A and B carry metadata. The Remote Script interpreter has no access to audio buffers at all, so neither channel can report whether a mix clips, how loud it is, or whether its low end survives being summed to mono. `analyze_audio` asks a device that can.
 
-`devices/LiveMaestro_Analyzer.amxd` is a Max for Live audio effect. It passes audio through unchanged, measures what passes, and answers one request with one reply. It is optional: the other 42 tools do not touch it, and without it `analyze_audio` reports `device_not_found` and the steps to load it.
+`devices/LiveMaestro_Analyzer.amxd` is a Max for Live audio effect. It passes audio through unchanged, measures what passes, and answers one request with one reply. It is optional: only `analyze_audio` needs it, and without it reports `device_not_found` and the steps to load it.
 
 **Wire format.** Open Sound Control over loopback UDP, because that is what Max's own objects speak: `udpsend`'s reference page states that Max messages are serialized as OSC-compatible UDP packets, and `udpreceive` decodes OSC. The device listens on `127.0.0.1:9882` for `/maestro/measure` and answers `/maestro/report` to the port the request names, which is the ephemeral port the client bound. `src/live_maestro/analyzer/protocol.py` holds the port, the addresses, the reply field order, the band edges and the schema number, and nothing else may hold a copy of any of them.
 
@@ -198,7 +203,9 @@ This ensures that clients receive accurate feedback on whether a value was accep
 
 ## The Remote Script: Handler families
 
-The Remote Script implements seventeen handlers (docs/protocol.md §5): five generic ones, ten specialized ones grouped into five families, and two that belong to no family because they answer on the client thread without touching a Live object.
+The Remote Script implements eighteen handlers (docs/protocol.md §5): five generic ones,
+eleven specialized ones including typed WarpMarker construction, and two that answer on
+the client thread without touching a Live object.
 
 ### Generic handlers (5 handlers)
 - `lom_get`: Reads a property value or list of child handles.
@@ -232,7 +239,7 @@ The FastMCP server exposes four access tiers:
 ### Finding a path without reading the catalog (`lookup.py`, `vocabulary.py`)
 
 The catalog exists so that a handful of tools can stand in for one tool per Live property.
-That only works if a caller can find a row without reading the catalog. Reading all 1166
+That only works if a caller can find a row without reading the catalog. Reading all 1168
 rows out of `live://catalog` costs about 134,000 tokens, and a substring search over
 them picks the right mechanism 17 percent of the time.
 
@@ -259,11 +266,7 @@ carries the route tables that answer the intents rows cannot, and the studio wor
 catalog does not use, with every anchor checked against a real row by
 `tests/test_lookup.py`.
 
-Measured 2026-09-06 against a 444-query producer-language set, labelled for the correct
-mechanism and adjudicated where the labels disagreed, on the half held back from tuning:
-the route is right 83 percent of the time against 17 percent for the substring search, and
-where the answer is a row, that row is offered first 59 percent of the time against 10
-percent.
+Ranking selects likely mechanisms and catalog rows from producer vocabulary. It is a lexical routing aid, not a guarantee that the first candidate serves an ambiguous request.
 
 ### Tool argument schema definitions (`toolargs.py`)
 
@@ -312,10 +315,7 @@ extra round trip and makes a call row report `before`/`after` the way a set row 
 
 A hook returns `None` rather than `False` wherever the evidence cannot settle the
 question: the baseline was unreadable (warp markers on a MIDI clip), the transport does
-not offer the handler, or Live has deferred the effect. Measured 2026-09-05 against Live
-12.4.5 with `clip_trigger_quantization` at one bar, `clip.stop` on a running transport left
-`is_playing` true immediately after the call and false 0.5 s later, so a stop that is still
-playing is reported unverified rather than failed.
+not offer the handler, or Live has deferred the effect. A stop that still reads as playing is reported unverified until later state can establish the outcome.
 
 ---
 

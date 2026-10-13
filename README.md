@@ -57,7 +57,7 @@ Here is what collaborating with Maestro looks like in a session:
 | **🎛️ Sound Design** | *"Open the Wavetable filter cutoff to 65% and increase resonance slightly"* | Adjusts native instruments, synthesizers, and audio effect parameters |
 | **📈 Automation & Envelopes** | *"Draw a 2-bar reverb swell into the pad clip, then copy the clip to bar 31"* | Draws parameter curves, filter sweeps, and volume swells into Session clip envelopes, which travel with the clip onto the timeline |
 | **🎚️ Mixing & Levels** | *"Turn the bass down 3 dB, pan the rhythm guitar 25% left, and add a chorus"* | Sets track volumes, panning, sends, returns, and insert effects |
-| **🎼 Arrangement & Structure** | *"Duplicate the verse clip to bar 17 in the Arrangement and drop a locator called Drop"* | Copies Session clips onto the arrangement timeline, sets cue points/locators, loops sections |
+| **🎼 Arrangement & Structure** | *"Duplicate the verse clip to bar 17 in the Arrangement and drop a locator called Drop"* | Imports audio or duplicates Session clips onto the timeline, writes Arrangement MIDI notes, and sets locators and loop sections |
 | **🎚️ Editing & Groove** | *"Transpose the synth lead up a minor third and quantize to 1/16 notes at 70%"* | Transposes pitches, quantizes timing, modifies note lengths, and adjusts velocities |
 
 ---
@@ -74,7 +74,7 @@ Maestro reaches Live through three complementary routes ([docs/architecture.md](
 
 ## MCP Tools & Resources
 
-Maestro exposes **43 tools** and 4 resources over the Model Context Protocol (MCP):
+Maestro exposes **59 tools** and 5 resources over the Model Context Protocol (MCP):
 
 ### Intent Tools (Production Workflows)
 - **Session & Inspection:** `get_session`, `get_track`, `get_clip`, `get_devices`, `describe`
@@ -86,9 +86,20 @@ Maestro exposes **43 tools** and 4 resources over the Model Context Protocol (MC
 - **Offline Projects (Channel B):** `als_read`, `als_write`
 - **Sound Matching:** `match_sound`, `sound_index_status`
 - **Transcription:** `transcribe_stem`
+- **Drum Files:** `analyze_drums`, `get_audio_job`, `cancel_audio_job`, `write_drum_clip`, `apply_tempo_map`
+- **Native Arrangement Timing:** `read_tempo_map`, `write_tempo_map`, `verify_tempo_map`, `get_warp_markers`, `set_warp_markers`, `convert_clip_time`
+- **Native Files & Notes:** `get_set_state`, `import_arrangement_audio`, `write_arrangement_notes`, `load_sample`, `load_drum_pad`
+
+Optional file-based drum analysis produces MIDI, a tempo map and one-shots from
+identified kick/snare stems. Install `.[audio]` or set `LIVE_MAESTRO_AUDIO_PYTHON`.
+The `live://skill/live-rebuild-drums` resource supplies the cross-server workflow.
+See [drum workflows](docs/drum-workflows.md) for source offsets, timing assumptions,
+confirmation, actual verification and the Arrangement tempo-import step.
+See [Arrangement timing](docs/timing-workflows.md) for native warp lists, tempo
+copies, direct file import, chunked notes and checked Simpler/Drum Rack loading.
 
 ### Smart Path Discovery: `find_path`
-Looking up any of Live's 1,166 addressable paths by reading the whole catalog costs ~134,000 tokens. The `find_path` tool maps producer vocabulary (*"turn the bass down"*, *"filter cutoff"*, *"quantize swing"*) into the right mechanism and ranked catalog rows in ~1.5k tokens, distinguishing between fixed LOM rows, runtime device parameters, and impossible requests.
+`find_path` maps production vocabulary to mechanisms and ranked catalog rows, including runtime device parameters and unsupported requests.
 
 ### Finding a Sound: `find_sound`
 `find_path` answers which path serves an intent; `find_sound` answers which thing in Live's library could make a sound. It splits a phrase such as *"warm bass"* or *"dark cinematic strings"* into words, searches the browser for each one separately (the browser's own search matches one substring, spaces included, so the whole phrase finds nothing), and ranks the union by the preset's name and by the category its `uri` carries. Each candidate carries the argument block that loads it through `load_device`. Nothing is loaded, played or measured: the ranking reads the names Ableton gave these presets and says nothing about how any of them sounds.
@@ -100,16 +111,22 @@ The comparison runs against the audio Ableton renders for its own browser previe
 
 The descriptor is pure Python with no third-party package: a 2048-point transform at 32 kHz reduced to 32 logarithmic bands, plus spectral centroid, rolloff, peakiness, onset rate, sustain fraction and crest factor. Level is removed on purpose, so a quiet recording and a loud one of the same sound match exactly; pitch is not matched.
 
-**Tell it what the instrument is.** Measured against the separated stems of a real song, ranked against the whole library: with the settings it ships with, a twenty second window, the top candidate shared the probe's family 1 time in 7; on one and a half second slices the same descriptor managed 6 of 20. A bass stem answers with drum kits and a guitar stem with pads. Given `instrument="bass"`, the same audio answers with basses, and `instrument="guitar"` answers with plucked guitars. **The order inside an answer is not reproducible either**: two windows of one stem share about one name in ten of their top ten, because the stem moves further from itself between windows than the whole candidate list is wide. Read it as a shortlist to audition, not a ranking, and see `measurements/spikes/spike-match-sound-window-dependence.json`. `drum_kit` and `drum_hit` are separate families, because a kit stem answered with five single hi-hats is a useless answer.
+**Tell it what the instrument is.** Use `instrument` to restrict candidates to a suitable family. Window selection changes a stem's descriptor, so rankings can vary across the same recording. Treat results as an audition shortlist. `drum_kit` and `drum_hit` are separate families.
 
-Build the index by running `live-maestro-index`, which is installed alongside the server. It takes about a quarter of an hour, needs no network, and is not committed: it describes one machine's installed packs.
+Build the index by running `live-maestro-index`, which is installed alongside the server. It needs no network and describes one machine's installed packs. Build time depends on the library size and available decoder; the index is not committed.
 
-**macOS only.** Decoding goes through `afconvert`, which ships with macOS, and the library is looked for in the macOS locations. On another system `match_sound` and `live-maestro-index` say so and every other tool is unaffected. What it cannot describe is behaviour per note, because a preview is the phrase Ableton chose rather than a note anyone played.
+Decoding uses macOS's `afconvert`, FFmpeg on PATH (or `LIVE_MAESTRO_FFMPEG`), or
+SoundFile/SciPy from `live-maestro[audio]`. Windows discovery reads Live's configured
+User Library and installed Core Library; use `live-maestro-index --root PATH` for
+other Pack locations. Rebuild the index on the machine where it is used. Encrypted
+factory samples remain unavailable; their ordinary browser previews are indexed.
+What it cannot describe is behaviour per note, because a preview is the phrase
+Ableton chose rather than a note anyone played.
 
 ### Notes out of Audio: `transcribe_stem`
 Hand it a separated stem and it returns notes in clip beats, or writes them straight into a Session clip. The transcriber is [basic-pitch](https://github.com/spotify/basic-pitch) (Apache 2.0), which runs in an environment of its own because it supports Python up to 3.11 while this server runs later; without that environment the tool answers `no_transcriber` and nothing else is affected.
 
-Against the MIDI a generator exported for the same five separated stems, with nothing tuned, the pitch content agreed between 93.7 and 96.2 percent. A transcriber reports what is in the signal, though, and one played note puts more than one thing there: an octave and a twelfth above a bass note are loud enough to look like notes. Those are removed where a lower, louder, simultaneous note explains them, which raised a guitar's agreement from 95.4 to 96.9 percent while taking it from 835 notes to 635 against an export of 580. `monophonic=True` is a separate step for a part played one note at a time; on a bass it takes 463 notes to 401, the median pitch from seven semitones above the export's to five, and the agreement from 92.0 to 93.2 percent. Bass stays the weakest case and the record says so. Recompute any of these with `scripts/eval_transcription.py`.
+Transcription can confuse harmonics with independent notes, especially in bass or polyphonic material. Harmonic filtering and `monophonic=True` help with suitable isolated parts; review pitches, timing and note density before writing a clip.
 
 ### Generic LOM Escape Hatches
 Direct, low-level access to the entire verified catalog surface:
@@ -135,7 +152,7 @@ A command sent to Live can be refused, clamped, or applied late, and a plain suc
 - **Three writes are destructive and are not gated**, because gating every note edit would make ordinary work unusable: `write_clip_notes` with its default `mode="replace"` discards every note in the target clip, and `quantize_clip` and `transpose_clip` rewrite one in place. All three are annotated as destructive so a client can ask, and `read_clip_notes` is how to look first. There is no undo through this server and the Live Object Model has no rollback.
 - **Read-Back Verification:** Parameter updates via `lom_set` read the stored value back from Live and report the exact state: `applied` (exact match), `clamped` (quantized or bounded by Live), or `not_observed` (deferred or asynchronous update).
 - **Change Baseline Checks:** Methods that modify material (note duplication, quantizing, loop doubling) measure baselines before dispatching and verify the resulting state one round trip later.
-- **Empirical LOM catalog:** Built on a catalog of 1,166 rows across 5 files, with 1,130 verified against a running Ableton Live, spanning the song and transport, tracks, clips, native devices, and the browser.
+- **Empirical LOM catalog:** Built on a catalog of 1,168 rows across 5 files, with 1,132 verified against a running Ableton Live, spanning the song and transport, tracks, clips, native devices, and the browser.
 
 ---
 
@@ -239,9 +256,15 @@ Live's API is extensive, but some things are intentionally reserved for you in t
 
 ---
 
-## Also using Steinberg Dorico®?
+## Related Maestro projects
 
-If you also work with music notation, check out **[Dorico Maestro](https://github.com/romanstark/dorico-maestro)**, an MCP server built with the same architecture for Steinberg Dorico. Use the same AI assistant to bridge your workflow between session sketching in Live and engraving parts in Dorico.
+- [Dorico Maestro](https://github.com/romanstark/dorico-maestro) controls notation
+  workflows in Steinberg Dorico.
+- [UVR Maestro](https://github.com/romanstark/uvr-maestro) separates and restores
+  local audio with UVR5 models.
+
+Each server works independently. Use ordinary MIDI, audio and JSON files when
+combining their workflows.
 
 ---
 

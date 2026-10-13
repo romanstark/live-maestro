@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Load one device and delete it again, many times, and watch what Live's memory does.
 
 Guards come before measurement. Nothing runs without ``--expect-set``, ``--sentinel``,

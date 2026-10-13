@@ -11,4 +11,4 @@ The package is layered and the layers do not mix (docs/architecture.md, 'Layers'
 
 from __future__ import annotations
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"

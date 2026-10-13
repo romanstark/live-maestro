@@ -178,16 +178,17 @@ def test_d4_envelope_row_does_not_credit_live_with_the_writers_own_behaviour() -
 
 
 def test_protocol_says_the_batch_cap_is_not_on_the_wire() -> None:
-    """Section 5.7 must place the op-count cap in the tool layer and date the throughput figures."""
+    """Section 5.7 distinguishes the tool-layer count cap from the wire handler's budget."""
     section = _markdown_section(PROTOCOL_MD.read_text(encoding="utf-8"), "### 5.7", "### 5.8")
     assert "MAX_BATCH_OPS" in section, (
         "section 5.7 does not say the op-count cap is a tool-layer policy"
     )
-    assert "2026-09-16" in section, "section 5.7 carries throughput figures without their date"
+    assert "sets no upper bound" in section, "section 5.7 implies a wire-level op-count cap"
+    assert "main-thread budget" in section, "section 5.7 does not explain the handler budget"
 
 
 def test_protocol_section_10_says_the_end_marker_refusal_is_tool_layer_only() -> None:
-    """A direct wire client must be told the end_marker write is accepted and does nothing."""
+    """A direct wire client must verify clip geometry separately from the stored marker."""
     section = _markdown_section(PROTOCOL_MD.read_text(encoding="utf-8"), "## 10.", "## 11.")
     for token in ("arrangement_clips", "end_marker", "end_time"):
         assert token in section, f"section 10 never mentions {token}"

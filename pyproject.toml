@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "live-maestro"
-version = "0.1.2"
+version = "0.1.3"
 description = "MCP server connecting AI assistants to Ableton Live through the Live Object Model."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,6 +50,7 @@ Issues = "https://github.com/romanstark/live-maestro/issues"
 # - Zero telemetry: No HTTP clients, databases, or analytics packages.
 
 [project.optional-dependencies]
+audio = ["numpy>=1.26,<3", "scipy>=1.13,<2", "soundfile>=0.12,<1"]
 dev = [
     "pytest>=8",
     # Pinned to a minor range on purpose. An unbounded linter turns every new
@@ -91,19 +92,21 @@ force-include = { "devices/LiveMaestro_Analyzer.amxd" = "live_maestro/devices/Li
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src",
-    "live-remote-script",
-    "scripts",
-    "docs",
-    "devices",
-    "tests",
-    "measurements",
-    "README.md",
-    "LICENSE",
-    "THIRD-PARTY.md",
-    "CLA.md",
-    "CONTRIBUTING.md",
+    "/src",
+    "/live-remote-script",
+    "/scripts",
+    "/docs",
+    "/devices",
+    "/tests",
+    "/measurements",
+    "/README.md",
+    "/LICENSE",
+    "/THIRD-PARTY.md",
+    "/CLA.md",
+    "/CONTRIBUTING.md",
 ]
+# Anchor directory selections to the repository root. Otherwise nested dependency
+# tests and docs in a differently named local venv can enter a source distribution.
 # The include list above names directories, and hatchling fills them from the filesystem
 # rather than from git. Working documents that are deliberately kept out of the
 # repository therefore reach the sdist anyway unless they are named here. Keep this in

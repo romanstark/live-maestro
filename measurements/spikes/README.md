@@ -15,6 +15,5 @@ build, what the raw readings were, what the result means, and what it does not c
 record also went into prose, it names the document and the section, so a reader who finds one
 first can reach the other.
 
-A record is written against the evidence of one day. It is not revised when a later
-measurement disagrees with it; the later measurement gets a record of its own, and the prose
-that cites them says which one it follows.
+A record preserves its original measurement context. New evidence receives a
+separate record; public API documentation describes the currently supported behavior.

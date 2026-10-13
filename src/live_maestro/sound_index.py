@@ -188,7 +188,16 @@ def default_roots() -> tuple[Path, ...]:
         Path("/Applications/Ableton Live 12 Standard.app/Contents/App-Resources/Core Library"),
         Path("/Applications/Ableton Live 12 Intro.app/Contents/App-Resources/Core Library"),
     ]
-    return tuple(path for path in candidates if path.is_dir())
+    from live_maestro.installer import find_live_installs
+
+    candidates.extend(
+        install.project_path for install in find_live_installs() if install.project_path is not None
+    )
+    program_data = os.environ.get("PROGRAMDATA")
+    if program_data:
+        ableton = Path(program_data) / "Ableton"
+        candidates.extend(sorted(ableton.glob("Live */Resources/Core Library")))
+    return tuple(dict.fromkeys(path for path in candidates if path.is_dir()))
 
 
 def default_index_path() -> Path:

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Reconcile the YAML path catalog against an active Ableton Live session.
 
 Rows are discovered, verified and updated with ``lom_describe`` and ``lom_get`` against

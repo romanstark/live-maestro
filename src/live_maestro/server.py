@@ -34,9 +34,10 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
 from live_maestro import automation as auto
-from live_maestro import instruments, lookup, sound_index, toolargs
+from live_maestro import instruments, lookup, native_workflows, sound_index, toolargs
 from live_maestro import transcribe as transcribe_audio
 from live_maestro.als import read as als_reader
+from live_maestro.als import tempo as tempo_file
 from live_maestro.als import write as als_writer
 from live_maestro.analyzer import AnalyzerClient
 from live_maestro.analyzer import report as analyzer_report
@@ -57,6 +58,9 @@ from live_maestro.analyzer.models import (
 from live_maestro.analyzer.protocol import BANDS, REPLY_SCHEMA
 from live_maestro.audio import decode as audio_decode
 from live_maestro.audio import descriptor as descriptor_module
+from live_maestro.audio import jobs as audio_jobs
+from live_maestro.audio.requests import BeatAnchorArg, DrumStemArg
+from live_maestro.audio.timeline import notes_from_analysis, validate_map
 from live_maestro.client import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -72,6 +76,7 @@ from live_maestro.music import launch, transcription
 from live_maestro.music import notes as note_ops
 from live_maestro.registry import CatalogError, Registry, area_of, default_registry
 from live_maestro.spec import PathSpec
+from live_maestro.timing import TempoPointArg, WarpPointArg
 from live_maestro.toolargs import (
     BatchOpArg,
     ConfirmArg,
@@ -459,7 +464,10 @@ mcp = FastMCP(
         "find_sound searches the browser by name, and match_sound takes an audio file you "
         "have and ranks the library by what it sounds like, which is how to rebuild a stem "
         "with the installed instruments. match_sound needs an index; sound_index_status "
-        "says whether there is one. live://limits says what is impossible and why."
+        "says whether there is one. analyze_drums runs optional file analysis in a background "
+        "worker on identified kick/snare stems. Poll get_audio_job; use cancel_audio_job "
+        "to stop it. Read live://skill/live-rebuild-drums for UVR-to-Live guidance. "
+        "live://limits says what is impossible and why."
     ),
 )
 
@@ -7684,7 +7692,8 @@ def transcribe_stem(
 
         ``transcription_suspect`` flags that disagreement, ``kind`` says which way, and
         ``transcription_checked`` says whether the comparison ran at all, since it needs a
-        macOS-only second decode: elsewhere no warning means nothing. Measured 2026-09-19
+        second decode through an available local decoder; an unchecked result proves
+        nothing about timing. Measured 2026-09-19
         against exported MIDI for five pitched stems, pitch content agreed 93.7 to 96.2
         percent: which notes, not when, the export's own timing having drifted. Harmonics
         are removed where a lower, louder note at the same time explains them;
@@ -8852,7 +8861,7 @@ def _row_payload(spec: PathSpec, *, doc_cap: int | None = None) -> dict[str, Any
             continue
         # A field at its empty value carries nothing and is dropped. The condition above
         # cannot do it: it skips a field only when the dataclass default is not None, so
-        # range, enum, display and method would serialise as nulls on all 1166 rows, and
+        # range, enum, display and method would serialise as nulls on all 1168 rows, and
         # means, params and args as {} and [] because a default_factory reads as MISSING.
         # Measured: 134k tokens for the full index, 101k without them.
         if value is None or value == {} or value == []:
@@ -8924,7 +8933,7 @@ def catalog_resource() -> str:
             "track area alone is about 32k tokens."
         ),
         "why_no_rows_here": (
-            "All 1166 rows in one payload cost about 134,000 tokens, more than most "
+            "All 1168 rows in one payload cost about 134,000 tokens, more than most "
             "callers can afford, and would still not answer the commonest questions: "
             "a filter cutoff is a runtime device parameter and is not a row at all. "
             "Rows come from find_path or from the selector above."
@@ -9116,12 +9125,552 @@ def limits_resource() -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+@mcp.tool(annotations=ADDS)
+def analyze_drums(
+    stems: Annotated[
+        list[DrumStemArg], Field(description="Identified kick/snare stems and source offsets.")
+    ],
+    output_dir: Annotated[
+        str, Field(description="Local output root; a unique job directory prevents overwrite.")
+    ],
+    tempo_bpm: Annotated[
+        float | None,
+        Field(gt=0, le=999, description="Known constant BPM; None proposes tempo from hits."),
+    ] = None,
+    beat_anchors: Annotated[
+        list[BeatAnchorArg] | None,
+        Field(description="Reviewed source-second/quarter-beat map, at least two anchors."),
+    ] = None,
+    sensitivity: Annotated[
+        float, Field(ge=1, le=50, description="Energy-rise noise threshold multiplier.")
+    ] = 6,
+    cut_one_shots: Annotated[
+        bool, Field(description="Also cut individual PCM_24 WAV hits.")
+    ] = False,
+    pre_roll_ms: Annotated[
+        float, Field(ge=0, le=1000, description="Audio before each attack, in ms.")
+    ] = 10,
+    tail_ms: Annotated[
+        float, Field(gt=0, le=5000, description="Audio after each attack, in ms.")
+    ] = 250,
+) -> dict[str, Any]:
+    """Queue isolated drum analysis, MIDI/tempo export and optional one-shots.
+
+    The caller identifies the instruments. This does not classify a mixed drum kit.
+    Detection refines a leading threshold crossing and subtracts supplied calibration.
+    Inferred tempo remains a proposal with half/double-time ambiguity. Use beat anchors
+    for known tempo changes. Optional dependencies run in a separate interpreter;
+    install .[audio] or set LIVE_MAESTRO_AUDIO_PYTHON to a provisioned interpreter.
+    """
+    try:
+        anchors = [item.model_dump() for item in beat_anchors] if beat_anchors else None
+        if anchors is not None:
+            anchors = validate_map(anchors)
+            if tempo_bpm is not None:
+                raise ValueError("supply tempo_bpm or beat_anchors, not both")
+        if tempo_bpm is not None and not math.isfinite(tempo_bpm):
+            raise ValueError("tempo must be finite")
+        return audio_jobs.manager().submit(
+            {
+                "stems": [item.model_dump() for item in stems],
+                "tempo_bpm": tempo_bpm,
+                "beat_anchors": anchors,
+                "sensitivity": sensitivity,
+                "cut_one_shots": cut_one_shots,
+                "pre_roll_ms": pre_roll_ms,
+                "tail_ms": tail_ms,
+            },
+            output_dir,
+        )
+    except (ValueError, OSError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=READS)
+def get_audio_job(
+    job_id: Annotated[str, Field(description="ID returned by analyze_drums.")],
+) -> dict[str, Any]:
+    """Read background analysis progress, terminal evidence and produced file paths."""
+    try:
+        return {"ok": True, **audio_jobs.manager().get(job_id)}
+    except (ValueError, OSError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=DESTROYS)
+def cancel_audio_job(
+    job_id: Annotated[str, Field(description="Queued/running audio job whose own worker to stop.")],
+) -> dict[str, Any]:
+    """Cancel local audio analysis and preserve its partial run directory."""
+    try:
+        return audio_jobs.manager().cancel(job_id)
+    except (ValueError, OSError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=DESTROYS)
+def write_drum_clip(
+    analysis_path: Annotated[
+        str, Field(description="analysis.json returned by a succeeded drum job.")
+    ],
+    track: Annotated[int, Field(ge=0, description="Existing MIDI track index.")],
+    slot: Annotated[int, Field(ge=0, description="Existing Session MIDI clip slot.")],
+    clip_origin_beat: Annotated[
+        float,
+        Field(ge=0, description="Source quarter-beat position corresponding to clip-local zero."),
+    ] = 0,
+    confirm: Annotated[
+        bool, Field(description="True replaces notes; False previews without contacting Live.")
+    ] = False,
+) -> dict[str, Any]:
+    """Convert the source tempo map into clip notes, then use verified Live note writing.
+
+    Create a sufficiently long MIDI clip first. Ensure Live's actual tempo map matches
+    the source map; writing notes alone does not change song tempo automation.
+    """
+    try:
+        data = json.loads(Path(analysis_path).expanduser().read_text(encoding="utf-8"))
+        notes = notes_from_analysis(data, clip_origin_beat)
+        if not confirm:
+            return {
+                "ok": False,
+                "blocked": True,
+                "plan": {
+                    "track": track,
+                    "slot": slot,
+                    "count": len(notes),
+                    "notes": notes[:20],
+                    "tempo_map": data["tempo_map"],
+                    "clip_origin_beat": clip_origin_beat,
+                },
+            }
+        return write_clip_notes(
+            track, slot, notes=[toolargs.NoteIn.model_validate(item) for item in notes]
+        )
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=DESTROYS)
+def apply_tempo_map(
+    analysis_path: Annotated[
+        str, Field(description="Succeeded analysis.json with a reviewed source tempo map.")
+    ],
+    confirm: Annotated[
+        bool, Field(description="True sets constant tempo; False previews without Live writes.")
+    ] = False,
+) -> dict[str, Any]:
+    """Apply a constant map through set_tempo or explain Arrangement import for changes.
+
+    Variable maps are exported as tempo-map.mid with a spanning carrier note.
+    Live's documented Arrangement import asks to include tempo data. The remote
+    object model cannot accept that GUI confirmation; import on a muted MIDI track.
+    """
+    try:
+        path = Path(analysis_path).expanduser()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        notes_from_analysis(data)
+        anchors = validate_map(data["tempo_map"]["anchors"])
+        bpms = [
+            60 * (right["beat"] - left["beat"]) / (right["seconds"] - left["seconds"])
+            for left, right in itertools.pairwise(anchors)
+        ]
+        plan = {
+            "bpms": bpms,
+            "review_required": data["tempo_map"].get("review_required", True),
+            "tempo_import_path": str(path.with_name("tempo-map.mid")),
+        }
+        if max(bpms) - min(bpms) > 0.001:
+            return {
+                "ok": False,
+                "blocked": True,
+                "code": "arrangement_import_required",
+                "plan": plan,
+                "instruction": (
+                    "Import tempo-map.mid into a muted Arrangement MIDI track "
+                    "and accept Live's tempo-data prompt."
+                ),
+            }
+        if not confirm:
+            return {"ok": False, "blocked": True, "plan": plan}
+        return set_tempo(bpms[0])
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.resource("live://skill/live-rebuild-drums")
+def rebuild_drums_skill() -> str:
+    """Read the shipped workflow joining UVR separation to Live drum reconstruction."""
+    return (Path(__file__).parent / "skills/live-rebuild-drums/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+
+@mcp.tool(annotations=READS)
+def read_tempo_map(
+    path: Annotated[str, Field(description="Saved .als file; reads persisted Main/Master tempo.")],
+) -> dict[str, Any]:
+    """Read quarter-beat/BPM/step-or-ramp events from the actual tempo target."""
+    try:
+        return {"ok": True, **tempo_file.read(path)}
+    except (ValueError, OSError, KeyError, ET.ParseError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=ADDS)
+def write_tempo_map(
+    source_path: Annotated[
+        str, Field(description="Saved source .als; source bytes are preserved.")
+    ],
+    output_path: Annotated[str, Field(description="New .als copy; an existing file is refused.")],
+    events: Annotated[
+        list[TempoPointArg], Field(description="Ordered beat/BPM events, beginning at zero.")
+    ],
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Write tempo automation to a new set copy, with exact persisted event read-back.
+
+    Shape describes interpolation toward the next event. Duplicate boundary events
+    encode a step. Live 12.4.6 preserved both ramps and steps on actual reopen/save.
+    Open the new copy and use verify_tempo_map to check its unwarped clip duration.
+    """
+    try:
+        return tempo_file.write_copy(
+            source_path, output_path, [event.model_dump() for event in events], confirm
+        )
+    except (ValueError, OSError, KeyError, ET.ParseError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=READS)
+def verify_tempo_map(
+    path: Annotated[str, Field(description="Saved .als copy currently open in Live.")],
+    clip_path: Annotated[
+        str, Field(description="Unwarped, non-looping Arrangement audio clip path.")
+    ],
+) -> dict[str, Any]:
+    """Compare an unwarped reference clip's duration against the persisted tempo map.
+
+    Native clip geometry was measured within 0.12 ms on a 278.36-second recording.
+    The tolerance is 1 ms for Live's musical-time arithmetic, not sample-exact export.
+    This reads no GUI dirty flag; save the opened copy before comparing persisted data.
+    Live's instantaneous song.tempo can evaluate ahead of the stopped playhead on ramps.
+    """
+    try:
+        if not re.fullmatch(r"song\.tracks\[\d+\]\.arrangement_clips\[\d+\]", clip_path):
+            raise ValueError("clip_path must identify an Arrangement clip")
+        data = tempo_file.read(path)
+        client = _client_instance()
+        opened = client.get("song.file_path")["value"]
+        if not opened or Path(opened).resolve() != Path(path).expanduser().resolve():
+            raise ValueError("the requested set copy is not open in Live")
+        values = {
+            key: client.get(clip_path + "." + key)["value"]
+            for key in (
+                "is_audio_clip",
+                "warping",
+                "looping",
+                "start_time",
+                "end_time",
+                "start_marker",
+                "end_marker",
+                "sample_rate",
+            )
+        }
+        if not values["is_audio_clip"] or values["warping"] or values["looping"]:
+            raise ValueError("reference must be an unwarped, non-looping audio clip")
+        actual = tempo_file.seconds_at(values["end_time"], data["events"]) - tempo_file.seconds_at(
+            values["start_time"], data["events"]
+        )
+        expected = values["end_marker"] - values["start_marker"]
+        delta = actual - expected
+        return {
+            "ok": True,
+            "live_verified": abs(delta) <= 0.001,
+            "clip_path": clip_path,
+            "source_seconds": expected,
+            "arrangement_seconds": actual,
+            "difference_seconds": delta,
+            "tolerance_seconds": 0.001,
+            "basis": "unwarped clip geometry under persisted tempo; save copy first",
+        }
+    except (ValueError, OSError, KeyError, ET.ParseError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=READS)
+def get_warp_markers(
+    path: Annotated[str, Field(description="Session or Arrangement audio clip LOM path.")],
+) -> dict[str, Any]:
+    """Read explicit source seconds and clip-local beats, including Live's shadow marker."""
+    try:
+        paths.validate(path)
+        client = _client_instance()
+        raw = client.get(path + ".warp_markers")
+        markers = []
+        for item in raw["value"]:
+            marker = item["path"]
+            markers.append(
+                {
+                    "seconds": client.get(marker + ".sample_time")["value"],
+                    "beat": client.get(marker + ".beat_time")["value"],
+                }
+            )
+        return {
+            "ok": True,
+            "path": path,
+            "markers": markers,
+            "shadow_marker": markers[-1] if markers else None,
+        }
+    except (ValueError, KeyError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=DESTROYS)
+def set_warp_markers(
+    path: Annotated[str, Field(description="Session or Arrangement audio clip LOM path.")],
+    markers: Annotated[
+        list[WarpPointArg], Field(description="Ordered source seconds/clip-local beats.")
+    ],
+    replace: Annotated[
+        bool, Field(description="Remove other real markers; retain Live's shadow.")
+    ] = True,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Construct Live WarpMarker objects in the Remote Script and verify the resulting map.
+
+    Mapping starts at seconds/beat zero. This enables Warp. Confirmation previews
+    the complete request; a failed write is never retried and may be partially applied.
+    Requires the locally installed warp_markers_set handler, not a published release.
+    """
+    try:
+        paths.validate(path)
+        request = {
+            "path": path,
+            "markers": [marker.model_dump() for marker in markers],
+            "replace": replace,
+        }
+        if not confirm:
+            return {"ok": False, "blocked": True, "plan": request}
+        client = _client_instance()
+        if "warp_markers_set" not in client.script_info().get("handlers", []):
+            return {
+                "ok": False,
+                "code": "script_update_required",
+                "error": "Install the updated local Remote Script and restart Live.",
+            }
+        receipt = client.send("warp_markers_set", request)
+        return {"ok": bool(receipt.get("verified")), **receipt}
+    except (ValueError, KeyError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=DESTROYS)
+def write_arrangement_notes(
+    path: Annotated[str, Field(description="Arrangement MIDI clip LOM path.")],
+    notes: Annotated[
+        list[NoteArg], Field(description="Clip-local notes; validated before any write.")
+    ],
+    mode: Annotated[
+        Literal["replace", "append"], Field(description="Replace all notes or append.")
+    ] = "replace",
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Write bounded MIDI chunks with receipts and read-back, without a Session detour.
+
+    A disconnect reports confirmed chunks and the ambiguous in-flight range. Never
+    automatically resend it. The operation is not a Live transaction or rollback.
+    """
+    if not re.fullmatch(r"song\.tracks\[\d+\]\.arrangement_clips\[\d+\]", path):
+        return {"ok": False, "error": "path must identify an Arrangement MIDI clip"}
+    raw = toolargs.note_dicts(notes)
+    report = note_ops.validate_note_dicts(raw)
+    if not report.ok:
+        return {"ok": False, "blocked": True, "validation": report.to_dict()}
+    raw, dropped = note_ops.without_tolerated_keys(raw)
+    parsed = note_ops.from_dicts(raw)
+    if not confirm:
+        return {
+            "ok": False,
+            "blocked": True,
+            "plan": {"path": path, "mode": mode, "count": len(parsed), "chunk_size": 128},
+        }
+    receipts = []
+    try:
+        client = _client_instance()
+        if not client.get(path + ".is_midi_clip")["value"]:
+            raise ValueError("target is not a MIDI clip")
+        length = client.get(path + ".length")["value"]
+        validation = note_ops.validate(parsed, clip_length=length)
+        if not validation.ok:
+            return {"ok": False, "blocked": True, "validation": validation.to_dict()}
+        encoded = note_ops.to_dicts(parsed)
+        chunks = [encoded[i : i + 128] for i in range(0, len(encoded), 128)] or [[]]
+        offset = 0
+        for index, chunk in enumerate(chunks):
+            try:
+                reply = client.send(
+                    "notes_set",
+                    {"path": path, "notes": chunk, "mode": mode if index == 0 else "append"},
+                )
+            except LiveError as error:
+                return {
+                    **_live_error(error),
+                    "confirmed_chunks": receipts,
+                    "in_flight": {"offset": offset, "count": len(chunk), "delivery": "unknown"},
+                    "next_step": "Read this clip before deciding what to send next.",
+                }
+            receipts.append({"offset": offset, "count": len(chunk), "reply": reply})
+            offset += len(chunk)
+        back = client.send("notes_get", {"path": path})
+        actual, ignored = _parse_notes(back.get("notes") or [])
+        diff = (
+            note_ops.diff(parsed, actual, ignore_defaulted_extensions=True)
+            if mode == "replace"
+            else None
+        )
+        return {
+            "ok": True,
+            "path": path,
+            "sent": len(parsed),
+            "confirmed_chunks": receipts,
+            "verified": diff.is_empty if diff else None,
+            "read_back_count": len(actual),
+            "input_keys_ignored": dropped,
+            "read_back_keys_ignored": ignored,
+            "diff": diff.summary() if diff else "append: old content was not compared",
+        }
+    except (ValueError, LiveError) as error:
+        return {"ok": False, "error": str(error), "confirmed_chunks": receipts}
+
+
+@mcp.tool(annotations=DESTROYS)
+def load_sample(
+    audio_path: Annotated[
+        str, Field(description="Local audio file to load directly into Simpler.")
+    ],
+    device_path: Annotated[
+        str, Field(description="Existing Simpler on a track or Drum Rack pad chain.")
+    ],
+    attack_sample: Annotated[
+        int, Field(ge=0, description="Source frame at the attack; trims pre-roll.")
+    ] = 0,
+    warp: Annotated[
+        bool, Field(description="Sample Warp; false preserves one-shot timing.")
+    ] = False,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Replace a Simpler sample by file path and verify its bytes, marker and Warp state.
+
+    A Drum Rack pad's existing Simpler is addressed by its nested device path.
+    This uses the native replace_sample method; no browser index or UVR is required.
+    """
+    try:
+        return native_workflows.load_sample(
+            _client_instance(), audio_path, device_path, attack_sample, warp, confirm
+        )
+    except (ValueError, OSError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=ADDS)
+def import_arrangement_audio(
+    audio_path: Annotated[
+        str, Field(description="Local audio file; imported directly into Arrangement.")
+    ],
+    track: Annotated[int, Field(ge=0, description="Empty Arrangement audio-track index.")],
+    at_beat: Annotated[
+        float, Field(ge=0, le=1576800, description="Song quarter-note beat position.")
+    ],
+    warp: Annotated[bool, Field(description="Requested Warp state after import.")] = False,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Import file, track, position and Warp in one call through native Track.create_audio_clip.
+
+    Destination must have no Arrangement clips, preventing hidden overlap replacement.
+    Native file, position and Warp are read back; timing has a separate verification field.
+    """
+    try:
+        return native_workflows.import_audio(
+            _client_instance(), audio_path, track, at_beat, warp, confirm
+        )
+    except (ValueError, OSError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=READS)
+def convert_clip_time(
+    path: Annotated[str, Field(description="Arrangement audio clip LOM path.")],
+    value: Annotated[float, Field(ge=0, description="Source seconds or song quarter-note beats.")],
+    direction: Annotated[
+        Literal["source_to_song", "song_to_source"], Field(description="Conversion direction.")
+    ],
+    tempo_path: Annotated[
+        str, Field(description="Saved current set; required for unwarped clips.")
+    ] = "",
+) -> dict[str, Any]:
+    """Convert file seconds and song beats through actual Warp or step/ramp tempo.
+
+    Source seconds are file-local, including excerpts. Apply the producer's source
+    offset separately when translating an excerpt event from the original song clock.
+    """
+    try:
+        return native_workflows.convert_time(_client_instance(), path, value, direction, tempo_path)
+    except (ValueError, OSError, KeyError, ET.ParseError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=READS)
+def get_set_state() -> dict[str, Any]:
+    """Read open set identity and transport, explicitly disclosing unknown dirty state."""
+    try:
+        client = _client_instance()
+        path = client.get("song.file_path")["value"]
+        return {
+            "ok": True,
+            "file_path": path,
+            "name": client.get("song.name")["value"],
+            "has_saved_path": bool(path),
+            "dirty": None,
+            "is_playing": client.get("song.is_playing")["value"],
+            "dirty_basis": "the Python Song API exposes no measured dirty flag",
+            "save_route": "Live GUI Save/Save As",
+        }
+    except LiveError as error:
+        return _live_error(error)
+
+
+@mcp.tool(annotations=DESTROYS)
+def load_drum_pad(
+    audio_path: Annotated[str, Field(description="Local one-shot file.")],
+    rack_path: Annotated[str, Field(description="Drum Rack device path on a track.")],
+    pad_note: Annotated[int, Field(ge=0, le=127, description="Pad MIDI note, such as GM kick 36.")],
+    attack_sample: Annotated[
+        int, Field(ge=0, description="PCM WAV frame at the attack; removes pre-roll from playback.")
+    ] = 0,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Load a file onto a Drum Rack pad, including creating an empty pad's Simpler.
+
+    Empty pads need a saved project. External files are staged under Samples/Imported/Maestro
+    without overwriting files. Existing layered/non-Simpler pads are refused. The source
+    bytes, attack marker and Warp state are verified; percussion uses one-shot mode.
+    """
+    try:
+        return native_workflows.load_pad(
+            _client_instance(), audio_path, rack_path, pad_note, attack_sample, confirm
+        )
+    except (ValueError, OSError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
 def main() -> None:
     """Serve Live Maestro MCP server over stdio transport."""
-    logger.info(
-        "live-maestro serving on stdio; Live bridge at %s:%d", _host(), _port()
-    )
-    mcp.run(transport="stdio")
+    logger.info("live-maestro serving on stdio; Live bridge at %s:%d", _host(), _port())
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        audio_jobs.close()
 
 
 if __name__ == "__main__":

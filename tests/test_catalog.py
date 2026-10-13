@@ -103,7 +103,7 @@ def _load_rows() -> list[Row]:
     return rows
 
 
-#: Loaded once at import: 1166 rows across five files. No test below mutates them.
+#: Loaded once at import: 1168 rows across five files. No test below mutates them.
 ROWS: list[Row] = _load_rows()
 
 VALID_ACCESS: frozenset[str] = frozenset(a.value for a in Access)
@@ -490,6 +490,14 @@ def test_every_proven_entry_traces_to_the_run_that_produced_it() -> None:
     this stops is a claim that appears because somebody typed a sentence.
     """
     report = json.loads(measurement_report().read_text(encoding="utf-8"))["rows"]
+    # Separate native workflow receipts preserve their measured Live version.
+    # They do not rewrite the historical generic-probe report or mix its claims.
+    for path in MEASUREMENTS_DIR.glob("native-workflows-live-*.json"):
+        supplemental = json.loads(path.read_text(encoding="utf-8"))
+        assert supplemental["basis"] == "native workflow read-back"
+        for row_id, result in supplemental["rows"].items():
+            assert row_id not in report and result["verified"] is True
+            report[row_id] = result
     offences = []
     for row in ROWS:
         row_id = str(row.get("id"))

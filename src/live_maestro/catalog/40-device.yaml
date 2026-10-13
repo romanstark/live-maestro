@@ -3114,6 +3114,26 @@
     - {name: track, kind: int, required: true}
     - {name: device, kind: int, required: true}
 
+- id: simpler.replace_sample
+  path: song.tracks[{track}].devices[{device}]
+  access: [call]
+  method: replace_sample
+  destructive: true
+  verify: none
+  status: verified
+  proven: [call]
+  doc: >-
+    Replace an existing Simpler's sample by a local file path. Measured 2026-10-13
+    against Live 12.4.6 on a track and Drum Rack pad: sample file fingerprint, attack
+    frame and disabled Warp read back correctly. Prefer load_sample for checked
+    loading, or load_drum_pad for an empty pad's browser creation and one-shot mode.
+    Writing simpler.sample_file_path itself remains read-only.
+  params:
+    - {name: track, kind: int, required: true}
+    - {name: device, kind: int, required: true}
+  args:
+    - {name: file_path, kind: str, required: true}
+
 - id: simpler.sample
   path: song.tracks[{track}].devices[{device}].sample
   access: [get, observe]
@@ -3142,7 +3162,8 @@
   proven: [get]
   doc: >-
     Absolute path of the audio file behind the Simpler. Read-only. Measured 2026-09-19 against Live 12.4.6 on a Simpler created by dropping a sample onto a MIDI track: the path read back as the file on disk, and lom_set with another path answered not_settable. That a sample cannot be swapped by writing a path is therefore this project's reading and not only Ableton's documentation. A Simpler with no sample loaded has no .sample at all and the path answers no_such_path. Swapping one goes through the
-    browser (50-browser.yaml, browser.load_item onto the selected pad or device). The single most
+    native simpler.replace_sample method (load_sample); an empty pad is created through
+    the browser (load_drum_pad). The single most
     useful row for answering "what is actually on this pad", and the thing to compare against a
     kit's expected file names.
   params:

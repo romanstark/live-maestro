@@ -111,6 +111,10 @@ Verifying catalog entries against running Live installations is one of the most 
 
 ### Available Helper Scripts
 
+Run repository helper scripts with the selected environment's Python, for example
+`python scripts/probe_paths.py`. They do not require executable file permissions,
+so the same invocation works with source distributions built on Windows.
+
 | Script | Purpose |
 |---|---|
 | `scripts/probe_paths.py` | Tests specific catalog rows against an open Live set and updates their status. |

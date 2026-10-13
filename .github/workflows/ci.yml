@@ -30,7 +30,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,audio]"
       - name: Lint (ruff)
         # Everything a contributor is expected to keep clean, scripts/ included:
         # a linter that skips a directory reports green over code nobody checked.
@@ -83,5 +83,5 @@ jobs:
       - name: The sdist passes its own test suite
         run: |
           mkdir -p /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist --strip-components=1
-          /tmp/probe/bin/pip install -e /tmp/sdist pytest
+          /tmp/probe/bin/pip install -e "/tmp/sdist[dev,audio]"
           cd /tmp/sdist && /tmp/probe/bin/pytest -q

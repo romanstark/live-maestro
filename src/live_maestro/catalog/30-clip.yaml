@@ -1691,8 +1691,10 @@
     Live value object (a MidiNoteSpecification, a WarpMarker) that has to be constructed inside
     Live, and lom_call passes JSON through; Live answers type_error "No registered converter was
     able to produce...". The {"__path__": ...} form resolves an existing object; it cannot build
-    a new one. Use the notes_set handler instead, which constructs the specifications itself
-    (verified: the same write that failed here succeeded through notes_set). This is the
+    a new one. Use set_warp_markers instead: its warp_markers_set handler constructs
+    Live.Clip.WarpMarker objects and verifies the resulting map, measured on an Arrangement
+    audio clip against Live 12.4.6 on 2026-10-13. The generic dictionary route remains broken.
+    This is the
     boundary of the generic path and the reason the specialised handlers exist at all.
   params:
     - {name: track, kind: int, required: true}

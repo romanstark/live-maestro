@@ -1,0 +1,32 @@
+{
+  "basis": "native workflow read-back",
+  "live_version": "12.4.6",
+  "date": "2026-10-13",
+  "rows": {
+    "track.create_audio_clip": {
+      "outcome": "verified",
+      "proven": [
+        "call"
+      ],
+      "verified": true,
+      "source_frames": 882000,
+      "sample_rate": 44100.0,
+      "at_beat": 4.0,
+      "end_marker_seconds": 20.0,
+      "duration_seconds": 19.99999995046663,
+      "warp": false
+    },
+    "simpler.replace_sample": {
+      "outcome": "verified",
+      "proven": [
+        "call"
+      ],
+      "verified": true,
+      "frames": 11466,
+      "attack_sample": 441,
+      "warp": false,
+      "playback_mode": 1,
+      "file_bytes_verified": true
+    }
+  }
+}

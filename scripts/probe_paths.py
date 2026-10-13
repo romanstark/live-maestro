@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Probe catalog paths against a live Ableton Live session and update status.
 
 Each selected path is read from a running Live instance, written with a safe value,
@@ -2054,7 +2053,7 @@ def select_rows(registry: Registry, args: argparse.Namespace) -> list[PathSpec]:
     if not (args.id or args.area or args.status or args.all):
         raise ValueError(
             "nothing selected. Choose rows with --id, --area, --status or --all "
-            "(--all is deliberately explicit: it is 1166 rows and a long run)."
+            "(--all is deliberately explicit: it is 1168 rows and a long run)."
         )
 
     rows = registry.all()

@@ -111,7 +111,7 @@ If a timeout occurs, the client closes and reopens the socket to ensure no stale
 
 ## 5. Handlers
 
-The Remote Script implements 17 handlers across generic and specialized families.
+The Remote Script implements 18 handlers across generic and specialized families.
 
 ### 5.1 `ping`
 - **Request:** `{"type": "ping", "params": {}}`
@@ -135,7 +135,7 @@ The ping handler operates independently of Live's main thread and LOM locks, all
     "live_version": "12.4.5",
     "host": "127.0.0.1",
     "port": 9878,
-    "allowlist_size": 142
+    "allowlist_size": 144
   }
   ```
 
@@ -234,7 +234,7 @@ Executes multiple operations in a single round trip. An `op` is `get`, `set` or 
 
 The wire handler sets no upper bound on the number of operations in `ops`. The cap a caller meets through the MCP tools is a tool-layer policy (`MAX_BATCH_OPS` in `src/live_maestro/server.py`), enforced before the request is built, and a client that speaks this protocol directly does not get it.
 
-Measured 2026-09-16 against Live 12.4.5 on a four-track set: one request costs about 400 ms whatever its size, plus about 0.44 ms per `song.tempo` read and about 0.72 ms per mixed real read (track name, mixer volume and panning value, `playing_slot_index`). 200 operations took 500 ms, 1600 took 1506 ms and 3200 cheap ones took 1718 ms, all with `error_count` 0. Write and call operations were not measured, because measuring them would have changed the open set. The ceiling is the main-thread budget of §8, which for this handler is `min(18 s, 4 s + 0.4 s per operation)`, not an operation count, and how many writes or calls fit inside that budget has not been measured.
+Batch scheduling overhead depends on the operation and host. The handler's main-thread budget is `min(18 s, 4 s + 0.4 s per operation)`; read-batch timings do not establish a safe throughput for writes or calls.
 
 ### 5.8 `notes_get` / `notes_set`
 - **`notes_get`:**
@@ -258,7 +258,7 @@ Note structure:
 }
 ```
 
-`notes_get` adds one key the structure above does not list: **`note_id`**, Live 11+'s own handle for an existing note. Every note from a read carries one (measured 2026-09-02 against Live 12.4.5: three written notes came back carrying `note_id` 1, 2 and 3). It is identity rather than content and is never written back: the `write_clip_notes` tool drops it on input and reports it as `input_keys_ignored`, so a list read from a clip can be edited and written back unchanged. Live may also return the MPE per-note keys `pitch_bend_range`, `pressure`, `timbre` and `slide`. These are treated the same way. Any key outside both sets is refused rather than dropped.
+`notes_get` adds one key the structure above does not list: **`note_id`**, Live 11+'s own handle for an existing note. Read notes carry this identity separately from their content. It is identity rather than content and is never written back: the `write_clip_notes` tool drops it on input and reports it as `input_keys_ignored`, so a list read from a clip can be edited and written back unchanged. Live may also return the MPE per-note keys `pitch_bend_range`, `pressure`, `timbre` and `slide`. These are treated the same way. Any key outside both sets is refused rather than dropped.
 
 ### 5.9 `automation_read` / `automation_write` / `automation_clear`
 - **`automation_read`:**
@@ -287,6 +287,27 @@ Performs breadth-first searches of Live's internal library. Every entry carries 
 ### 5.12 `enum_names`
 - **Request:** `{"type": "enum_names", "params": {"type": "Song.Quantization"}}`
 - **Response:** `{"type": "Song.Quantization", "members": {<name>: <int>}, "class": "..."}`. With `type` omitted the reply is `{"types": [...]}`, the enum-like containers this Live build has, which is how a catalog row is mapped to a type rather than guessed. The handler reads module attributes under `Live` and touches no LOM object.
+
+---
+
+### 5.13 `warp_markers_set`
+
+Request: `{"type":"warp_markers_set","params":{"path":"song.tracks[0].arrangement_clips[0]","markers":[{"seconds":0,"beat":0},{"seconds":10,"beat":20}],"replace":true}}`.
+
+The clip must be audio. The 2-2000 points start at zero, increase on both axes and
+fit the source duration. Actual `Live.Clip.WarpMarker` values are constructed and
+their fields checked before mutation. The handler enables Warp, removes other real
+markers when replacing, retains Live's final shadow and reads back the whole map.
+The reply reports `verified`, `missing`, `extra`, `before` and `shadow_marker`.
+An error after mutation reports `partial` and `before`; writes are never retried.
+
+`script_info` additionally advertises `warp_marker_constructor` and bounded native
+`file_method_docs` diagnostics. Older scripts lack these optional fields/handler;
+the public setter requests a local script update before any unsupported write.
+
+`lom_set` can clear the measured nullable browser target with
+`{"path":"app.browser.hotswap_target","value":{"__path__":null}}`.
+This explicit null reference is limited to that property.
 
 ---
 
@@ -331,9 +352,9 @@ Parameter value scales:
 | Category | Default Timeout | Connection Loss Retry |
 |---|---|---|
 | Read operations (`ping`, `script_info`, `lom_get`, `lom_describe`, `notes_get`, `automation_read`, `browser_walk`, `events_drain`, `enum_names`) | 10 seconds | Retries once on reconnect |
-| Everything else (`lom_set`, `lom_call`, `lom_batch`, `notes_set`, `automation_write`, `automation_clear`, `events_observe`, `events_clear`) | 20 seconds | Never retried automatically |
+| Everything else (`lom_set`, `lom_call`, `lom_batch`, `notes_set`, `automation_write`, `automation_clear`, `events_observe`, `events_clear`, `warp_markers_set`) | 20 seconds | Never retried automatically |
 
-All seventeen handlers are in one row or the other. The classification lives in `READ_ONLY_HANDLERS` in `client.py`, and a handler left out of it is treated as a write: it gets the longer timeout and no retry.
+All eighteen handlers are in one row or the other. The classification lives in `READ_ONLY_HANDLERS` in `client.py`, and a handler left out of it is treated as a write: it gets the longer timeout and no retry.
 
 These are the client's limits. The script holds its own, shorter, per-handler budget for the time a request may occupy Live's main thread (`_MAIN_THREAD_TIMEOUTS`: 8 seconds by default, 9 for `browser_walk`, 15 for `lom_call`, `notes_set` and `automation_clear`, 18 for `automation_write`), and the browser walk and the envelope write loop hold budgets under that again. The innermost limit fires first, so a request that runs long usually answers with a truncated or partial result rather than with a client timeout.
 
@@ -354,7 +375,11 @@ Live compiles and caches Remote Scripts on startup. Modifications to `live-remot
 
 A response with `"status": "success"` confirms that the Remote Script executed without raising an exception. For `lom_set`, what is stored is whatever `read_back` names: `applied` means the requested value is in memory, `clamped` means Live stored a different value, and `not_observed` means the property still reads its previous value and nothing about the write has been proved.
 
-One refusal a caller may have met through the MCP tools is not part of this protocol. `src/live_maestro/server.py` rejects a write to `song.tracks[i].arrangement_clips[j].end_marker`; the wire handler does not. Over this protocol `lom_set` accepts that write, and observed 2026-09-10 to 2026-09-13 against Live 12.4.5 it raises no error and `end_time` does not move. What `read_back` answers for it has not been recorded, so a direct client has to read `end_time` back to learn that nothing happened.
+The MCP tool layer refuses arbitrary writes to
+`song.tracks[i].arrangement_clips[j].end_marker`; the wire handler does not impose
+that guard. A direct protocol client must read `end_time` and verify resulting clip
+geometry separately from a stored marker value. The specialized audio-import
+workflow manages these markers and checks duration.
 
 It does not indicate:
 - Whether the result is audible (e.g., if a track is muted or an effect is bypassed).

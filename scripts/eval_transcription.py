@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Score the transcription cleanup against a generator's own MIDI export.
 
 Recomputes the figures quoted in ``transcribe_stem`` and in

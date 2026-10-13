@@ -884,6 +884,27 @@
   params:
     - {name: track, kind: int, required: true}
 
+- id: track.create_audio_clip
+  path: song.tracks[{track}]
+  access: [call]
+  method: create_audio_clip
+  destructive: true
+  verify: none
+  status: verified
+  proven: [call]
+  doc: >-
+    Create an Arrangement audio clip directly from [file_path, song_quarter_beat].
+    Measured 2026-10-13 against Live 12.4.6: a 20-second audio file imported at beat four;
+    source hash, position, Warp state and duration read back correctly. Requires an
+    audio, nonfrozen track; time is 0-1576800. Native overlap replacement can remove
+    existing material. Prefer import_arrangement_audio, which requires an empty
+    Arrangement track and corrects second-valued end markers after disabling Warp.
+  params:
+    - {name: track, kind: int, required: true}
+  args:
+    - {name: file_path, kind: str, required: true}
+    - {name: time, kind: float, required: true}
+
 - id: track.input_meter_right
   path: song.tracks[{track}].input_meter_right
   access: [get, observe]

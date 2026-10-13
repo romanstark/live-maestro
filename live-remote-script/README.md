@@ -22,13 +22,17 @@ Then in Live: **Preferences → Link, Tempo & MIDI → Control Surface** and pic
 
 Read `Library.cfg` (under `Preferences\` on Windows, directly in the version folder on macOS). It is frequently **not** `Documents`, and there is no fallback worth trying.
 
-`<ProjectPath>` in that file is where to start, but on its own it is **not reliably the User Library**. Measured 2026-08-29: `Library.cfg` gave `<ProjectPath Value="<Documents>/Ableton"/>` alongside `<ProjectName Value="User Library"/>`, and Live was loading its Remote Scripts one level deeper, from `<ProjectPath>/<ProjectName>`. A second `Remote Scripts` folder sat directly under `<ProjectPath>` and Live never read it. So check both, and take the one holding Live's own `Ableton Folder Info` marker folder, which is exactly what `scripts/install_script.py` does rather than picking one by a rule.
+`<ProjectPath>` alone does not reliably identify the User Library. Check both
+`<ProjectPath>` and `<ProjectPath>/<ProjectName>` and prefer the candidate holding
+Live's own `Ableton Folder Info` marker folder. `scripts/install_script.py` ranks
+these candidates and asks when several plausible libraries exist.
 
 From the wrong folder Live loads **nothing and says nothing**: no entry in the Control Surface dropdown, no error in the log, no clue. If the entry is missing after a restart, the path is wrong, not the script.
 
 Not the `User Remote Scripts` folder inside Live's own preferences folder (`%APPDATA%\Ableton\Live x.x.x\Preferences\` on Windows, `~/Library/Preferences/Ableton/Live x.x.x/` on macOS). That is the location for Live 10 and older.
 
-The User Library is also version-independent, which matters: Live updates itself and its preferences folder moves with it (`Live 12.4.2` → `Live 12.4.3`, measured). A script in the User Library survives that; one in the preferences folder does not.
+The User Library is version-independent. A script installed there survives a Live
+update even when the version-specific preferences folder changes.
 
 ### 2. The folder name is what Live shows in the dropdown
 
@@ -79,7 +83,12 @@ Live's own log (`Log.txt` in the current preferences folder) carries every `log_
 
 That is the single fact this whole design is built around (`docs/architecture.md`, *The restart tax*). A handler in here costs every user a Live restart to change; a row in the server-side catalog costs nothing.
 
-So: **a capability that can be expressed as a path must not become a handler.** Adding one is an architecture break and needs a written justification. The seventeen that exist are the five generic ones (`lom_get`, `lom_set`, `lom_call`, `lom_describe`, `lom_batch`), the ten that make up the five families a path genuinely cannot express (notes, envelopes, the browser graph, listeners, and `enum_names`, which protocol §5.12 calls a probe rather than a capability), and two infrastructure handlers (`ping`, `script_info`).
+A capability expressible by a path belongs in the catalog. Dedicated handlers are
+reserved for work a generic path cannot express, including typed Live value objects.
+The 18 handlers comprise five generic handlers, eleven handlers for notes,
+envelopes, browser traversal, listeners, enum inspection and WarpMarker lists,
+and two infrastructure handlers (`ping`, `script_info`). `warp_markers_set`
+constructs native WarpMarker objects that generic JSON calls cannot create.
 
 ---
 
@@ -92,7 +101,7 @@ These are not conventions, they are code. See `docs/protocol.md` §6.
 | Binds `127.0.0.1` only | The channel has no authentication and Live's API offers no auth primitive. Loopback is the security control, not a default, and the first line to check after any change to the socket setup |
 | Properties read and write freely by path | That is the generic surface |
 | Methods are **never** reachable by path | An arbitrary method call inside an audio application with the user's unsaved work in it can hang or crash it |
-| `lom_call` checks a **frozenset in this file** | 140 entries over 17 Live class names, covering 129 distinct method names. It lives in the script so it cannot be widened from outside Live. The catalog says what the server will *offer*; this says what the script will *do*, and the script wins |
+| `lom_call` checks a **frozenset in this file** | The allowlist lives in the script and cannot be widened from outside Live. The catalog describes what the server offers; the script controls what executes. `script_info` reports the active allowlist size. |
 | Every index is bounds-checked before use | An `IndexError` escaping a handler kills the client connection |
 | No slices, no negative indices, no private names | A negative index would silently address the wrong track instead of failing |
 | Group tracks are guarded | They have no arm state and no arrangement clips; unguarded iteration raises at the first group (measured) |
@@ -143,7 +152,7 @@ Three handlers answer on the client thread on purpose:
 Stated here rather than discovered later:
 
 - **`settable` in `lom_describe` is often `null`.** Live's objects expose C-level descriptors that accept assignment and raise at call time, so writability genuinely cannot be read from Python. `true`/`false` appears only for real `property` objects. The catalog is the authority.
-- **Automation exists only in Session clips.** `clip.automation_envelope()` returns `None` for Arrangement clips, and for a parameter belonging to a different track (quoted from the LOM, measured). Write in Session, then duplicate into the Arrangement, never the reverse.
+- **Live clip-envelope writing targets Session clips.** Duplicate those clips into Arrangement. Saved-set tempo automation uses the separate offline copy workflow.
 - **At `time = 0` Live returns the parameter default, not the curve** (measured across nine curves). `automation_read` therefore starts at 1/64 beat unless a `start` is given, and reports `epsilon_applied` so nobody has to remember.
 - **`notes_set` replace is atomic per *call*, not per *transaction*.** If the write fails after the removal, the notes are gone. The LOM has no rollback and neither does `lom_batch`: `atomic` there only means "stop at the first error".
 - **`str_for_value` is only ever called with a parameter's current value.** Passing `min` or `max` has taken Live down: a crash inside a plugin's own C code cannot be caught by `try`/`except` (measured with a 3rd-party sampler plugin).

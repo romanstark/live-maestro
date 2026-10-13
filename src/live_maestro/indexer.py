@@ -96,8 +96,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not tool_available():
         print(
-            f"{TOOL} is part of macOS and is not on this machine. The sound index is "
-            f"built by decoding audio and cannot be built without it.",
+            f"No decoder available ({TOOL}). Install FFmpeg or live-maestro[audio].",
             file=sys.stderr,
         )
         return 2
@@ -108,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             "No Ableton library root was found. A root is a folder holding an "
             "'Ableton Folder Info'; the usual places are under ~/Music/Ableton and "
             "inside the Live application bundle. Name one with --root if the library "
-            "is somewhere else, and note that these locations are macOS ones.",
+            "is somewhere else.",
             file=sys.stderr,
         )
         return 2

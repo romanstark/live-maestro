@@ -144,7 +144,7 @@ Some Live properties return numeric enums or sentinel values without descriptive
 - id: track.playing_slot_index
   means:
     "-1": "nothing is playing here. Correct and not a failure: with clip_trigger_quantization set to a bar, a read straight after firing still says -1"
-    "-2": "no clip is playing on this track. Measured 2026-09-16 against Live 12.4.5: the tracks reading -2 were exactly those holding no clip in the fired scene, and the reading was unchanged as the scene settled and again after a stop"
+    "-2": "no clip is playing on this track."
 ```
 
 When a property value matches an entry in `means`, the server attaches the explanation to the result. It reaches raw paths too: `lom_get`, `lom_set` and `lom_batch` look the row up with `registry.rows_for_path()`.
@@ -153,7 +153,11 @@ When a property value matches an entry in `means`, the server attaches the expla
 
 ## Status and verification discipline
 
-Every reading recorded in this catalog was taken against **Ableton Live 12.4.5** on Windows 11. The Remote Script build it ran under is in `measurements/catalog-live-12.4.5.json`, where it is a recorded field rather than a sentence that has to be kept up to date. That sentence is here, once, instead of in 1166 rows. A measurement against another build belongs in the row that was measured, because then the build is the thing worth saying.
+Catalog provenance is recorded in `measurements/catalog-live-12.4.5.json` and
+`measurements/native-workflows-live-12.4.6.json`. Read each row's operation and
+Live version rather than treating one report as coverage of every version.
+The reports identify the Remote Script build and the evidence for each verified
+operation.
 
 Every new row starts with `status: untested`.
 
@@ -209,106 +213,49 @@ learned nothing about the row and must not write a status.
 
 ## The Session / Arrangement boundary
 
-The Arrangement timeline is not writable, it can only be populated. All content originates in a Session clip and is duplicated. The Session slot is not an optional intermediate step, but the sole write target.
+Session clips can be duplicated to Arrangement with `arrange`. Direct file import
+and MIDI editing use `import_arrangement_audio` and `write_arrangement_notes`.
+These specialized workflows have their own validation and native read-back.
 
-While Arrangement clips expose properties for inspection (`start_time`, `end_time`, `length`), content and envelopes cannot be written directly to them over the LOM protocol.
+Generic `lom_call` cannot construct Live note or WarpMarker value objects.
+A method can therefore be inaccessible through that generic route while a typed
+workflow supports it. Clip-envelope writing remains a Session workflow.
 
-`lom_set` and `lom_batch` refuse a write to `end_marker` on an Arrangement clip. Behind that refusal is a single producer-session observation, 2026-09-10 against Live 12.4.5: the write was accepted, `end_time` did not move, and that same clip was one Live would not let loop. Whether the write is ineffective in general or only while the clip does not loop is unproven, and [limits.md](limits.md#5-open-questions-unverified-and-how-to-settle-them) section 5 carries the probe that would settle it. The refusal is kept because a write that reports success and changes nothing is worse than an error, and the row `arrangement_clip.end_marker` must not be read as a promise that the write lands: its `verified` status rests on a read-back that proved only that the value stores.
-
----
+`lom_set` and `lom_batch` refuse arbitrary Arrangement `end_marker` writes.
+Read-back of a stored marker does not prove that Arrangement geometry changed.
+The specialized audio-import workflow resets unwarped markers in seconds and
+checks duration. See [Arrangement timing](timing-workflows.md).
 
 ## Operational constraints
 
-- **`song.back_to_arranger` is writable asynchronously**: Writing `false` hands playback control back to the Arrangement from Session view. Live applies it on its own main thread: Measured 2026-09-10 to 2026-09-13 against Live 12.4.5, the write read back as applied after 2 read-back attempts, so a read taken straight after it reports `not_observed` with the write still pending. Writing `true` afterwards answers `not_observed` and the value stays `false` (measured 2026-09-06 against Live 12.4.5): the write travels one way, and Live raises the flag itself when a Session clip is launched.
-- **`song.current_song_time` write bounds**: Writing `current_song_time` is bounded by `song_length` (`"Cannot set the Songtime behind the Songlength"`), whereas Session playback advances freely past `song_length`.
-- **Note ids across clips, untested**: pass `get_notes_by_id`, `remove_notes_by_id` and `duplicate_notes_by_id` only ids read from the clip being called. The one-clip rule was observed on the ACE Studio note API, a different product, and is not measured against Live, which has no `INVALID_ARG` code. See [limits.md](limits.md) for the probe that settles it.
-- **Sparse automation layers**: Clip envelopes in the LOM are written through `Envelope.insert_step(time, length, value)`. There is no native continuous curve API; interpolation across sparse breakpoints is handled before writing, by `write_automation`. Raw sparse steps hold flat between points, and the final value reaches the end of the clip because `write_automation` puts it there: `build_automation_steps` in the Remote Script appends a closing step of length `clip_length` minus the last breakpoint time. What Live holds in the gap between two steps that do not touch is not measured; [limits.md](limits.md) carries the probe.
+- `song.back_to_arranger=False` is applied asynchronously. Re-read after a
+  `not_observed` response; writing true is not a verified way to restore Session control.
+- `song.current_song_time` writes are bounded by `song_length`.
+- Use note IDs from the target clip; cross-clip ID behavior is unverified.
+- `write_automation` interpolates into discrete envelope steps and explicitly
+  extends the final value to the clip end.
 
----
+See [operational limits](limits.md) for state, transport and GUI boundaries.
 
-## Impossibility claims: the audit of 2026-09-16
+### Sparse automation layers
 
-A row that says something cannot be done is read as a statement about Live, and a caller who
-believes it stops looking for a route. This section is the inherited list, so the next reader does
-not repeat the grep.
+`write_automation` builds interpolation from `Envelope.insert_step` calls and
+explicitly extends the final value to the clip end. Those are writer behaviors.
+Interpolation inside gaps between arbitrary raw steps remains unmeasured.
 
-**Method.** All five catalog files were swept for the vocabulary an impossibility is written in:
-`cannot`, `not settable`, `not writable`, `has no effect`, `is ignored`, `travels one way`,
-`not possible`. 140 of the 1166 rows carry one. 121 of those carry a date; 19 did not. The sweep
-itself re-measured nothing against Live and changed no status. It is enforced from now on by
-`test_every_impossibility_claim_says_where_it_came_from` and
-`test_the_undated_impossibility_roster_only_shrinks` in `tests/test_catalog.py`, which hold the
-roster. That roster opened at 19 and stands at 14: five rows were probed later the same day and
-left it, as recorded below.
+## Evidence for capability claims
 
-**Ten rows claimed an impossibility on nobody's authority and were corrected.** None was corrected
-by inventing a measurement:
+A catalog row describes the operation actually verified. A stored value, a native
+method call and an audible or structural effect are different claims.
 
-| Row | What it claimed | What it says now |
-|---|---|---|
-| `song.signature_denominator` | the validator cannot express "power of two" | a limit of this catalog's `range` field, not of Live, and what Live does with 3 is not measured |
-| `cue.time` | a locator cannot be moved through the LOM | the access list comes from Ableton's published LOM documentation, no write is on record, and `lom_set` here would settle it |
-| `track.has_midi_input` | writing notes into an audio track's clip is not possible | the note methods are MIDI-only in Ableton's documentation; what Live answers to such a write is not measured |
-| `track.view_selected_device` | the write side "needs an object the wire cannot currently carry" | **the claim was wrong**: `view.select_device` takes the device by path and its call is verified on that row (2026-08-30 against Live 12.4.5) |
-| `master.available_output_routing_types` | the list cannot be cached across sessions | machine-specific, and that the list survives an interface change is not measured, which is the reason to re-read it |
-| `clip.color` | older Live versions snap, "which this installation cannot show" | adds that the snap is therefore not measured here |
-| `clip.looping` | an unwarped audio clip cannot loop meaningfully | neither half is measured here, and names the write and read-back that settles the second |
-| `master_device.parameter` | `lom_set` answers `not_settable` | cites the companion `_value` row, where it was measured 2026-08-29 against Live 12.4.5 |
-| `chain.device_parameter` | `lom_set` answers `not_settable` | same citation |
-| `simpler.sample_file_path` | a sample cannot be swapped by writing a path | taken from Ableton's published documentation rather than measured; the browser is the route |
+Record the operation, date, Live version and discriminating read-back in the row's
+measurement provenance. Use a suitable object and state: an absent clip or a wrong
+device class does not prove that a member is missing. Attribute documentation-only
+claims to their source and leave unmeasured behavior untested.
 
-**Five rows left the roster on 2026-09-16, by being probed.** They took the only legitimate exit:
-each was offered the write through the raw `lom_set` tool, which does not consult a row's access
-list, against Ableton's "Patience" demo song in a running Live 12.4.5. Every write that stored was
-restored and the set was left as it was found. Three came back confirming what the row already
-said; two came back contradicting it, and those two rows now say what Live answered instead.
-
-| Row | What was written | What Live answered | What it changed |
-|---|---|---|---|
-| `cue.time` | `song.cue_points[0].time` | `not_settable` | nothing: claim confirmed, and it is now dated rather than attributed to the access list. Nothing stored, nothing to restore |
-| `device.is_active` | `false` to `song.tracks[0].devices[1].is_active` | `not_settable` | nothing: claim confirmed. Nothing stored, nothing to restore |
-| `clip_slot.color` | the colour of an empty slot, track 0 slot 3, whose read answers `None` | `not_settable` | nothing for an empty slot: claim confirmed there. An occupied slot was not probed and the row now says so. Nothing stored, nothing to restore |
-| `clip.color_index` | `70`, then `-1` | `live_error` "Color index out of range." both times, value stayed 32 | the claim. The row expected a clamp past the palette size; Live raises at both ends, so an out-of-range index is an error to handle and not a value to read back. Nothing stored, nothing to restore |
-| `song.signature_denominator` | `3`, re-read after 1.5 s; then `8` | 3: `ok` with `read_back: not_observed`, still 4 after 1.5 s. 8: `read_back: applied`, reads 8 | the claim. A denominator that is not a power of two is not rejected and not rounded: it is accepted and silently ineffective, which is the shape this whole specification exists to catch. `docs/limits.md` section 2 now carries it beside the other writes that report success and do nothing. Restored to 4 |
-
-**The roster after 2026-09-19: three rows.** Ten of the fourteen were probed against Live 12.4.6
-on an empty set, with the specimens built for the purpose: an Operator and an EQ Eight on a MIDI
-track, a Reverb on a return and the same Reverb on an ordinary track, an Oxi Bass Rack for a
-nested chain, a Simpler made by dropping a sample on a MIDI track, and a one-shot dropped on an
-audio track. Nine claims held and now carry the date. One did not.
-
-| Row | Probe | Live answered | Outcome |
-|---|---|---|---|
-| `param.value`, `eq8.frequency_hint`, `return_device.on`, `return_device.parameter`, `chain.device_on` | `lom_set` on the parameter object, then on its `.value` | object: `not_settable`. `.value`: `applied`, and `clamped` for the on/off one, which holds 0 or 1 | claim held. The object is the handle and the number is one level in |
-| `track.is_grouped`, `track.group_track`, `track.has_midi_input` | `lom_set` on each | `not_settable`, with Live naming the attribute | claim held |
-| `simpler.sample_file_path` | read, then `lom_set` with another path | read the file on disk; write `not_settable` | claim held, and it is now this project's reading rather than only Ableton's documentation |
-| `clip.looping` | `warping` to false on an audio one-shot, then `looping` to true | `applied`, `changed`, reads back true | Live allows it, where the claim only expected that it would. The flag is not a guard, so a clip carrying it is no evidence that anything loops |
-| `return.devices` | first four parameters of a Reverb on return A and of a Reverb on a track | the same `display_value` on both, `Predelay` reading 2.5 either way | **did not reproduce.** The claim carried no date and no version, so what it was true of is not known; it is not true of this one |
-
-**The three that remain, and why.** None is a write that can be attempted.
-
-- `song.tempo` is about writing tempo automation, not about writing tempo.
-- `clip.color` is about Live 10 and earlier snapping to a 70-entry palette, which an installation
-  running 12.4.6 cannot show.
-- `chain.send` is advice about planning send levels in dB rather than in 0 to 1. It is not an
-  impossibility claim at all, and the check matches it on wording.
-
-**Known weakness of the check.** It reads a whole `doc`, so a row passes when the word "measured"
-belongs to a different sentence than the impossibility. Tightening it to the sentence is the next
-pass, not this one.
-
-The probes are the ordinary ones: `lom_set` on the path with its read-back, through
-`scripts/probe_paths.py`, against a throwaway set.
-
-One probe that day settled nothing and is written up nowhere as a result. The claim that
-Arrangement track automation is unreachable rests on `clip.automation_envelope(parameter)`
-answering `None` on an Arrangement clip, and on 2026-09-16 a Session clip in the same set answered
-`None` for the same parameter as well. `None` therefore reads equally as "no envelope exists for
-that parameter yet" and as "envelopes are unreachable on this clip", so that row stays attributed
-to the Live Object Model rather than measured. What would discriminate is a Session clip that
-already carries an envelope for the parameter being asked about, compared against an Arrangement
-copy of it; `arrangement_clip.automation_envelope` now names that probe instead of the one that
-does not separate the two readings.
+The catalog checks enforce measurement provenance and prevent unsupported
+impossibility claims from acquiring a verified status. Detailed raw readings belong
+in the measurement reports; user documentation describes current behavior.
 
 ---
 
