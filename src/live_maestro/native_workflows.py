@@ -236,6 +236,7 @@ def import_audio(
         rate = client.get(path + ".sample_rate")["value"]
         # Live can retain an old beat-valued end marker after Warp is disabled.
         client.set(path + ".looping", False)
+        client.set(path + ".loop_start", 0)
         client.set(path + ".start_marker", 0)
         client.set(path + ".loop_end", frames / rate)
         client.set(path + ".end_marker", frames / rate)
@@ -247,6 +248,8 @@ def import_audio(
             "end_time",
             "start_marker",
             "end_marker",
+            "loop_start",
+            "loop_end",
             "sample_length",
             "sample_rate",
             "warping",
@@ -260,6 +263,13 @@ def import_audio(
         and abs(observed["start_time"] - at_beat) < 1e-6
         and observed["warping"] == warp
     )
+    if not warp:
+        source_duration = observed["sample_length"] / observed["sample_rate"]
+        verified = (verified and not observed["looping"]
+                    and abs(observed["start_marker"]) <= 1 / observed["sample_rate"]
+                    and abs(observed["loop_start"]) <= 1 / observed["sample_rate"]
+                    and abs(observed["end_marker"] - source_duration) <= 1 / observed["sample_rate"]
+                    and abs(observed["loop_end"] - source_duration) <= 1 / observed["sample_rate"])
     timing: dict[str, Any] = {"duration_verified": None, "duration_basis": "tempo not inspected"}
     if not warp:
         opened = client.get("song.file_path")["value"]
@@ -281,6 +291,7 @@ def import_audio(
     return {
         "ok": verified,
         "verified": verified,
+        "partial": not verified,
         "clip_path": path,
         "observed": observed,
         "sha256": expected,

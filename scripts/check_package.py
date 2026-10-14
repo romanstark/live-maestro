@@ -62,16 +62,19 @@ def main() -> None:
                 "import asyncio; from pathlib import Path; from live_maestro.server import mcp; "
                 "from live_maestro.installer import DEFAULT_SOURCE,DEVICE_SOURCE; "
                 "assert DEFAULT_SOURCE.is_file() and DEVICE_SOURCE.is_file(); "
-                "assert len(asyncio.run(mcp.list_tools()))==59; "
+                "assert len(asyncio.run(mcp.list_tools()))==60; "
+                "assert len(asyncio.run(mcp.list_resources()))==5; "
+                "assert len(asyncio.run(mcp.list_resource_templates()))==1; "
                 "import live_maestro.audio.jobs as jobs; "
-                "assert (Path(jobs.__file__).parent/'drum_worker.py').is_file(); "
+                "assert (Path(jobs.__file__).parent/'reference_worker.py').is_file(); "
+                "assert not (Path(jobs.__file__).parent/'semantic.py').exists(); "
                 "assert 'numpy' not in __import__('sys').modules"
             )], root, environment,
         )
         run([str(python), "-m", "pip", "install", "-q", str(wheel) + "[dev,audio]"],
             root, environment)
         run([str(python), str(Path(__file__).parent / "probe_drum_workflow.py"),
-             "--python", str(python), "--output", str(root / "wheel-probe")], root, environment)
+             "--python", str(python), "--output-dir", str(root / "wheel-probe")], root, environment)
         source = root / "source"
         source.mkdir()
         with tarfile.open(sdist) as archive:
@@ -91,7 +94,7 @@ def main() -> None:
         run([str(binary / ("pyrefly" + suffix)), "check", "--python-interpreter-path", str(python)],
             project, environment)
         run([str(python), str(project / "scripts/probe_drum_workflow.py"),
-             "--python", str(python), "--output", str(root / "sdist-probe")], root, environment)
+             "--python", str(python), "--output-dir", str(root / "sdist-probe")], root, environment)
         print(f"PACKAGE PASSED: {sys.platform}, Python {sys.version.split()[0]}", flush=True)
 
 

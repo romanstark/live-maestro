@@ -52,7 +52,7 @@ SCRIPT_NAME = "live-maestro"
 #: Live has not been restarted since the script was copied in.
 #: ``python scripts/install_script.py --diff`` compares the file against the repo and
 #: settles it outright.
-SCRIPT_VERSION = "0.1.3"
+SCRIPT_VERSION = "0.1.4"
 
 #: What protocol 1 means for a caller, the shapes it may rely on:
 #:

@@ -6,12 +6,13 @@ description: Rebuild isolated kick/snare recordings as editable MIDI in Live. Us
 # Rebuild drums from a recording
 
 Check the available servers. UVR Maestro supplies separated files and source
-timeline information; Live Maestro analyzes known kick/snare files and writes
-editable notes. Each server also works independently. Read the actual tool schema.
+timeline information; Independent Audio Maestro analyzes known kick/snare files;
+Live Maestro places reviewed notes and samples. Each server also works independently. Read the actual tool schema.
 
 For an uncertain model choice, separate a short excerpt first. Preserve its
 source_offset_seconds from the succeeded UVR result. Use the same offset in each
-DrumStem passed to analyze_drums. Also transfer source_sample_rate when UVR
+stem record passed to an independent analysis producer. Also transfer
+source_sample_rate when UVR
 resampled the output, so source sample positions use the original clock.
 A mixed drum stem is not an isolated kick or
 snare, and the analyzer does not identify instruments in a kit mixture.
@@ -20,9 +21,10 @@ Choose known tempo_bpm or reviewed beat_anchors when available. Automatically
 inferred maps require review, including half/double-time ambiguity and grid origin.
 Calibration subtracts known detector lateness; it does not establish the physical
 attack of every recording. Inspect uncertainty and a few detections before a full
-run. Never use the pitched transcribe_stem tool as a drum transcriber.
+run. Pitched transcription is not mixed-kit drum classification.
 
-analyze_drums returns a queued job. Poll get_audio_job and use cancel_audio_job
+Optional Audio Maestro owns analyze_drums and returns a queued job.
+Poll that server's get_audio_job and use its cancel_audio_job
 when requested. Only succeeded provides verified JSON, MIDI and optional one-shot
 files. Without the optional audio runtime, explain the reported dependency error.
 

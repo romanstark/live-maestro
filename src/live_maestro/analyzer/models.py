@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 __all__ = [
     "AccumulationSpan",
@@ -353,7 +353,8 @@ class TransportState(BaseModel):
     is_playing: bool = Field(description="Whether Live's transport is currently running.")
     tracks_sounding: int = Field(
         description=(
-            "How many tracks hold a Session clip playing: the count of tracks whose "
+            "Compatibility alias for session_tracks_playing. How many tracks hold a "
+            "Session clip playing: the count of tracks whose "
             "playing_slot_index is 0 or more while is_playing is true, and 0 whenever the "
             "transport is stopped. It is not a count of what can be heard. A muted track, "
             "a track under an active solo elsewhere, a track whose clip is silent and a "
@@ -379,6 +380,13 @@ class TransportState(BaseModel):
             "which survives a stop and is not a moment in a transition."
         )
     )
+
+    @computed_field(description="Tracks with a playing Session clip while transport runs. "
+                    "Arrangement playback, mute, routing and audibility are not counted.")
+    @property
+    def session_tracks_playing(self) -> int:
+        """Name the Session launch-state count without implying audible tracks."""
+        return self.tracks_sounding
 
 
 class AudioMeasurementResult(BaseModel):

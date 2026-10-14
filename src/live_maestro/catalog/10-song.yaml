@@ -2354,17 +2354,16 @@
   path: song.start_time
   access: [get, set]
   kind: float
-  unit: normalized
+  unit: beats
   destructive: false
   verify: read_back
   status: verified
   proven: [get, set]
   doc: >-
-    Song.start_time, found on the running object model and absent from this catalog until
-    scripts/sync_catalog.py proposed it. Live reports it as settable, and a probe run has written
-    it and read the value back. The unit is not established. A raw LOM number is normalised far
-    more often than it is physical, and the display string only exists for a DeviceParameter that
-    answers str_for_value() (docs/protocol.md section 7).
+    Arrangement start marker in quarter beats. song.start_playing starts here;
+    song.current_song_time is a separate playhead position. Read/write verified
+    2026-10-14 against Live 12.4.6: setting this marker to zero before start_playing
+    started playback at zero. The original marker and playhead were restored.
 - id: song.tuning_system
   path: song.tuning_system
   access: [get]

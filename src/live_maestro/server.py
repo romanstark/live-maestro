@@ -35,7 +35,6 @@ from pydantic import Field, ValidationError
 
 from live_maestro import automation as auto
 from live_maestro import instruments, lookup, native_workflows, sound_index, toolargs
-from live_maestro import transcribe as transcribe_audio
 from live_maestro.als import read as als_reader
 from live_maestro.als import tempo as tempo_file
 from live_maestro.als import write as als_writer
@@ -59,7 +58,12 @@ from live_maestro.analyzer.protocol import BANDS, REPLY_SCHEMA
 from live_maestro.audio import decode as audio_decode
 from live_maestro.audio import descriptor as descriptor_module
 from live_maestro.audio import jobs as audio_jobs
-from live_maestro.audio.requests import BeatAnchorArg, DrumStemArg
+from live_maestro.audio.requests import (
+    AudioFileArg,
+    AudioOutputArg,
+    SourceEndArg,
+    SourceStartArg,
+)
 from live_maestro.audio.timeline import notes_from_analysis, validate_map
 from live_maestro.client import (
     DEFAULT_HOST,
@@ -72,7 +76,7 @@ from live_maestro.client import (
 from live_maestro.executor import Result, UnknownSpecError, execute, execute_batch
 from live_maestro.lom import introspect, paths
 from live_maestro.models import Access, Note, PathStatus
-from live_maestro.music import launch, transcription
+from live_maestro.music import launch
 from live_maestro.music import notes as note_ops
 from live_maestro.registry import CatalogError, Registry, area_of, default_registry
 from live_maestro.spec import PathSpec
@@ -230,8 +234,9 @@ SESSION_CLIPS_NOT_PROBED_NOTE = (
 )
 
 CONFIGURE_NOTE = (
-    "Plugins reporting only 'Device On' have not had parameters exposed via Live Configure "
-    "mode (up to 128 parameter slots per instance, measured against Live 12.4.5)."
+    "For a third-party VST/AU plug-in exposing only 'Device On', use Live's Configure "
+    "mode to expose the controls you need (up to 128 parameter slots per instance). "
+    "Native Live and Max for Live devices do not use this VST/AU Configure workflow."
 )
 
 SESSION_ONLY_NOTE = auto.SESSION_ONLY_NOTE
@@ -427,27 +432,6 @@ _LENGTH_TOLERANCE_S = 0.01
 #: maintains the server and are not something a caller reached over MCP can open, so
 #: they are reported apart from what the caller is meant to act on.
 _REPOSITORY_CITATION = re.compile(r"\b(?:src|tests|docs|scripts|live-remote-script)/")
-#: A recording sounding at least this share of the time is held rather than struck, which
-#: is the material a pitch transcriber reports in fragments.
-_SUSTAINED_FRACTION = 0.6
-
-#: Written events per second below this are not called suspect however little the
-#: recording holds, because a slow part over a drone is a real thing to write.
-_SUSTAINED_FLOOR_HZ = 1.0
-
-#: Onsets a stretch must hold before "hardly any notes came back" means anything. Below
-#: this the recording is sparse and a sparse transcription of it is correct.
-_PERCUSSIVE_ONSETS = 8.0
-
-#: Share of the recording's own onsets below which a transcription is called too thin.
-_TOO_FEW_SHARE = 0.25
-
-#: How many times the recording's onset rate a transcription may write before it is
-#: called too dense. Measured over four stems, written attacks against heard onsets in
-#: the busiest window: a bass 1.2 and a strummed guitar 2.7, both correct transcriptions,
-#: against a keys part at 9.6 and a pad at 53.5.
-_TOO_MANY_FACTOR = 3.0
-
 
 mcp = FastMCP(
     name="live-maestro",
@@ -464,9 +448,12 @@ mcp = FastMCP(
         "find_sound searches the browser by name, and match_sound takes an audio file you "
         "have and ranks the library by what it sounds like, which is how to rebuild a stem "
         "with the installed instruments. match_sound needs an index; sound_index_status "
-        "says whether there is one. analyze_drums runs optional file analysis in a background "
-        "worker on identified kick/snare stems. Poll get_audio_job; use cancel_audio_job "
-        "to stop it. Read live://skill/live-rebuild-drums for UVR-to-Live guidance. "
+        "says whether there is one. capture_audio records Live; "
+        "compare_audio measures A/B differences. "
+        "Source analysis and transcription belong to the optional independent Audio Maestro. "
+        "Poll get_audio_job; use cancel_audio_job "
+        "to stop it. Read live://skill/live-rebuild-drums for drum reconstruction or "
+        "live://skill/live-rebuild-reference for source-to-Live reconstruction. "
         "live://limits says what is impossible and why."
     ),
 )
@@ -1711,13 +1698,14 @@ def get_devices(track: TrackArg, kind: KindArg = "track") -> dict[str, Any]:
         entry = params.get(str(index), {})
         exact = bool(entry.get("exact"))
         param_count = int(entry.get("count", 0))
-        unconfigured = exact and param_count == 1
-        any_unconfigured = any_unconfigured or unconfigured
+        device_class = class_row.get("value") if class_row.get("ok") else None
+        unconfigured = _configure_needed(device_class, param_count if exact else None)
+        any_unconfigured = any_unconfigured or unconfigured is True
         devices.append(
             {
                 "index": index,
                 "name": listed["values"][index],
-                "class_name": class_row.get("value") if class_row.get("ok") else None,
+                "class_name": device_class,
                 "is_active": active_row.get("value") if active_row.get("ok") else None,
                 "parameter_count": param_count if exact else None,
                 "parameter_count_at_least": None if exact else param_count,
@@ -2169,6 +2157,15 @@ def _device_path(row: Mapping[str, Any], index: int) -> str:
     return f"song.view.selected_track.devices[{index}]"
 
 
+def _configure_needed(device_class: Any, parameter_count: int | None) -> bool | None:
+    """Only hosted VST/AU devices have Live's Configure parameter strip."""
+    if not isinstance(device_class, str) or not device_class:
+        return None
+    if "Plugin" not in device_class:
+        return False
+    return None if parameter_count is None else parameter_count == 1
+
+
 def _parameter_count(client: LiveClient, device_path: str) -> int | None:
     """Return how many parameters a device exposes, or None when it cannot be read.
 
@@ -2517,7 +2514,11 @@ def load_device(
         if exposed is None:
             configure_needed_unknown_reason = "parameter_count_unreadable"
         else:
-            configure_needed = exposed == 1
+            handle = devices_after["value"][loaded_device_index]
+            device_class = handle.get("__lom__") if isinstance(handle, Mapping) else None
+            configure_needed = _configure_needed(device_class, exposed)
+            if configure_needed is None:
+                configure_needed_unknown_reason = "device_class_unreadable"
 
     notes: list[str] = [TRACK_IDENTITY_NOTE]
     if snap_err_after is not None:
@@ -3801,7 +3802,7 @@ def _resolve_device_parameter(
                 f"showing {len(shown)} of {len(names)} parameter names. For the "
                 "full list call describe with with_parameters=True on this device."
             )
-        if view.parameter_count <= 1:
+        if view.is_plugin and view.parameter_count <= 1:
             out["advice"] = CONFIGURE_NOTE
         return None, out
     return {
@@ -5614,17 +5615,33 @@ def play(
         attempts for ``read_back: "applied"``).
     """
     moved: dict[str, Any] | None = None
+    marker: dict[str, Any] | None = None
+    restored: dict[str, Any] | None = None
     if from_beat is not None:
-        moved = _run("song.current_song_time", value=from_beat)
-        if not moved.get("ok"):
-            return moved
-    started = _run("song.continue_playing" if continue_playing else "song.start_playing")
+        marker = _run("song.start_time")
+        if not marker.get("ok"):
+            return marker
+    try:
+        if from_beat is not None:
+            cued = _run("song.start_time", value=from_beat)
+            if not cued.get("ok"):
+                return cued
+            moved = _run("song.current_song_time", value=from_beat)
+            if not moved.get("ok"):
+                return moved
+        started = _run("song.continue_playing" if continue_playing and from_beat is None
+                       else "song.start_playing")
+    finally:
+        if marker is not None:
+            restored = _run("song.start_time", value=marker["value"])
     state = _run("song.is_playing")
     return {
-        "ok": bool(started.get("ok")) and bool(state.get("value")),
+        "ok": bool(started.get("ok")) and bool(state.get("value"))
+              and (restored is None or bool(restored.get("ok"))),
         "is_playing": state.get("value") if state.get("ok") else None,
         "from_beat": from_beat,
         "playhead": moved,
+        "start_marker_restoration": restored,
         "call": started,
         "note": "is_playing is the read-back; the call itself proves only that it did not raise.",
     }
@@ -7496,365 +7513,6 @@ def fire_scene(
     return answer
 
 
-#: How long a stretch the transcription is checked against its recording in.
-_CHECK_WINDOW_S = 20.0
-
-#: Notes starting within this of each other are one attack. A transcriber does not put
-#: the notes of a chord at one time: measured over four stems it reports 1.05 to 1.68
-#: notes per attack, so counting notes where the audio counts attacks reads a chord as
-#: several strikes.
-_ONE_ATTACK_S = 0.03
-
-
-def _attacks_between(
-    notes: Sequence[Any], from_beat: float, to_beat: float, tempo: float
-) -> int:
-    """Count attacks, not notes, in a stretch of a transcription.
-
-    The recording's onset rate counts events. A chord is one event and several notes, so
-    the two are comparable only once the notes that begin together are counted once.
-    """
-    tolerance = _ONE_ATTACK_S * tempo / 60.0
-    starts = sorted(
-        n.start_time for n in notes if from_beat <= n.start_time < to_beat
-    )
-    attacks = 0
-    previous: float | None = None
-    for start in starts:
-        if previous is None or start - previous > tolerance:
-            attacks += 1
-            previous = start
-    return attacks
-
-
-def _onset_disagreement(
-    heard: descriptor_module.Descriptor,
-    *,
-    written: int,
-    window: tuple[float, float],
-) -> dict[str, Any] | None:
-    """Report where a transcription's note density contradicts the recording's own.
-
-    A pitch transcriber has two ways to be confidently wrong about material it was not
-    built for, and they are opposites. On percussion it finds almost no fundamentals and
-    writes a handful of notes where the recording is striking constantly. On held
-    material it reports one sustained note whose level wavers as several, and writes a
-    stutter where the recording starts nothing at all.
-
-    Both are read off the same pair of numbers: how often the audio starts an event in
-    the stretch that was looked at, and how many notes were put there.
-
-    Args:
-        heard: Descriptor of the stretch of audio that was looked at.
-        written: Notes the transcription placed inside that same stretch.
-        window: ``(from_s, to_s)`` of the stretch, for the report.
-
-    Returns:
-        The report, or ``None`` where the two agree well enough to say nothing. A
-        report is a reason to listen, never a measurement of musical quality.
-    """
-    seconds = max(0.001, window[1] - window[0])
-    expected = heard.onset_rate_hz * seconds
-    rate = written / seconds
-    common: dict[str, Any] = {
-        "window_s": [round(window[0], 2), round(window[1], 2)],
-        "onsets_in_the_audio": round(expected, 1),
-        "notes_transcribed_there": written,
-        "heard_onsets_per_s": round(heard.onset_rate_hz, 2),
-        "written_onsets_per_s": round(rate, 2),
-    }
-    if expected >= _PERCUSSIVE_ONSETS and written < expected * _TOO_FEW_SHARE:
-        return {
-            **common,
-            "kind": "too_few",
-            "why": (
-                f"The recording starts a new event about {heard.onset_rate_hz:.1f} "
-                f"times a second in its busiest stretch, and the transcription put "
-                f"{written} notes there. A pitch transcriber hears fundamentals, and "
-                "percussion has none, so a drum or a noise part comes back as a few "
-                "notes from resonances and reports success. Listen before writing "
-                "this, and for drums expect to build the part another way."
-            ),
-        }
-    if heard.sustain_fraction >= _SUSTAINED_FRACTION and rate > max(
-        _SUSTAINED_FLOOR_HZ, heard.onset_rate_hz * _TOO_MANY_FACTOR
-    ):
-        return {
-            **common,
-            "kind": "too_many",
-            "why": (
-                f"The recording sounds {heard.sustain_fraction:.0%} of the time and "
-                f"starts a new event {heard.onset_rate_hz:.2f} times a second in its "
-                f"busiest stretch, and the transcription writes {rate:.1f} a second "
-                "there. A transcriber reports a held note whose level wavers as "
-                "several notes, so a pad or a string part arrives as a stutter at the "
-                "right pitches. sustained=true joins the fragments and cuts this by "
-                "about two thirds; measured on a pad it still wrote 2.25 attacks a "
-                "second where the recording started 0.10, so it is a mitigation and "
-                "not a repair."
-            ),
-        }
-    return None
-
-
-@mcp.tool(annotations=DESTROYS)
-def transcribe_stem(
-    path: Annotated[
-        str,
-        Field(
-            description=(
-                "Absolute path to the audio to transcribe. A separated stem, one "
-                "instrument at a time. A whole mix transcribes as one tangle."
-            )
-        ),
-    ],
-    tempo: Annotated[
-        float,
-        Field(
-            gt=0.0,
-            le=999.0,
-            description=(
-                "Beats per minute, to turn seconds into clip beats. Read the set's own "
-                "tempo unless the recording has a different one. A recording whose "
-                "tempo drifts will separate from one number over the length of a song."
-            ),
-        ),
-    ],
-    monophonic: Annotated[
-        bool,
-        Field(
-            description=(
-                "True for a part played one note at a time, such as a bass or a sung "
-                "line. It reduces the result to the lowest note sounding, which is how "
-                "a bass loses the harmonics a transcriber hears above it, and which "
-                "throws away the upper voices of anything that plays chords."
-            )
-        ),
-    ] = False,
-    sustained: Annotated[
-        bool,
-        Field(
-            description=(
-                "True for material that holds its notes rather than striking them: a "
-                "pad, a string section, an organ. It joins same-pitch fragments "
-                "separated by a gap too small to play, which is how one held chord "
-                "stops arriving as eight notes. Off by default because on struck "
-                "material it costs agreement on pitch content, between one and ten "
-                "points measured over five stems, and it does not repair a pad: it "
-                "took one from 5.35 written attacks a second to 2.25, where the "
-                "recording started 0.10. See transcription_suspect."
-            )
-        ),
-    ] = False,
-    track: Annotated[
-        int,
-        Field(
-            ge=-1,
-            description=(
-                "Track to write the notes into. -1 returns them instead of writing, "
-                "which is the default and is how to look before committing."
-            ),
-        ),
-    ] = -1,
-    slot: Annotated[
-        int, Field(ge=0, description="Session clip slot on that track.")
-    ] = 0,
-    confirm: Annotated[
-        bool,
-        Field(
-            description=(
-                "True writes into the clip, replacing every note already in it. False "
-                "reports what would be written and changes nothing."
-            )
-        ),
-    ] = False,
-    preview: Annotated[
-        int,
-        Field(ge=0, le=200, description="How many notes to include in the answer."),
-    ] = 12,
-) -> dict[str, Any]:
-    """Turn a recording of one instrument into notes, cleaned of what it is not.
-
-    Returns:
-        Dictionary with how many notes were heard and how many survived cleaning, the
-        pitch range, the span in beats, a sample of the notes, and the write result
-        where one was asked for.
-
-    Note:
-        **This transcribes pitch, and percussion has no pitch.** A drum kit returns cymbal
-        and shell resonances, reporting success: measured on a four minute drum stem, 39
-        notes for 488 beats, none of them a kick, and nothing across forty bars of steady
-        playing. Never write drums from here. Held material fails the other way: a wavering
-        sustained note reads as several, so a pad arrives at the right pitches with a rhythm
-        nobody played. Measured 2026-09-19 over four stems in their busiest 20 seconds,
-        written attacks ran 3.35 a second against 2.85 onsets on bass, 3.50 against 1.30 on
-        a strummed guitar, and 5.35 and 5.30 against 0.10 and 0.55 on pad and keys.
-
-        ``transcription_suspect`` flags that disagreement, ``kind`` says which way, and
-        ``transcription_checked`` says whether the comparison ran at all, since it needs a
-        second decode through an available local decoder; an unchecked result proves
-        nothing about timing. Measured 2026-09-19
-        against exported MIDI for five pitched stems, pitch content agreed 93.7 to 96.2
-        percent: which notes, not when, the export's own timing having drifted. Harmonics
-        are removed where a lower, louder note at the same time explains them;
-        ``monophonic`` then leaves nothing sounding at the same time as anything else.
-        ``scripts/eval_transcription.py`` recomputes these.
-
-        Writing needs a clip: ``create_clip`` on the target slot first, long enough for the
-        whole part, then this with ``confirm=True``. ``span_beats`` runs from beat 0 to the
-        last note's end, so a clip of that length rounded up to a bar holds it. Writing
-        replaces every note in the clip, with no undo here and no rollback in the LOM: a
-        write that fails after the removal leaves nothing.
-    """
-    source = Path(path).expanduser()
-    if not transcribe_audio.is_available():
-        return {
-            "ok": False,
-            "code": "no_transcriber",
-            "error": (
-                "No environment with basic-pitch was found. Create one with a Python "
-                "between 3.7 and 3.11, install basic-pitch into it, and point "
-                f"{transcribe_audio.ENV_VAR} at its interpreter."
-            ),
-        }
-    try:
-        heard = transcribe_audio.transcribe(source)
-    except transcribe_audio.TranscriberError as exc:
-        return {"ok": False, "code": exc.code, "error": exc.error, "path": str(source)}
-
-    kept = transcription.clean(heard, monophonic=monophonic, merge=sustained)
-    notes = transcription.to_notes(kept, tempo)
-
-    # Cross-check against the recording's own onsets. A pitch transcriber hears a
-    # fundamental, and percussion has none, so a drum kit comes back as a handful of
-    # notes from cymbal and shell resonances and reports success. Comparing what the
-    # audio does in one busy window with what the transcription put there is the one
-    # check available from inside this server.
-    suspect: dict[str, Any] | None = None
-    unchecked: str | None = None
-    if not audio_decode.tool_available():
-        samples = []
-        unchecked = (
-            f"{audio_decode.TOOL} is not on this machine, so the recording could not be "
-            "read back and the transcription was not checked against it."
-        )
-    else:
-        try:
-            samples = audio_decode.decode_to_samples(source)
-        except audio_decode.DecodeError as exc:
-            samples = []
-            unchecked = (
-                f"The recording could not be decoded ({exc.code}), so the transcription "
-                "was not checked against it."
-            )
-    if samples:
-        rate = descriptor_module.SAMPLE_RATE
-        # Busiest and not loudest: the comparison is about how often something is
-        # struck, and a stem's loudest stretch is often a chord ringing out.
-        first, last = descriptor_module.busiest_window(samples, _CHECK_WINDOW_S)
-        heard_here = descriptor_module.describe(samples[first:last])
-        from_beat = first / rate * tempo / 60.0
-        to_beat = last / rate * tempo / 60.0
-        suspect = _onset_disagreement(
-            heard_here,
-            written=_attacks_between(notes, from_beat, to_beat, tempo),
-            window=(first / rate, last / rate),
-        )
-    if not notes:
-        return {
-            "ok": False,
-            "code": "nothing_heard",
-            "error": f"{source.name} produced no notes at all.",
-            "path": str(source),
-            "heard": len(heard),
-        }
-
-    pitches = [n.pitch for n in notes]
-    span = max(n.start_time + n.duration for n in notes)
-    answer: dict[str, Any] = {
-        "ok": True,
-        "path": str(source),
-        "tempo": tempo,
-        "monophonic": monophonic,
-        "heard": len(heard),
-        "kept": len(notes),
-        "removed_as_overtones": len(heard) - len(kept),
-        "pitch_range": [min(pitches), max(pitches)],
-        "median_pitch": sorted(pitches)[len(pitches) // 2],
-        "span_beats": round(span, 3),
-        "notes_preview": [
-            {
-                "pitch": n.pitch,
-                "start_time": n.start_time,
-                "duration": n.duration,
-                "velocity": n.velocity,
-            }
-            for n in notes[:preview]
-        ],
-        "caveat": (
-            "The pitches are measured and the timing is not checked against anything. "
-            "A transcription is a starting point: listen to it against the recording "
-            "before building on it."
-        ),
-    }
-    if suspect is not None:
-        answer["transcription_suspect"] = suspect
-    answer["transcription_checked"] = unchecked is None
-    if unchecked is not None:
-        answer["transcription_not_checked_why"] = unchecked
-
-    if track < 0:
-        answer["written"] = False
-        answer["next_step"] = (
-            f"{len(notes)} notes are ready. Call again with track= and slot= and "
-            f"confirm=True to write them, which replaces every note in that clip."
-        )
-        if suspect is not None:
-            answer["next_step"] = (
-                f"{len(notes)} notes came back and they do not match what the recording "
-                f"does. See transcription_suspect before writing anything."
-            )
-        return answer
-
-    clip_path = f"song.tracks[{track}].clip_slots[{slot}].clip"
-    if not confirm:
-        answer["written"] = False
-        answer["would_write"] = {"path": clip_path, "notes": len(notes), "mode": "replace"}
-        answer["next_step"] = (
-            f"Call again with confirm=True to replace every note in {clip_path} with "
-            f"these {len(notes)}."
-        )
-        return answer
-
-    try:
-        result = _client_instance().send(
-            "notes_set",
-            {
-                "path": clip_path,
-                "notes": note_ops.to_dicts(notes),
-                "mode": "replace",
-            },
-        )
-    except LiveError as exc:
-        failed = _live_error(exc)
-        failed["transcription"] = {"kept": len(notes), "path": str(source)}
-        failed["note"] = (
-            "The notes were transcribed and not written. Nothing in the clip changed "
-            "unless the removal had already run, which this cannot tell from here."
-        )
-        return failed
-
-    answer["written"] = True
-    answer["write"] = {
-        "path": clip_path,
-        "sent": len(notes),
-        "before_count": result.get("before_count"),
-        "after_count": result.get("after_count"),
-    }
-    answer["notes"] = [NOTES_REPLACE_NOTE, STORED_NOT_AUDIBLE]
-    return answer
-
-
 @mcp.tool(annotations=READS)
 def sound_index_status() -> dict[str, Any]:
     """Is there an index of how this installation's library sounds, and what is in it?
@@ -8664,8 +8322,9 @@ async def analyze_audio(
     Every measurement carries the transport state from immediately after it, so a reading
     taken mid scene change can be recognised. ``in_transition`` is true while any track
     reports fired_slot_index 0 or more, a launch waiting for the next quantization boundary,
-    and ``tracks_sounding`` counts tracks whose playing_slot_index is 0 or more while the
-    transport runs, 0 when stopped: clips Live plays, not what is audible. Unreadable state
+    and ``session_tracks_playing`` counts tracks whose playing_slot_index is 0 or more
+    while the transport runs, 0 when stopped. Arrangement playback and audibility are
+    outside this count. ``tracks_sounding`` is its compatibility alias. Unreadable state
     gives ``transport`` null with a code and one sentence in ``transport_unavailable``, or
     not_queried when the analyzer did not answer.
     """
@@ -9125,72 +8784,13 @@ def limits_resource() -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-@mcp.tool(annotations=ADDS)
-def analyze_drums(
-    stems: Annotated[
-        list[DrumStemArg], Field(description="Identified kick/snare stems and source offsets.")
-    ],
-    output_dir: Annotated[
-        str, Field(description="Local output root; a unique job directory prevents overwrite.")
-    ],
-    tempo_bpm: Annotated[
-        float | None,
-        Field(gt=0, le=999, description="Known constant BPM; None proposes tempo from hits."),
-    ] = None,
-    beat_anchors: Annotated[
-        list[BeatAnchorArg] | None,
-        Field(description="Reviewed source-second/quarter-beat map, at least two anchors."),
-    ] = None,
-    sensitivity: Annotated[
-        float, Field(ge=1, le=50, description="Energy-rise noise threshold multiplier.")
-    ] = 6,
-    cut_one_shots: Annotated[
-        bool, Field(description="Also cut individual PCM_24 WAV hits.")
-    ] = False,
-    pre_roll_ms: Annotated[
-        float, Field(ge=0, le=1000, description="Audio before each attack, in ms.")
-    ] = 10,
-    tail_ms: Annotated[
-        float, Field(gt=0, le=5000, description="Audio after each attack, in ms.")
-    ] = 250,
-) -> dict[str, Any]:
-    """Queue isolated drum analysis, MIDI/tempo export and optional one-shots.
-
-    The caller identifies the instruments. This does not classify a mixed drum kit.
-    Detection refines a leading threshold crossing and subtracts supplied calibration.
-    Inferred tempo remains a proposal with half/double-time ambiguity. Use beat anchors
-    for known tempo changes. Optional dependencies run in a separate interpreter;
-    install .[audio] or set LIVE_MAESTRO_AUDIO_PYTHON to a provisioned interpreter.
-    """
-    try:
-        anchors = [item.model_dump() for item in beat_anchors] if beat_anchors else None
-        if anchors is not None:
-            anchors = validate_map(anchors)
-            if tempo_bpm is not None:
-                raise ValueError("supply tempo_bpm or beat_anchors, not both")
-        if tempo_bpm is not None and not math.isfinite(tempo_bpm):
-            raise ValueError("tempo must be finite")
-        return audio_jobs.manager().submit(
-            {
-                "stems": [item.model_dump() for item in stems],
-                "tempo_bpm": tempo_bpm,
-                "beat_anchors": anchors,
-                "sensitivity": sensitivity,
-                "cut_one_shots": cut_one_shots,
-                "pre_roll_ms": pre_roll_ms,
-                "tail_ms": tail_ms,
-            },
-            output_dir,
-        )
-    except (ValueError, OSError) as error:
-        return {"ok": False, "error": str(error)}
 
 
 @mcp.tool(annotations=READS)
 def get_audio_job(
-    job_id: Annotated[str, Field(description="ID returned by analyze_drums.")],
+    job_id: Annotated[str, Field(description="ID returned by capture_audio or compare_audio.")],
 ) -> dict[str, Any]:
-    """Read background analysis progress, terminal evidence and produced file paths."""
+    """Read background capture/comparison progress, terminal evidence and produced file paths."""
     try:
         return {"ok": True, **audio_jobs.manager().get(job_id)}
     except (ValueError, OSError) as error:
@@ -9302,6 +8902,14 @@ def apply_tempo_map(
 def rebuild_drums_skill() -> str:
     """Read the shipped workflow joining UVR separation to Live drum reconstruction."""
     return (Path(__file__).parent / "skills/live-rebuild-drums/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+
+@mcp.resource("live://skill/live-rebuild-reference")
+def rebuild_reference_skill() -> str:
+    """Read the shipped source analysis, timing, transcription and comparison workflow."""
+    return (Path(__file__).parent / "skills/live-rebuild-reference/SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -9441,7 +9049,7 @@ def set_warp_markers(
 
     Mapping starts at seconds/beat zero. This enables Warp. Confirmation previews
     the complete request; a failed write is never retried and may be partially applied.
-    Requires the locally installed warp_markers_set handler, not a published release.
+    Requires the matching Remote Script's warp_markers_set handler to be loaded in Live.
     """
     try:
         paths.validate(path)
@@ -9661,6 +9269,155 @@ def load_drum_pad(
             _client_instance(), audio_path, rack_path, pad_note, attack_sample, confirm
         )
     except (ValueError, OSError, LiveError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+def _reference_range(start: float, end: float) -> None:
+    if (not math.isfinite(start) or not math.isfinite(end)
+            or start < 0 or not 0 < end - start <= 120):
+        raise ValueError("choose a finite source excerpt from 0 to 120 seconds long")
+
+
+
+
+@mcp.tool(annotations=ADDS)
+def compare_audio(
+    reference_path: AudioFileArg,
+    candidate_path: AudioFileArg,
+    output_dir: AudioOutputArg,
+    start_seconds: SourceStartArg = 0,
+    end_seconds: SourceEndArg = 30,
+    candidate_start_seconds: Annotated[float, Field(ge=0,
+        description="Candidate-file seconds corresponding to the reference section start.")] = 0,
+    max_alignment_ms: Annotated[float, Field(ge=0, le=500,
+        description="Delay search radius in milliseconds; zero disables alignment.")] = 100,
+    write_residual: Annotated[bool, Field(
+        description="Write the gain-aligned, phase-sensitive difference as a FLOAT WAV.")] = False,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Compare reference and rendered audio by timing, level, bands, chroma and envelope.
+
+    Files need matching channel counts. Candidate resampling and bounded constant
+    alignment are reported; no time warp conceals tempo errors. Positive delay means
+    candidate audio arrived later. Gain compensation is only for comparison, and
+    waveform error is phase-sensitive, not a musical quality or leakage score.
+    Poll get_audio_job; outputs and optional residual live in a unique run.
+    """
+    try:
+        _reference_range(start_seconds, end_seconds)
+        if (not math.isfinite(candidate_start_seconds) or candidate_start_seconds < 0
+                or not math.isfinite(max_alignment_ms) or not 0 <= max_alignment_ms <= 500):
+            raise ValueError("candidate time must be finite/nonnegative; alignment is 0..500 ms")
+        request = {"kind": "comparison", "reference_path": reference_path,
+                   "candidate_path": candidate_path, "start_seconds": start_seconds,
+                   "end_seconds": end_seconds, "candidate_start_seconds": candidate_start_seconds,
+                   "max_alignment_ms": max_alignment_ms, "write_residual": write_residual}
+        if not confirm:
+            return {"ok": True, "executed": False, "plan": request}
+        return audio_jobs.manager().submit(request, output_dir)
+    except (ValueError, OSError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+
+
+@mcp.tool(annotations=ADDS)
+def capture_audio(
+    output_dir: AudioOutputArg,
+    track: Annotated[str, Field(description="Name, index as text, or master/Main.")] = "master",
+    duration_seconds: Annotated[float, Field(gt=0, le=120,
+        description="Seconds to record after cueing; exported audio also includes pre-roll.")] = 10,
+    from_beat: Annotated[float | None, Field(ge=0,
+        description="Temporarily start a stopped Arrangement at this quarter beat; None records "
+        "the current signal without changing transport.")] = None,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Record actual audio at the Analyzer's position, with a recorded timing witness.
+
+    Requires the updated Analyzer loaded in Live. Main is measured before its fader;
+    put it at 0 dB when comparing the main output. from_beat temporarily cues/starts
+    a stopped Arrangement; transport is restored after capture. Without it, record
+    whatever currently reaches the device. No solo, routing or device parameters change.
+    Record/cancel status is available through get_audio_job/cancel_audio_job.
+    """
+    try:
+        if (not track.strip() or not math.isfinite(duration_seconds)
+                or not 0 < duration_seconds <= 120):
+            raise ValueError("track is required; duration must be finite and in (0, 120] seconds")
+        if from_beat is not None and (not math.isfinite(from_beat) or from_beat < 0):
+            raise ValueError("from_beat must be finite and nonnegative")
+        request = {"kind": "capture", "track": track, "duration_seconds": duration_seconds,
+                   "from_beat": from_beat, "host": _host(), "port": _port()}
+        if not confirm:
+            return {"ok": True, "executed": False, "plan": request}
+        from live_maestro.audio.paths import require_shared_filesystem
+        require_shared_filesystem()
+        return audio_jobs.manager().submit(request, output_dir)
+    except (ValueError, OSError, RuntimeError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=READS)
+def get_audio_report(
+    job_id: Annotated[str, Field(description="Succeeded comparison/capture "
+        "job ID from get_audio_job.")],
+    section: Annotated[Literal["overview", "sources", "notes", "timeline", "envelope", "onsets"],
+        Field(description="Summary, source rows, capture anchors, envelope "
+              "or onset candidates; availability depends on job kind.")] = "overview",
+    source_index: Annotated[int, Field(ge=0,
+        description="Zero-based source for notes/envelope/onsets; comparison onsets: 0=reference, "
+        "1=candidate.")] = 0,
+    offset: Annotated[int, Field(ge=0, description="Zero-based first row in this page.")] = 0,
+    limit: Annotated[int, Field(ge=1, le=200,
+        description="Maximum rows to return, from 1 to 200.")] = 50,
+) -> dict[str, Any]:
+    """Read a verified audio report in bounded pages, including notes and timing witnesses."""
+    try:
+        job = audio_jobs.manager().get(job_id)
+        if job["state"] != "succeeded":
+            return {"ok": False, "state": job["state"],
+                    "error": "audio job has no succeeded report"}
+        report = json.loads(Path(job["result"]["report_path"]).read_text(encoding="utf-8"))
+        if section == "overview":
+            payload = {key: value for key, value in report.items()
+                       if key not in {"sources", "timeline", "features", "onsets_reference",
+                                      "onsets_candidate"}}
+            payload["sources_count"] = len(report.get("sources", []))
+            if "timeline" in report:
+                payload["timeline"] = {key: value for key, value in report["timeline"].items()
+                                       if key != "anchors"}
+                payload["timeline"]["anchors_count"] = len(report["timeline"]["anchors"])
+            if "features" in report:
+                payload["features"] = {key: value for key, value in report["features"].items()
+                                       if key not in {"envelope", "onsets_seconds"}}
+            return {"ok": True, "report": payload}
+        if section == "sources":
+            rows = []
+            for source in report.get("sources", [])[offset:offset + limit]:
+                row = {key: value for key, value in source.items()
+                       if key not in {"features", "notes"}}
+                row["features"] = {key: value for key, value in source["features"].items()
+                                   if key not in {"envelope", "onsets_seconds"}}
+                row["notes_count"] = len(source.get("notes", []))
+                row["onsets_count"] = len(source["features"]["onsets_seconds"])
+                rows.append(row)
+            total = len(report.get("sources", []))
+        elif section == "timeline":
+            items = report.get("timeline", {}).get("anchors", [])
+            rows, total = items[offset:offset + limit], len(items)
+        else:
+            source = report["sources"][source_index] if "sources" in report else report
+            if section == "notes":
+                items = source.get("notes", [])
+            elif section == "onsets" and report["schema"] == "maestro.comparison":
+                items = report["onsets_reference" if source_index == 0 else "onsets_candidate"]
+            else:
+                feature = "envelope" if section == "envelope" else "onsets_seconds"
+                items = source["features"][feature]
+            rows, total = items[offset:offset + limit], len(items)
+        return {"ok": True, "section": section, "rows": rows, "total": total,
+                "next_offset": offset + len(rows) if offset + len(rows) < total else None}
+    except (ValueError, OSError, KeyError, IndexError) as error:
         return {"ok": False, "error": str(error)}
 
 

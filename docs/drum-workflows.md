@@ -1,34 +1,8 @@
 # Drum reconstruction from files
 
-UVR Maestro owns model management, source separation, restoration and verified
-audio export. Live Maestro owns musical analysis, source-time to beat conversion,
-MIDI and DAW placement. Neither server needs the other installed. The shipped
-`live-rebuild-drums` skill joins their public tools when both are available.
+UVR Maestro separates sources. Independent Audio Maestro detects attacks in identified kick/snare files and exports `maestro.drum-events` JSON, MIDI and optional one-shots. Live Maestro owns note writing, device/sample loading, tempo application and placement. Any compatible producer can supply these files; no Maestro package imports another.
 
-## Optional analysis runtime
-
-Install `live-maestro[audio]` for NumPy, SciPy and SoundFile, or point
-`LIVE_MAESTRO_AUDIO_PYTHON` at an already provisioned interpreter. Only the audio
-worker imports these packages. The base control server remains usable without
-them. `LIVE_MAESTRO_AUDIO_DATA_DIR` overrides the independent job-record directory.
-There are no automatic model downloads or audio uploads.
-
-`analyze_drums` accepts identified isolated kick/snare files, not a kit mixture.
-It detects positive energy rises, refines the first crossing of ten percent of
-the local peak, and subtracts caller-supplied detector lateness in milliseconds.
-The reported sample resolution is not a universal physical-attack accuracy
-guarantee. Velocity is a relative square-root mapping of hit peak to MIDI 1-127,
-not a calibrated measurement of how hard the drummer struck.
-
-Pass each stem's `source_offset_seconds` from UVR's succeeded result. When UVR
-resampled, also pass its original `source_sample_rate`. Events include file-local
-samples, absolute source seconds and original-rate source sample positions.
-These values share one time axis with the beat anchors and one-shot offsets.
-
-The job returns immediately. Poll `get_audio_job`; `cancel_audio_job` stops only
-its worker/process tree. Jobs are serialized and persist terminal evidence.
-After restart, unfinished records read as interrupted. Succeeded jobs include
-checked JSON/MIDI/audio paths, SHA-256 fingerprints and a manifest.
+Preserve each file's original-source offset and rate. Use the analysis server's job tools for analysis; Live's job tools manage capture/comparison only. Attack calibration and relative hit velocity are estimates, not a universal physical-attack guarantee. Pitched transcription does not identify a mixed kit.
 
 ## Tempo, MIDI and Live
 

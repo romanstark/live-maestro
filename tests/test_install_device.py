@@ -117,7 +117,7 @@ def test_a_different_file_already_there_is_backed_up_and_not_lost(tmp_path: Path
     install_script.install_device(library, source, dry_run=False)
 
     assert target.read_bytes() == source.read_bytes()
-    backups = list(target.parent.glob(f"*{install_script.BACKUP_PREFIX}*"))
+    backups = list(target.parent.glob(f"{target.name}.bak-*"))
     assert len(backups) == 1, f"expected one backup, found {backups}"
     assert backups[0].read_bytes() == b"a device somebody else put here"
 

@@ -68,25 +68,25 @@ Maestro reaches Live through three complementary routes ([docs/architecture.md](
 
 - **Channel A: Real-Time Live Object Model (LOM):** A loopback TCP connection (`127.0.0.1:9878`) to the custom Remote Script inside Live's process. Drives Session clips, MIDI note editing, device knobs, mixer levels, and real-time playback.
 - **Channel B: Offline Project Files (`.als`):** Direct inspection and safe modification of saved `.als` project files on disk when the target set is closed in Live (Live may continue running with another or blank set). Handles track automation, sidechain routing audits, and third-party VST parameter configuration, protected by automatic timestamped backups and hash validation.
-- **Channel C: Audio Measurement (`analyze_audio`):** A Max for Live device (`devices/LiveMaestro_Analyzer.amxd`) placed on any track, answering one OSC request per call over loopback UDP (`127.0.0.1:9882`). Reports EBU R128 loudness, oversampled true peak, stereo correlation broadband and below 120 Hz, and energy in seven bands. Optional: without the device every other tool works and this one reports `device_not_found` with the steps to load it.
+- **Channel C: Live Audio:** The optional Max for Live Analyzer reports loudness, true peak, stereo correlation and seven bands over loopback UDP. `capture_audio` also records the actual signal, including instruments and effects, with a timing witness. File analysis and sound comparison work independently of the device.
 
 ---
 
 ## MCP Tools & Resources
 
-Maestro exposes **59 tools** and 5 resources over the Model Context Protocol (MCP):
+Maestro exposes **60 tools** and 6 resources over the Model Context Protocol (MCP):
 
 ### Intent Tools (Production Workflows)
 - **Session & Inspection:** `get_session`, `get_track`, `get_clip`, `get_devices`, `describe`
 - **Tracks & Devices:** `create_track`, `delete_track`, `load_device`, `delete_device`, `set_parameter`, `set_parameter_display`
 - **Clips & MIDI Notes:** `create_clip`, `delete_clip`, `write_clip_notes`, `read_clip_notes`, `quantize_clip`, `transpose_clip`
 - **Mixing & Automation:** `set_mix`, `write_automation`, `read_automation`, `clear_automation`
-- **Audio Measurement (Channel C):** `analyze_audio`
+- **Live Audio (Channel C):** `analyze_audio`, `capture_audio`
+- **Recorded Comparisons:** `compare_audio`, `get_audio_report`
 - **Arrangement & Transport:** `arrange`, `set_locator`, `set_arrangement_time`, `play`, `stop`, `fire_scene`, `set_tempo`, `set_loop`
 - **Offline Projects (Channel B):** `als_read`, `als_write`
 - **Sound Matching:** `match_sound`, `sound_index_status`
-- **Transcription:** `transcribe_stem`
-- **Drum Files:** `analyze_drums`, `get_audio_job`, `cancel_audio_job`, `write_drum_clip`, `apply_tempo_map`
+- **Audio Jobs & Drum Import:** `get_audio_job`, `cancel_audio_job`, `write_drum_clip`, `apply_tempo_map`
 - **Native Arrangement Timing:** `read_tempo_map`, `write_tempo_map`, `verify_tempo_map`, `get_warp_markers`, `set_warp_markers`, `convert_clip_time`
 - **Native Files & Notes:** `get_set_state`, `import_arrangement_audio`, `write_arrangement_notes`, `load_sample`, `load_drum_pad`
 
@@ -97,6 +97,10 @@ See [drum workflows](docs/drum-workflows.md) for source offsets, timing assumpti
 confirmation, actual verification and the Arrangement tempo-import step.
 See [Arrangement timing](docs/timing-workflows.md) for native warp lists, tempo
 copies, direct file import, chunked notes and checked Simpler/Drum Rack loading.
+See [reference reconstruction](docs/reference-workflows.md) for supplied stems,
+reviewed external analysis, source timing, MIDI placement and recorded comparisons.
+The `live://skill/live-rebuild-reference` resource guides that workflow. UVR is
+optional; files from Suno, other separators or your own exports also work.
 
 ### Smart Path Discovery: `find_path`
 `find_path` maps production vocabulary to mechanisms and ranked catalog rows, including runtime device parameters and unsupported requests.
@@ -123,10 +127,13 @@ factory samples remain unavailable; their ordinary browser previews are indexed.
 What it cannot describe is behaviour per note, because a preview is the phrase
 Ableton chose rather than a note anyone played.
 
-### Notes out of Audio: `transcribe_stem`
-Hand it a separated stem and it returns notes in clip beats, or writes them straight into a Session clip. The transcriber is [basic-pitch](https://github.com/spotify/basic-pitch) (Apache 2.0), which runs in an environment of its own because it supports Python up to 3.11 while this server runs later; without that environment the tool answers `no_transcriber` and nothing else is affected.
-
-Transcription can confuse harmonics with independent notes, especially in bass or polyphonic material. Harmonic filtering and `monophonic=True` help with suitable isolated parts; review pitches, timing and note density before writing a clip.
+### From analysis to editable MIDI
+Bring reviewed MIDI from an independent analysis tool, or pass source-timed,
+beat-mapped notes to `write_arrangement_notes` or `write_clip_notes`. Live Maestro
+handles placement, instruments and actual recorded comparisons; it provisions
+no transcription model. The companion Audio Maestro uses Basic Pitch and optional
+SheetSage and is being validated separately. The file workflow accepts any
+compatible producer.
 
 ### Generic LOM Escape Hatches
 Direct, low-level access to the entire verified catalog surface:
@@ -148,7 +155,7 @@ Direct, low-level access to the entire verified catalog surface:
 
 A command sent to Live can be refused, clamped, or applied late, and a plain success reply shows none of that.
 
-- **Safe Dry-Run by Default:** Destructive and structural operations (`delete_track`, `delete_device`, `delete_clip`, `clear_automation`, `set_locator`, `als_write`, `transcribe_stem`'s write, and the load step of `load_device`) require explicit `confirm=True`. Without confirmation, Maestro performs a safe dry run and reports exactly what would be removed or altered.
+- **Safe Dry-Run by Default:** Destructive and structural operations (`delete_track`, `delete_device`, `delete_clip`, `clear_automation`, `set_locator`, `als_write`, and the load step of `load_device`) require explicit `confirm=True`. Without confirmation, Maestro performs a safe dry run and reports exactly what would be removed or altered.
 - **Three writes are destructive and are not gated**, because gating every note edit would make ordinary work unusable: `write_clip_notes` with its default `mode="replace"` discards every note in the target clip, and `quantize_clip` and `transpose_clip` rewrite one in place. All three are annotated as destructive so a client can ask, and `read_clip_notes` is how to look first. There is no undo through this server and the Live Object Model has no rollback.
 - **Read-Back Verification:** Parameter updates via `lom_set` read the stored value back from Live and report the exact state: `applied` (exact match), `clamped` (quantized or bounded by Live), or `not_observed` (deferred or asynchronous update).
 - **Change Baseline Checks:** Methods that modify material (note duplication, quantizing, loop doubling) measure baselines before dispatching and verify the resulting state one round trip later.
@@ -215,10 +222,10 @@ To run it without installing anything permanently, let `uvx` fetch it per launch
 
 Live still needs its two files either way. With this arrangement, install them once with `uvx --from git+https://github.com/romanstark/live-maestro.git live-maestro-install`.
 
-### 5. Put the analyzer device on a track (only for `analyze_audio`)
+### 5. Put the analyzer device on a track (measurement and capture)
 The installer places `LiveMaestro Analyzer` in your User Library, where Live's browser lists it under **Presets → Audio Effects → Max Audio Effect**. Drag it onto the track you want to measure, **last in the chain**: it reads the signal at its own position, so anything after it is not in what it reports. It passes audio through unchanged.
 
-Only `analyze_audio` uses it. Every other tool works without it, and without it that one tool says so and names these steps. Live does not reload a changed device, so after an update replace any copy already loaded in a set. Skip the device entirely with `live-maestro-install --no-device`.
+`analyze_audio` and `capture_audio` use it. The other tools work without it. Live does not reload a changed device, so after an update replace any copy already loaded in a set. Skip the device entirely with `live-maestro-install --no-device`.
 
 Four environment variables change where the server looks, and none of them is normally needed:
 
@@ -227,7 +234,6 @@ Four environment variables change where the server looks, and none of them is no
 | `LIVE_MAESTRO_PORT` | `9878` | The TCP port the Remote Script listens on. Change it in the Remote Script too, or nothing answers. |
 | `LIVE_MAESTRO_HOST` | `127.0.0.1` | Where to look for Live. Loopback is the only arrangement this project has measured; the Remote Script speaks no authentication, so anything else is your own arrangement to secure. |
 | `LIVE_MAESTRO_ANALYZER_PORT` | `9882` | The UDP port the analyzer device listens on. Change it in the device too. |
-| `LIVE_MAESTRO_BASIC_PITCH_PYTHON` | unset | Interpreter of the environment holding `basic-pitch`, which only `transcribe_stem` needs. Unset, the usual places are looked at and the tool says how to make one if it finds nothing. |
 
 Open a project in Ableton Live and start by asking: *"What tracks are in this set?"*
 
@@ -238,6 +244,8 @@ Open a project in Ableton Live and start by asking: *"What tracks are in this se
 - **100% Local:** All communication between your AI assistant and Ableton Live happens over a local, internal loopback connection on your computer.
 - **No telemetry or cloud tracking:** Maestro collects zero analytics, has no database, and does not upload your MIDI, audio, project files, or prompts to any external server.
 - **Minimal dependencies:** Pure local code with no hidden web scrapers or cloud telemetry.
+
+Live Maestro provisions no listening or transcription models. Independent Audio Maestro analyzes files; UVR Maestro separates them. Ordinary audio, MIDI and reviewed JSON connect the tools without a package dependency.
 
 ---
 

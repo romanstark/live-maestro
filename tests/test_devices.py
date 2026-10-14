@@ -379,13 +379,19 @@ def test_the_device_listens_where_the_client_sends(device: DeviceUnderTest) -> N
 @everyreplyingdevice
 def test_the_reply_has_a_slot_for_every_declared_field(device: DeviceUnderTest) -> None:
     assert device.reply is not None
-    graph = graph_of(patcher_of(device))
+    patcher = patcher_of(device)
+    graph = graph_of(patcher)
+    reply_targets = {box_id for box_id, box in graph.boxes.items()
+                     if text_of(box) in {f"prepend {address}"
+                                         for address in device.osc.reply_addresses}}
+    reply_sources = {line["patchline"]["source"][0] for line in patcher["lines"]
+                     if line["patchline"]["destination"][0] in reply_targets}
     packs = [
         (box_id, box)
         for box_id, box in graph.boxes.items()
-        if text_of(box).startswith("pack ")
+        if text_of(box).startswith("pack ") and box_id in reply_sources
     ]
-    assert len(packs) == 1, "one reply, one pack"
+    assert len(packs) == 1, "one measurement reply, one pack"
     box_id, box = packs[0]
     assert box["numinlets"] == device.reply.slots
     assert graph.incoming[box_id] == set(range(device.reply.slots)), (

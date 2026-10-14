@@ -27,7 +27,11 @@ Live Maestro is licensed under the **AGPL-3.0-or-later** license (see [LICENSE](
 
 Development tools include **pytest** (MIT), **ruff** (MIT), **pyright** (MIT) and **pyrefly** (MIT) for testing, linting, and type checking. These are used only in local development and CI environments.
 
-One optional capability reaches outside these: `transcribe_stem` runs **basic-pitch** (Apache-2.0, https://github.com/spotify/basic-pitch) as a subprocess in an environment the user creates. It is neither a dependency nor vendored, and nothing else here needs it.
+Optional file analysis uses NumPy and SciPy (BSD) and SoundFile (BSD, using
+libsndfile under LGPL). These are installed with the `audio` extra, not vendored.
+
+Live Maestro does not distribute or provision transcription/listening models.
+Optional independent analysis tools carry their own dependencies and model licenses.
 
 ---
 

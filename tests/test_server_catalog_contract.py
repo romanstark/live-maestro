@@ -376,6 +376,7 @@ def _load_with_chains(
     chains_read: bool = True,
     fail_second_snapshot: bool = False,
     load_args: dict[str, Any] | None = None,
+    device_class: str = "Device",
 ) -> dict[str, Any]:
     """Run load_device against a selection whose chain goes ``before`` -> ``after``.
 
@@ -416,6 +417,9 @@ def _load_with_chains(
             return None, {"ok": False, "code": "timeout", "error": "the batch timed out."}
         first = snapshots == 1
         chain = _device_handles(before if first else after)
+        if not first:
+            for handle in chain:
+                handle["__lom__"] = device_class
         return (
             [
                 {"ok": True, "value": _track_handle(name_before if first else name_after)},
@@ -622,7 +626,9 @@ def test_a_plugin_with_one_parameter_asks_for_configure_by_index(
     parameter, 'Device On'. Establishing that is worth one read and no more, and the
     read has to address the position the two chains single out.
     """
-    result = _load_with_chains(monkeypatch, [], ["Serum"], parameter_count=1)
+    result = _load_with_chains(
+        monkeypatch, [], ["Serum"], parameter_count=1, device_class="PluginDevice"
+    )
     assert result["loaded_device_index"] == 0
     assert result["configure_needed"] is True
     assert result["configure_needed_unknown_reason"] is None
@@ -640,7 +646,9 @@ def test_a_device_that_came_back_configured_is_not_told_to_configure(
     'two or fewer' would send a Configure instruction, its note and its next_step to a
     device this tool read as configured, which is a claim it did not measure.
     """
-    result = _load_with_chains(monkeypatch, [], ["Serum"], parameter_count=2)
+    result = _load_with_chains(
+        monkeypatch, [], ["Serum"], parameter_count=2, device_class="PluginDevice"
+    )
     assert result["loaded_device_index"] == 0
     assert result["configure_needed"] is False
     assert result["configure_needed_unknown_reason"] is None
@@ -663,6 +671,19 @@ def test_a_load_that_brought_two_devices_probes_nothing(
     assert result["configure_needed"] is None
     assert result["configure_needed_unknown_reason"] == "new_device_not_identified"
     assert result["_reads"] == []
+
+
+@pytest.mark.parametrize("device_class", ["MaxDevice", "Device", "Eq8Device"])
+def test_native_single_parameter_device_needs_no_vst_configure(
+    monkeypatch: pytest.MonkeyPatch, device_class: str
+) -> None:
+    result = _load_with_chains(
+        monkeypatch, [], ["LiveMaestro Analyzer"],
+        parameter_count=1, device_class=device_class,
+    )
+    assert result["configure_needed"] is False
+    assert "next_step" not in result
+    assert server.CONFIGURE_NOTE not in result["notes"]
 
 
 def test_two_devices_of_one_name_still_report_the_one_that_went(

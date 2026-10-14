@@ -56,17 +56,16 @@ Maestro reaches Live through three complementary channels, expanding on the orig
 Channel B complements the live bridge by handling data that the LOM does not expose in the open set, such as track automation in arrangements or reading unopened projects. Channel C answers what neither of the others can: how the audio measures. A parameter value is not a level, and a level is not a loudness.
 
 File workflows also operate independently of the three channels. `match_sound`
-compares library previews and `transcribe_stem` runs a separate transcriber.
-`analyze_drums` uses its own optional NumPy/SciPy worker, with persisted progress,
-cancellation, JSON/MIDI and one-shot outputs. They work while Live is closed.
-`write_drum_clip` then places reviewed events through Channel A. See
-[drum workflows](drum-workflows.md) for the shared source timeline and tempo import.
+compares library previews. Source analysis and transcription belong to independent Audio Maestro.
+Live accepts reviewed MIDI and the portable `maestro.drum-events` JSON from external analysis. It controls placement and instruments without importing an analysis or separation package.
 
 ### Channel C: Audio measurement
 
 Channels A and B carry metadata. The Remote Script interpreter has no access to audio buffers at all, so neither channel can report whether a mix clips, how loud it is, or whether its low end survives being summed to mono. `analyze_audio` asks a device that can.
 
-`devices/LiveMaestro_Analyzer.amxd` is a Max for Live audio effect. It passes audio through unchanged, measures what passes, and answers one request with one reply. It is optional: only `analyze_audio` needs it, and without it reports `device_not_found` and the steps to load it.
+`devices/LiveMaestro_Analyzer.amxd` is a Max for Live audio effect. It passes audio through unchanged, measures what passes, and answers one measurement request with one reply. It is optional: `analyze_audio` and `capture_audio` need it; file analysis does not. Capture uses a separate versioned OSC contract and records stereo audio plus DSP/host timing channels. The worker verifies the counter and exports a stereo WAV. Host beats remain scheduler sampled; the report does not claim a sample-accurate song origin.
+
+Actual Live capture and numerical A/B comparison run as serialized, cancellable workers in `audio/`. Reports, file hashes and manifests stay local. Live provisions no model runtime. Audio Maestro owns reference and drum analysis and Basic Pitch/optional SheetSage transcription; UVR Maestro owns separation.
 
 **Wire format.** Open Sound Control over loopback UDP, because that is what Max's own objects speak: `udpsend`'s reference page states that Max messages are serialized as OSC-compatible UDP packets, and `udpreceive` decodes OSC. The device listens on `127.0.0.1:9882` for `/maestro/measure` and answers `/maestro/report` to the port the request names, which is the ephemeral port the client bound. `src/live_maestro/analyzer/protocol.py` holds the port, the addresses, the reply field order, the band edges and the schema number, and nothing else may hold a copy of any of them.
 
@@ -77,6 +76,11 @@ Channels A and B carry metadata. The Remote Script interpreter has no access to 
 **Which track answered.** A device knows the name and the Live Object Model id of the track it sits on, and not its index: `live.path` reports an id and no canonical path ([docs/limits.md](limits.md)). A caller's index or `master` is resolved to a name over Channel A, in `server.analyze_audio`, and the match is made on the name. The id comes back too, so a set with two tracks of the same name is reported as ambiguous rather than measured silently.
 
 **Where the work is done.** The device reports raw amplitudes and the six figures `loudness~` produces. Every dB value, correlation, crest factor, centroid and verdict is computed in `analyzer/metrics.py` and `analyzer/report.py`, which touch no socket. That is what lets the thresholds and the wording of every recommendation be tested without Live running.
+
+**Transport context.** `session_tracks_playing` counts Session clips whose launch state says
+they are playing while the transport runs. Arrangement playback, mute, routing and
+audibility are outside that count. `tracks_sounding` remains a compatibility alias.
+The analyzer's measured RMS and loudness establish whether audio reached the device.
 
 **It measures itself.** The device generates a 1 kHz sine of amplitude 0.5, whose peak is therefore -6.0206 dBFS by construction, and feeds it to a second `loudness~` wired nowhere near the output. Every reply carries what that meter reports for a peak whose value is already known, which is how the sample peak correction is a measurement rather than a constant. [docs/limits.md](limits.md) records what each peak outlet does with it.
 
@@ -108,11 +112,10 @@ Supporting modules:
 - `analyzer/`: Channel C. `protocol.py` is the wire contract and its OSC codec, `client.py` the socket, `metrics.py` the arithmetic as pure functions, `report.py` the choosing and wording, `models.py` what the caller receives. Only `client.py` needs Live to be running.
 - `lom/paths.py`: Client-side parsing and validation of LOM path grammar.
 - `lom/introspect.py`: Runtime inspection of dynamic device parameters and session snapshots.
-- `music/`: Pure Python musical theory, chord voicings, note transformations, groove humanization, `launch.py` for when a fired clip actually starts, and `transcription.py` for cleaning up what a transcriber heard before any of it is written into Live.
+- `music/`: Pure Python musical theory, chord voicings, note transformations, groove humanization, `launch.py` for when a fired clip actually starts.
 - `als/`: Parsers and writers for `.als` project files.
 - `audio/`: Nothing here touches Live. `decode.py` turns any file the system decoder reads into mono samples, `descriptor.py` reduces a piece of audio to a fixed vector that can be compared with another, and `sample_header.py` reads container metadata with the standard library alone, which is how an encrypted factory sample is recognised without decoding it.
 - `sound_index.py` and `indexer.py`: The index of how the installed library sounds, built from Ableton's own preview renders, and the ranking `match_sound` answers with. `indexer.py` is also the `live-maestro-index` entry point.
-- `transcribe.py`: Runs basic-pitch in a separate interpreter and hands back note events. The transcriber supports Python up to 3.11 and this server runs later, so it is a subprocess and not an import.
 - `instruments.py`: Intent to instrument lookup over Live's browser, which is what `find_sound` answers with.
 - `automation.py`: Curve generation, interpolation algorithms, and envelope sampling.
 - `lookup.py`: Intent to path lookup over the catalog: routing, lexical ranking, and family collapse.
@@ -337,7 +340,6 @@ src/live_maestro/
   instruments.py    Intent to instrument lookup over Live's browser.
   sound_index.py    The index of how the installed library sounds, and its ranking.
   indexer.py        Builds that index. Also the live-maestro-index entry point.
-  transcribe.py     Runs basic-pitch in a sidecar interpreter, returns note events.
   installer.py      Installs the Remote Script and the analyzer device.
   maxgen.py         Generates Max for Live devices: patcher graph, container, CLI.
   probe_protocol.py Wire contract of the throwaway device the spikes used.
@@ -360,7 +362,6 @@ src/live_maestro/
     theory.py       Musical scales, chord voicings, and transposition.
     humanize.py     Timing swing and velocity variations.
     launch.py       When a fired clip or scene will actually start.
-    transcription.py Cleaning up what a transcriber heard, before it is written.
   als/
     read.py         Parser for saved .als project and .adg preset files.
     write.py        Direct modifier for .als project files.
@@ -379,9 +380,8 @@ scripts/
   build_probe_device.py    Generates the throwaway device the spikes used.
   build_sound_index.py     Wrapper around live_maestro.indexer, for a checkout.
   eval_sound_index.py      Scores the sound index against the categories it carries.
-  eval_transcription.py    Scores the transcription cleanup against a MIDI export.
   spike_probe.py           Drives the probe device and answers spikes 1 and 2.
   stress_load_delete.py    A thousand load and delete cycles, for endurance.
 ```
 
-Nothing in `audio/`, `music/` or `analyzer/` except `analyzer/client.py` opens a socket or needs Live. That is what makes the sound matching, the transcription cleanup and every threshold in an audio verdict testable on a machine with no DAW on it.
+Nothing in `audio/`, `music/` or `analyzer/` except `analyzer/client.py` opens a socket or needs Live. That is what makes sound matching, recorded comparison and every threshold in an audio verdict testable on a machine with no DAW on it.

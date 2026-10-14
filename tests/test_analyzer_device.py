@@ -41,11 +41,17 @@ def test_each_band_edge_is_two_sections_at_the_declared_frequency() -> None:
 
 
 def test_one_average_and_one_snapshot_per_averaged_field() -> None:
-    heads = collections.Counter(text.split()[0] for text in texts_of(patcher_of(ANALYZER)))
+    patcher = patcher_of(ANALYZER)
+    graph = graph_of(patcher)
+    heads = collections.Counter(text.split()[0] for text in texts_of(patcher))
     # Three broadband figures, three below 120 Hz, one per band.
     expected = 3 + 3 + len(protocol.BANDS)
     assert heads["average~"] == expected
-    assert heads["snapshot~"] == expected
+    averaging_pairs = [line for line in patcher["lines"]
+                       if text_of(graph.boxes[line["patchline"]["source"][0]]).startswith(
+                           "average~")
+                       and text_of(graph.boxes[line["patchline"]["destination"][0]]) == "snapshot~"]
+    assert len(averaging_pairs) == expected
 
 
 def test_every_average_holds_the_declared_ceiling() -> None:

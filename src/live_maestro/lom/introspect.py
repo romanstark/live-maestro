@@ -215,7 +215,7 @@ class Diagnosis(str, Enum):
     """Device exposes at least CONFIGURED_THRESHOLD parameters."""
 
     SPARSE = "sparse"
-    """Device exposes between two and five parameters."""
+    """Device exposes few parameters; one is also normal for native devices."""
 
     UNCONFIGURED = "unconfigured"
     """Device reports only the default Device On parameter."""
@@ -854,13 +854,16 @@ def _finish_device(
         track=_grandparent(path) or "song",
         is_active=_as_bool(properties.get("is_active")),
         parameters=parameters,
-        diagnosis=diagnose(parameters),
+        diagnosis=diagnose(
+            parameters,
+            is_plugin="Plugin" in str(info.get("class") or properties.get("class_name") or ""),
+        ),
         errors=tuple(errors),
     )
     if cache is not None:
         cache.put(path, view)
     return view
-def diagnose(parameters: Sequence[ParameterView]) -> Diagnosis:
+def diagnose(parameters: Sequence[ParameterView], *, is_plugin: bool = True) -> Diagnosis:
     """Classify parameter readiness by examining parameter count and names.
 
     Args:
@@ -878,7 +881,7 @@ def diagnose(parameters: Sequence[ParameterView]) -> Diagnosis:
     """
     if not parameters:
         return Diagnosis.NO_PARAMETERS
-    if len(parameters) == 1 and parameters[0].name == DEVICE_ON:
+    if is_plugin and len(parameters) == 1 and parameters[0].name == DEVICE_ON:
         return Diagnosis.UNCONFIGURED
     if len(parameters) < CONFIGURED_THRESHOLD:
         return Diagnosis.SPARSE
@@ -894,7 +897,7 @@ def configuration_advice(view: DeviceView) -> str | None:
     Returns:
         Configuration instructions, or None when the device is configured.
     """
-    if view.diagnosis is Diagnosis.OK:
+    if view.diagnosis is Diagnosis.OK or not view.is_plugin:
         return None
 
     if view.diagnosis is Diagnosis.NO_PARAMETERS:

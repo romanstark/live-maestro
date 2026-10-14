@@ -49,7 +49,9 @@ after changing it.
 using native `Track.create_audio_clip`. It currently requires an empty Arrangement
 audio track, preventing overlap replacement. Disabling Warp resets loop/start/end
 markers in seconds, avoiding Live's retained beat-valued end-marker trap.
-File bytes, position and Warp are verified separately from persisted-tempo duration.
+File bytes, position, Warp and full unwarped source boundaries are verified separately
+from persisted-tempo duration. Cached start/loop markers are reset to preserve the
+beginning. A rejected marker write reports a partial import instead of success.
 
 `convert_clip_time` converts source seconds to song beats and back using the actual
 Warp map, clip origin and start marker. Unwarped clips require the saved set currently

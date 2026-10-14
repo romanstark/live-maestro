@@ -13,7 +13,6 @@ import tempfile
 import threading
 import time
 import uuid
-import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -77,9 +76,16 @@ class AudioJobs:
 
     def submit(self, request: dict[str, Any], output_root: str) -> dict[str, Any]:
         """Validate input existence, then enqueue into a unique run directory."""
-        if not request["stems"]:
-            raise ValueError("at least one identified kick/snare stem is required")
-        for item in request["stems"]:
+        kind = request.get("kind", "comparison")
+        if kind not in {"comparison", "capture"}:
+            raise ValueError("unsupported audio job kind")
+        for key in ("reference_path", "candidate_path", "audio_path"):
+            if request.get(key):
+                path = Path(request[key]).expanduser().resolve()
+                if not path.is_file():
+                    raise ValueError(f"input does not exist: {path}")
+                request[key] = str(path)
+        for item in request.get("stems", []):
             for key in ("path", "reference_path"):
                 if item.get(key):
                     path = Path(item[key]).expanduser().resolve()
@@ -93,6 +99,7 @@ class AudioJobs:
             "state": "queued",
             "progress": 0.0,
             "created_at": time.time(),
+            "kind": kind,
             "output_dir": str(directory),
         }
         with self.lock:
@@ -131,7 +138,11 @@ class AudioJobs:
             if job["state"] not in TERMINAL:
                 job.update(state="cancelled", finished_at=time.time())
                 if process := self.processes.get(identifier):
-                    self._stop(process)
+                    if job.get("kind") == "capture":
+                        Path(job["output_dir"], "cancel.request").touch()
+                        job["cleanup_pending"] = True
+                    else:
+                        self._stop(process)
                 self._save(job)
             return {"ok": True, **copy.deepcopy(job)}
 
@@ -149,26 +160,34 @@ class AudioJobs:
             output.mkdir(parents=True, exist_ok=False)
             request["output_dir"] = str(output)
             atomic(output / "request.json", request)
-            python = os.environ.get("LIVE_MAESTRO_AUDIO_PYTHON", sys.executable)
+            python = request.get("worker_python") or os.environ.get(
+                "LIVE_MAESTRO_AUDIO_PYTHON", sys.executable
+            )
             with (output / "worker.log").open("w", encoding="utf-8") as errors:
                 process = subprocess.Popen(
                     [
                         python,
                         "-I",
-                        str(Path(__file__).with_name("drum_worker.py")),
+                        str(Path(__file__).with_name(
+                            "reference_worker.py"
+                        )),
                         str(output / "request.json"),
                     ],
                     stdout=subprocess.PIPE,
                     stderr=errors,
                     text=True,
                     encoding="utf-8",
+                    env=dict(os.environ),
                     start_new_session=sys.platform != "win32",
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 with self.lock:
                     self.processes[identifier] = process
                     if job["state"] == "cancelled":
-                        self._stop(process)
+                        if job.get("kind") == "capture":
+                            (output / "cancel.request").touch()
+                        else:
+                            self._stop(process)
                 if process.stdout is None:
                     raise RuntimeError("worker channel unavailable")
                 for line in process.stdout:
@@ -176,6 +195,8 @@ class AudioJobs:
                     with self.lock:
                         if event["event"] == "progress":
                             job["progress"] = min(0.99, event["progress"])
+                            if "stage" in event:
+                                job["stage"] = event["stage"]
                             self._save(job)
                         elif event["event"] == "result":
                             result = event
@@ -186,63 +207,12 @@ class AudioJobs:
                     if result
                     else "worker crashed"
                 )
-            analysis = Path(result["analysis_path"]).resolve()
-            midi = Path(result["midi_path"]).resolve()
-            paths = [
-                analysis,
-                midi,
-                Path(result["tempo_import_path"]).resolve(),
-                *[Path(item["path"]).resolve() for item in result["one_shots"]],
-            ]
-            for path in paths:
-                if (
-                    not path.is_relative_to(output.resolve())
-                    or not path.is_file()
-                    or not path.stat().st_size
-                ):
-                    raise ValueError("worker result absent or outside its run directory")
-            from live_maestro.audio.timeline import notes_from_analysis
-
-            data = json.loads(analysis.read_text(encoding="utf-8"))
-            notes_from_analysis(data)
-            for path in (midi, Path(result["tempo_import_path"])):
-                if path.read_bytes()[:4] != b"MThd":
-                    raise ValueError("worker MIDI result has no MIDI header")
-            if data.get("one_shots") != result["one_shots"]:
-                raise ValueError("one-shot records differ between analysis and worker result")
-            for item in result["one_shots"]:
-                event = data["events"][item["event"]]
-                source = data["sources"][event["source_index"]]
-                frames = item["end_sample"] - item["start_sample"]
-                with wave.open(item["path"], "rb") as handle:
-                    if (
-                        frames <= 0
-                        or handle.getnframes() != frames
-                        or handle.getframerate() != source["sample_rate"]
-                        or handle.getnchannels() not in (1, 2)
-                        or handle.getsampwidth() != 3
-                        or not 0 <= item["attack_sample"] < frames
-                        or len(handle.readframes(frames)) != frames * handle.getnchannels() * 3
-                    ):
-                        raise ValueError("one-shot audio violates its verified frame/rate contract")
-            fingerprints = {
-                str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths
-            }
+            self._verify_file_result(output, result, request)
             with self.lock:
-                if job["state"] == "cancelled":
-                    return
-                atomic(
-                    output / "manifest.json",
-                    {"request": request, "result": result, "output_sha256": fingerprints},
-                )
-                job.update(
-                    state="succeeded",
-                    progress=1.0,
-                    result=result,
-                    manifest=str(output / "manifest.json"),
-                    finished_at=time.time(),
-                )
-                self._save(job)
+                if job["state"] != "cancelled":
+                    job.update(state="succeeded", progress=1.0, result=result,
+                               manifest=str(output / "manifest.json"), finished_at=time.time())
+                    self._save(job)
         except Exception as error:  # noqa: BLE001
             with self.lock:
                 if job["state"] != "cancelled":
@@ -263,12 +233,38 @@ class AudioJobs:
                 process.wait()
             with self.lock:
                 self.processes.pop(identifier, None)
+                if job.get("cleanup_pending"):
+                    job["cleanup_pending"] = False
+                    self._save(job)
 
     def close(self) -> None:
         """Ensure no worker or queue thread survives MCP shutdown."""
         for identifier in list(self.jobs):
             self.cancel(identifier)
         self.pool.shutdown(wait=True, cancel_futures=True)
+
+    @staticmethod
+    def _verify_file_result(
+        output: Path, result: dict[str, Any], request: dict[str, Any]
+    ) -> None:
+        paths = [Path(result["report_path"]), *map(Path, result.get("audio_paths", []))]
+        fingerprints = {}
+        for path in paths:
+            if not path.resolve().is_relative_to(output.resolve()) or not path.is_file():
+                raise ValueError("audio worker result is absent or outside its run directory")
+            if path.suffix == ".wav":
+                from live_maestro.audio.sample_header import read_sample_header
+                header = read_sample_header(path)
+                if (header.frames <= 0 or header.channels not in (1, 2)
+                        or header.expected_pcm_bytes != header.payload_bytes):
+                    raise ValueError("capture contains no complete mono/stereo audio")
+            fingerprints[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        report = json.loads(paths[0].read_text(encoding="utf-8"))
+        if report.get("schema") != f"maestro.{request['kind']}":
+            raise ValueError("audio worker report schema does not match the job")
+        atomic(output / "manifest.json", {
+            "request": request, "result": result, "output_sha256": fingerprints,
+        })
 
 
 _manager: AudioJobs | None = None

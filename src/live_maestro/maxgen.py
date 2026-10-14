@@ -73,6 +73,9 @@ SHAPES: dict[str, tuple[int, int, str]] = {
     "zl": (2, 2, ""),
     "int": (2, 1, "int"),
     "loadbang": (1, 1, "bang"),
+    "plugsync~": (1, 9, ""),
+    "sig~": (1, 1, "signal"),
+    "==": (2, 1, "int"),
 }
 
 

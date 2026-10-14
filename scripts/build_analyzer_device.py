@@ -31,6 +31,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from build_capture_section import add_capture
+
 from live_maestro.analyzer.protocol import (
     BANDS,
     CALIBRATION_AMPLITUDE,
@@ -299,6 +301,8 @@ def build() -> dict[str, Any]:
     # the name it carried when the device was loaded.
     patch.link(finish, 1, identity, 0)
 
+    add_capture(patch, plugin, receiver, sort)
+
     return patch.to_patcher(
         "LiveMaestro Analyzer: on-demand loudness, peak, phase and band "
         "measurement for Live Maestro's analyze_audio tool.",
@@ -319,8 +323,8 @@ DEVICE = DeviceBuild(
     out_default=DEFAULT_OUT,
     display_root=REPO_ROOT,
     device_type=AMXD_AUDIO_EFFECT,
-    free_running=("plugin~", "udpreceive", "live.thisdevice", "cycle~"),
-    terminal=("plugout~", "udpsend"),
+    free_running=("plugin~", "udpreceive", "live.thisdevice", "cycle~", "plugsync~", "loadbang"),
+    terminal=("plugout~", "udpsend", "sfrecord~"),
 )
 
 

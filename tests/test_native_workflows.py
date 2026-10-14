@@ -198,3 +198,55 @@ def test_browser_clear_is_an_explicit_nullable_reference(monkeypatch) -> None:
     )
     assert browser.hotswap_target is None
     assert result["reference_stored"] and result["after"] is None
+
+
+@pytest.mark.parametrize("accept_loop_start", [True, False])
+def test_audio_import_preserves_full_source_or_reports_partial(
+    tmp_path: Path, accept_loop_start: bool,
+) -> None:
+    source = audio(tmp_path / "source.wav")
+    target = "song.tracks[0]"
+    clip = target + ".arrangement_clips[0]"
+
+    class ImportClient:
+        def __init__(self) -> None:
+            self.created = False
+            self.writes: list[tuple[str, Any]] = []
+            self.values: dict[str, Any] = {
+                "file_path": str(source), "start_time": 0., "end_time": 2.,
+                "start_marker": .5, "end_marker": 1., "loop_start": .5, "loop_end": 1.,
+                "sample_length": 44100, "sample_rate": 44100, "warping": True, "looping": True,
+            }
+
+        def get(self, path: str) -> dict[str, Any]:
+            if path == target + ".has_audio_input":
+                return {"value": True}
+            if path == target + ".arrangement_clips":
+                return {"count": int(self.created),
+                        "value": [{"path": clip}] if self.created else []}
+            if path == "song.file_path":
+                return {"value": ""}
+            return {"value": self.values[path.removeprefix(clip + ".")]}
+
+        def call(self, path: str, method: str, args: list[Any]) -> None:
+            assert method == "create_audio_clip" and not self.created
+            self.created = True
+
+        def set(self, path: str, value: Any) -> None:
+            self.writes.append((path, value))
+            name = path.removeprefix(clip + ".")
+            if name == "loop_start" and not accept_loop_start:
+                return
+            if name == "start_marker":
+                value = max(value, self.values["loop_start"])
+            self.values[name] = value
+
+    client = ImportClient()
+    answer = workflows.import_audio(client, str(source), 0, 0, False, True)  # type: ignore[arg-type]
+    assert answer["ok"] is accept_loop_start
+    assert answer["verified"] is accept_loop_start
+    assert answer["partial"] is not accept_loop_start
+    assert client.writes.count((clip + ".loop_start", 0)) == 1
+    if accept_loop_start:
+        assert answer["observed"]["start_marker"] == 0
+        assert answer["observed"]["end_marker"] == 1

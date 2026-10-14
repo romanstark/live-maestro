@@ -808,8 +808,8 @@ def _timestamp() -> str:
 
 
 def _backup_path(target: Path) -> Path:
-    """A free ``__init__.py.bak-<timestamp>`` beside ``target``."""
-    base = target.with_name(f"{BACKUP_PREFIX}{_timestamp()}")
+    """A free ``<target name>.bak-<timestamp>`` beside ``target``."""
+    base = target.with_name(f"{target.name}.bak-{_timestamp()}")
     if not base.exists():
         return base
     for counter in range(2, 100):  # pragma: no cover - same-second reruns only
@@ -940,8 +940,8 @@ def install_device(user_library: Path, source: Path, *, dry_run: bool) -> bool:
     differing bytes are copied over a timestamped backup after a line naming what is
     replaced. The devices already in the folder are listed either way.
 
-    Only ``analyze_audio`` needs the analyzer, so a missing source file is reported and
-    not raised: an installation that cannot measure audio is still a working one.
+    Only ``analyze_audio`` and ``capture_audio`` need the analyzer, so a missing file
+    is reported and not raised: the other tools remain usable.
 
     Live does not reload a changed ``.amxd`` in a set that already holds one. An instance
     loaded before this ran keeps the version it was loaded with, which the tool reports as
@@ -950,7 +950,7 @@ def install_device(user_library: Path, source: Path, *, dry_run: bool) -> bool:
     target_folder = user_library / DEVICE_SUBFOLDER
 
     _say()
-    _say(f"Device {source.name} (optional, only analyze_audio uses the analyzer)")
+    _say(f"Device {source.name} (optional, for analyze_audio and capture_audio)")
     if not source.is_file():
         _say(f"  not found      {source}")
         _say("                 Run this from a clone of the repository to install it,")
@@ -1326,8 +1326,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-device",
         action="store_true",
-        help="install the Remote Script only. Every tool except analyze_audio works "
-        "without the analyzer device.",
+        help="install the Remote Script only. Measurement and capture need the "
+        "optional Analyzer; file analysis works without it.",
     )
     parser.add_argument(
         "-y",
