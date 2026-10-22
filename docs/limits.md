@@ -126,8 +126,9 @@ Ableton Factory Pack samples with `COMM` compression `able` (`Ableton Content`)
 stay closed: Live Maestro reads their header but never their audio, and
 `convert_to_pcm_wav` refuses them. Their sound is reached through the browser
 preview audio. Files that carry an `abli` index chunk hold many zones of a
-multi-sampled instrument in one container; the sound index skips them, because
-the zone borders live only in the device preset.
+multi-sampled instrument in one container. `SampleHeader.is_multisample_container`
+identifies these files; extracting individual zones is not implemented. Sound
+matching uses browser preview audio rather than decoding the sample payload.
 
 ## 3. Live's GUI gates: the user can lift these, we cannot
 

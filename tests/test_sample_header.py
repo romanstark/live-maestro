@@ -636,4 +636,3 @@ def test_convert_to_pcm_wav_refuses_encrypted_sample(tmp_path: Path) -> None:
     with pytest.raises(SampleHeaderError) as caught:
         convert_to_pcm_wav(src, tmp_path / "out.wav")
     assert caught.value.code == "encrypted"
-

@@ -325,4 +325,3 @@ def test_preferred_packs_path_reads_factory_packs_location_from_library_cfg(
     )
     assert _preferred_packs_path(cfg) == packs_dir
     assert _preferred_packs_path(tmp_path / "missing.cfg") is None
-
