@@ -24,8 +24,10 @@ import pytest
 
 from live_maestro.audio import (
     ABLETON_ENCRYPTED_COMPRESSION,
+    Chunk,
     SampleHeader,
     SampleHeaderError,
+    convert_to_pcm_wav,
     read_chunks,
     read_sample_header,
 )
@@ -552,3 +554,86 @@ def test_a_bare_dataclass_computes_its_own_pcm_size() -> None:
         chunks=(),
     )
     assert header.expected_pcm_bytes == 121464
+    assert header.is_multisample_container is False
+
+
+def test_is_multisample_container_detects_abli_chunk(tmp_path: Path) -> None:
+    """Monolithic multi-sample files carry an ``abli`` index chunk beside ``able``."""
+    single_chunks = (
+        iff_chunk(b"FVER", struct.pack(">I", 0xA2805140))
+        + iff_chunk(b"able", b"\x00" * 340)
+        + iff_chunk(b"COMM", comm_body(2, 100, 16, 44100.0, b"able", b"Ableton Content"))
+        + iff_chunk(b"SSND", struct.pack(">II", 0, 0) + b"\x00" * 400)
+    )
+    multi_chunks = (
+        iff_chunk(b"FVER", struct.pack(">I", 0xA2805140))
+        + iff_chunk(b"able", b"\x00" * 340)
+        + iff_chunk(b"COMM", comm_body(2, 100, 16, 44100.0, b"able", b"Ableton Content"))
+        + iff_chunk(b"abli", b"\x00" * 64)
+        + iff_chunk(b"SSND", struct.pack(">II", 0, 0) + b"\x00" * 400)
+    )
+    single = read_sample_header(write(tmp_path, "single.aif", aiff_file(b"AIFC", single_chunks)))
+    multi = read_sample_header(write(tmp_path, "multi.aif", aiff_file(b"AIFC", multi_chunks)))
+    assert single.is_multisample_container is False
+    assert multi.is_multisample_container is True
+    assert Chunk(chunk_id="abli", size=64, offset=multi.chunks[3].offset) in multi.chunks
+
+
+def test_convert_to_pcm_wav_converts_16bit_and_24bit_aiff_and_float(tmp_path: Path) -> None:
+    """Standard-library conversion turns 16-bit AIFF, 24-bit AIFF and 32-bit float into PCM WAV."""
+    samples_16 = struct.pack(">hhhh", -32768, -1000, 1000, 32767)
+    aiff_16 = aiff_file(
+        b"AIFF",
+        iff_chunk(b"COMM", comm_body(2, 2, 16, 44100.0))
+        + iff_chunk(b"SSND", struct.pack(">II", 0, 0) + samples_16),
+    )
+    src_16 = write(tmp_path, "in16.aif", aiff_16)
+    dst_16 = tmp_path / "out16.wav"
+    hdr_16 = convert_to_pcm_wav(src_16, dst_16)
+    assert (hdr_16.container, hdr_16.compression, hdr_16.bit_depth) == ("WAVE", "pcm", 16)
+    assert (hdr_16.channels, hdr_16.frames, hdr_16.sample_rate) == (2, 2, 44100.0)
+    assert dst_16.read_bytes()[-8:] == struct.pack("<hhhh", -32768, -1000, 1000, 32767)
+
+    s24_a = (123456).to_bytes(3, "big", signed=True)
+    s24_b = (-654321).to_bytes(3, "big", signed=True)
+    aiff_24 = aiff_file(
+        b"AIFF",
+        iff_chunk(b"COMM", comm_body(1, 2, 24, 48000.0))
+        + iff_chunk(b"SSND", struct.pack(">II", 0, 0) + s24_a + s24_b),
+    )
+    src_24 = write(tmp_path, "in24.aif", aiff_24)
+    dst_24 = tmp_path / "out24.wav"
+    hdr_24 = convert_to_pcm_wav(src_24, dst_24)
+    assert (hdr_24.container, hdr_24.compression, hdr_24.bit_depth) == ("WAVE", "pcm", 24)
+    assert (hdr_24.channels, hdr_24.frames, hdr_24.sample_rate) == (1, 2, 48000.0)
+    assert dst_24.read_bytes()[-6:] == (
+        (123456).to_bytes(3, "little", signed=True)
+        + (-654321).to_bytes(3, "little", signed=True)
+    )
+
+    fl32_payload = struct.pack(">ff", 0.5, -0.5)
+    aifc_fl32 = aiff_file(
+        b"AIFC",
+        iff_chunk(b"COMM", comm_body(1, 2, 32, 44100.0, b"fl32", b"32-bit Floating Point"))
+        + iff_chunk(b"SSND", struct.pack(">II", 0, 0) + fl32_payload),
+    )
+    src_fl32 = write(tmp_path, "infl32.aif", aifc_fl32)
+    dst_fl32 = tmp_path / "outfl32.wav"
+    hdr_fl32 = convert_to_pcm_wav(src_fl32, dst_fl32)
+    assert (hdr_fl32.container, hdr_fl32.compression, hdr_fl32.bit_depth) == ("WAVE", "pcm", 24)
+    assert (hdr_fl32.channels, hdr_fl32.frames) == (1, 2)
+
+
+def test_convert_to_pcm_wav_refuses_encrypted_sample(tmp_path: Path) -> None:
+    """An encrypted ``able`` file is refused: Live Maestro never decodes protected samples."""
+    chunks = (
+        iff_chunk(b"FVER", struct.pack(">I", 0xA2805140))
+        + iff_chunk(b"able", b"\x00" * 340)
+        + iff_chunk(b"COMM", comm_body(1, 10, 16, 44100.0, b"able", b"Ableton Content"))
+        + iff_chunk(b"SSND", struct.pack(">II", 0, 0) + b"\x00" * 20)
+    )
+    src = write(tmp_path, "enc.aif", aiff_file(b"AIFC", chunks))
+    with pytest.raises(SampleHeaderError) as caught:
+        convert_to_pcm_wav(src, tmp_path / "out.wav")
+    assert caught.value.code == "encrypted"
+

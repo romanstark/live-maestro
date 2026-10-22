@@ -306,3 +306,23 @@ class TestFamilyFilter:
     def test_an_item_with_no_family_is_dropped_by_any_filter(self) -> None:
         index = SoundIndex(items=[item("Odd", 1.0, category="Presets/Unfiled")])
         assert index.rank(Descriptor(bands=band_vector(1.0)), families=("bass",)) == []
+
+
+def test_preferred_packs_path_reads_factory_packs_location_from_library_cfg(
+    tmp_path: Path,
+) -> None:
+    """A custom Factory Packs directory in Library.cfg is read as a library root."""
+    from live_maestro.sound_index import _preferred_packs_path
+
+    cfg = tmp_path / "Library.cfg"
+    packs_dir = tmp_path / "Custom Packs"
+    cfg.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Ableton><ContentLibrary>"
+        f'<PreferredFactoryPacksInstallationPath Value="{packs_dir}" />'
+        "</ContentLibrary></Ableton>\n",
+        encoding="utf-8",
+    )
+    assert _preferred_packs_path(cfg) == packs_dir
+    assert _preferred_packs_path(tmp_path / "missing.cfg") is None
+

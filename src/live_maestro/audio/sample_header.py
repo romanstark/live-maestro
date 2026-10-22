@@ -13,7 +13,9 @@ they do for a plain file while only the ``SSND`` payload is unreadable.
 
 from __future__ import annotations
 
+import math
 import struct
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
@@ -24,6 +26,7 @@ __all__ = [
     "Chunk",
     "SampleHeader",
     "SampleHeaderError",
+    "convert_to_pcm_wav",
     "read_chunks",
     "read_sample_header",
 ]
@@ -134,6 +137,15 @@ class SampleHeader:
         1021640
         """
         return self.frames * self.channels * ((self.bit_depth + 7) // 8)
+
+    @property
+    def is_multisample_container(self) -> bool:
+        """Whether the file carries an ``abli`` index chunk for multiple embedded zones.
+
+        Ableton's monolithic multi-sample containers concatenate several sample zones into
+        one ``SSND`` payload and index their byte boundaries in an ``abli`` chunk.
+        """
+        return any(chunk.chunk_id == "abli" for chunk in self.chunks)
 
 
 def read_chunks(path: str | Path) -> tuple[str, tuple[Chunk, ...]]:
@@ -461,3 +473,120 @@ def _wave_verdict(
         "codec",
         f"{file_path} uses the WAVE codec {compression!r}, which this reader cannot decode.",
     )
+
+
+def convert_to_pcm_wav(source: str | Path, target: str | Path) -> SampleHeader:
+    """Convert any readable AIFF, AIFF-C or WAVE file to a 16-bit or 24-bit PCM WAVE file.
+
+    Uses only the standard library (``struct`` and ``wave``). Input files at 8-bit or
+    16-bit write out as 16-bit ``WAVE_FORMAT_PCM``; input files at 24-bit, 32-bit integer
+    or 32/64-bit IEEE float write out as 24-bit ``WAVE_FORMAT_PCM`` with the original
+    channel count and sample rate preserved.
+
+    Args:
+        source: Path to the readable input ``.aif``, ``.aiff``, ``.aifc`` or ``.wav`` file.
+        target: Destination path for the standard ``WAVE_FORMAT_PCM`` ``.wav`` file.
+
+    Returns:
+        The :class:`SampleHeader` of the newly written ``target`` file.
+
+    Raises:
+        SampleHeaderError: When the source file is not readable (for example, encrypted
+            with ``able``, truncated, or an unsupported codec).
+    """
+    source_path = Path(source)
+    target_path = Path(target)
+    header = read_sample_header(source_path)
+    if not header.audio_readable:
+        raise SampleHeaderError(header.code, header.reason)
+    raw = _read_raw_payload(source_path, header)
+    target_width, pcm_bytes = _to_le_pcm(raw, header)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(target_path), "wb") as wav_file:
+        wav_file.setnchannels(header.channels)
+        wav_file.setsampwidth(target_width)
+        wav_file.setframerate(round(header.sample_rate))
+        wav_file.writeframes(pcm_bytes)
+    return read_sample_header(target_path)
+
+
+def _read_raw_payload(file_path: Path, header: SampleHeader) -> bytes:
+    """Read the raw uncompressed audio bytes described by ``header``."""
+    with file_path.open("rb") as handle:
+        if header.container in ("AIFF", "AIFC"):
+            ssnd = _find(header.chunks, "SSND")
+            if ssnd is None:
+                raise SampleHeaderError("no_ssnd_chunk", header.reason)
+            handle.seek(ssnd.offset + 8)
+            head = handle.read(8)
+            data_offset = struct.unpack(">I", head[0:4])[0] if len(head) >= 8 else 0
+            handle.seek(ssnd.offset + 16 + data_offset)
+            return handle.read(header.expected_pcm_bytes)
+        data = _find(header.chunks, "data")
+        if data is None:
+            raise SampleHeaderError("no_data_chunk", header.reason)
+        handle.seek(data.offset + 8)
+        return handle.read(header.expected_pcm_bytes)
+
+
+def _to_le_pcm(raw: bytes, header: SampleHeader) -> tuple[int, bytes]:
+    """Convert raw audio payload bytes into little-endian 16-bit or 24-bit signed PCM."""
+    little_endian = header.container == "WAVE" or header.compression in ("sowt", "23ni", "42ni")
+    total_samples = header.frames * header.channels
+    if header.code == "pcm":
+        if header.bit_depth == 16:
+            trimmed = raw[: total_samples * 2]
+            if little_endian:
+                return 2, trimmed
+            out = bytearray(len(trimmed))
+            out[0::2] = trimmed[1::2]
+            out[1::2] = trimmed[0::2]
+            return 2, bytes(out)
+        if header.bit_depth == 24:
+            trimmed = raw[: total_samples * 3]
+            if little_endian:
+                return 3, trimmed
+            out = bytearray(len(trimmed))
+            out[0::3] = trimmed[2::3]
+            out[1::3] = trimmed[1::3]
+            out[2::3] = trimmed[0::3]
+            return 3, bytes(out)
+        if header.bit_depth == 32:
+            trimmed = raw[: total_samples * 4]
+            out = bytearray(total_samples * 3)
+            if little_endian:
+                out[0::3] = trimmed[1::4]
+                out[1::3] = trimmed[2::4]
+                out[2::3] = trimmed[3::4]
+            else:
+                out[0::3] = trimmed[2::4]
+                out[1::3] = trimmed[1::4]
+                out[2::3] = trimmed[0::4]
+            return 3, bytes(out)
+        if header.bit_depth == 8:
+            trimmed = raw[:total_samples]
+            out = bytearray(total_samples * 2)
+            for idx, byte in enumerate(trimmed):
+                signed = (byte - 128) if header.container == "WAVE" else ((byte + 128) % 256 - 128)
+                struct.pack_into("<h", out, idx * 2, signed << 8)
+            return 2, bytes(out)
+    if header.code == "float" and header.bit_depth in (32, 64):
+        prefix = "<" if header.container == "WAVE" else ">"
+        fmt = f"{prefix}{'f' if header.bit_depth == 32 else 'd'}"
+        step = header.bit_depth // 8
+        trimmed = raw[: total_samples * step]
+        out = bytearray(total_samples * 3)
+        scale = float((1 << 23) - 1)
+        for idx, (val,) in enumerate(struct.iter_unpack(fmt, trimmed)):
+            clean = 0.0 if not math.isfinite(val) else max(-1.0, min(1.0, val))
+            sample_int = round(clean * scale)
+            out[idx * 3 : idx * 3 + 3] = sample_int.to_bytes(3, "little", signed=True)
+        return 3, bytes(out)
+    raise SampleHeaderError(
+        "unsupported_depth",
+        (
+            f"{header.path} has bit depth {header.bit_depth} ({header.code}), "
+            "which cannot be converted."
+        ),
+    )
+
