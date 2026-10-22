@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -174,6 +175,17 @@ CAVEAT = (
 )
 
 
+def _preferred_packs_path(library_cfg: Path) -> Path | None:
+    """Read ``<PreferredFactoryPacksInstallationPath>`` from a ``Library.cfg``, if present."""
+    try:
+        root = ET.parse(library_cfg).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    elem = root.find("./ContentLibrary/PreferredFactoryPacksInstallationPath")
+    raw = elem.get("Value", "").strip() if elem is not None else ""
+    return Path(raw) if raw else None
+
+
 def default_roots() -> tuple[Path, ...]:
     """Library roots to search, those of them that exist on this machine.
 
@@ -190,14 +202,20 @@ def default_roots() -> tuple[Path, ...]:
     ]
     from live_maestro.installer import find_live_installs
 
-    candidates.extend(
-        install.project_path for install in find_live_installs() if install.project_path is not None
-    )
+    for install in find_live_installs():
+        if install.project_path is not None:
+            candidates.append(install.project_path)
+        packs_path = _preferred_packs_path(install.library_cfg)
+        if packs_path is not None:
+            candidates.append(packs_path)
     program_data = os.environ.get("PROGRAMDATA")
     if program_data:
         ableton = Path(program_data) / "Ableton"
         candidates.extend(sorted(ableton.glob("Live */Resources/Core Library")))
-    return tuple(dict.fromkeys(path for path in candidates if path.is_dir()))
+    existing = list(dict.fromkeys(path for path in candidates if path.is_dir()))
+    return tuple(
+        path for path in existing if not any(parent in existing for parent in path.parents)
+    )
 
 
 def default_index_path() -> Path:

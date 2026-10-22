@@ -121,6 +121,14 @@ Use a populated rack preset or Live's GUI for general nested-device loading.
 `load_drum_pad` provides a specialized route for an empty pad or an existing
 single-Simpler pad. It does not provide arbitrary rack-chain editing.
 
+### Encrypted factory samples and `abli` multi-sample containers (Live)
+Ableton Factory Pack samples with `COMM` compression `able` (`Ableton Content`)
+stay closed: Live Maestro reads their header but never their audio, and
+`convert_to_pcm_wav` refuses them. Their sound is reached through the browser
+preview audio. Files that carry an `abli` index chunk hold many zones of a
+multi-sampled instrument in one container; the sound index skips them, because
+the zone borders live only in the device preset.
+
 ## 3. Live's GUI gates: the user can lift these, we cannot
 
 ### Third-party VST parameter exposure (Live)

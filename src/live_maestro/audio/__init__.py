@@ -12,6 +12,7 @@ from live_maestro.audio.sample_header import (
     Chunk,
     SampleHeader,
     SampleHeaderError,
+    convert_to_pcm_wav,
     read_chunks,
     read_sample_header,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "Chunk",
     "SampleHeader",
     "SampleHeaderError",
+    "convert_to_pcm_wav",
     "read_chunks",
     "read_sample_header",
 ]
