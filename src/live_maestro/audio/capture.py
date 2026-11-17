@@ -65,6 +65,10 @@ class CaptureControl:
         self.socket.close()
 
 
+#: Channel order of the recorder's raw file. Only the first two carry audio.
+RAW_CHANNELS = ("left", "right", "dsp_counter", "host_beat", "is_playing", "host_flags")
+
+
 def decode_capture(raw_path: Path, output: Path) -> dict[str, Any]:
     """Validate a sample counter recorded alongside L/R and expose host-clock limitations."""
     import numpy as np
@@ -100,6 +104,9 @@ def decode_capture(raw_path: Path, output: Path) -> dict[str, Any]:
     sf.write(path, raw[:, :2], rate, subtype="FLOAT")
     return {"schema": "maestro.capture", "schema_version": 1,
             "audio_paths": [str(path)], "raw_path": str(raw_path),
+            "raw_channels": list(RAW_CHANNELS),
+            "audio_basis": "audio_paths[0] is the stereo audio; raw_path is not audio and "
+                           "anchor frames index both files alike",
             "raw_sha256": fingerprint(raw_path), "sample_rate": rate, "frames": len(raw),
             "features": features(raw[:, :2], rate),
             "timeline": {"anchors": anchors, "counter_first": float(count[0]),
@@ -109,7 +116,11 @@ def decode_capture(raw_path: Path, output: Path) -> dict[str, Any]:
                 "host_update_max_observed_ms": 1000 * resolution / rate if resolution else None,
                 "basis": "host beat/transport/validity recorded alongside the same audio samples",
                 "accuracy": "host fields are scheduler sampled; observed resolution is not a bound",
-                "sample_accurate_song_origin": False}, "review_required": True,
+                "sample_accurate_song_origin": False,
+                "beat_witness_lag_ms": None,
+                "beat_witness_lag_basis": "unmeasured; plugin latency makes it set dependent, "
+                    "so calibrate per set (docs/reference-workflows.md)"},
+            "review_required": True,
             "audio_position": "signal at Analyzer; main-track reading is before its fader"}
 
 

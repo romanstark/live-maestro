@@ -33,6 +33,26 @@ cleanup_pending=false after cancelling a capture before starting another.
 Compare explicit source and capture ranges with compare_audio. It reports
 bounded delay, level, spectral, chroma and envelope differences; gain-aligned
 waveform error is phase sensitive and is not a perceptual or leakage score.
-Check one concrete mismatch, change the relevant sound/notes/effect within the
-owner's scope, then capture again. Retain the measured evidence and uncertainty
-needed to review the result. Save or publish only when requested.
+
+Refine in a loop until the reference is reproduced:
+
+1. Fix the reference tempo map (source seconds against beats, from any source).
+   Calibrate the capture chain once per set: capture a known file and read
+   compare_audio's candidate_delay_ms.
+2. Get notes: a lead sheet first (Audio Maestro's transcribe_audio, with
+   align_to_audio against track_voice), a kit pattern with analyze_drum_kit.
+3. Before each capture, check every track's solo state and restore it after.
+4. Render with capture_audio, then compare_spectrum with chain_offset_ms. Use
+   semitones for notes and bands for timbre. Sections are loudness matched:
+   judge sound_difference_db, and take level_difference_db as a later fader
+   or automation move. Read regions and attack pairs; the image is optional.
+5. If estimated_offset_ms is large, the plugin hides latency: ask the user to
+   set the opposite Track Delay, since it is not in the Object Model.
+6. Change one cause: notes, sound or effect. For a synthesizer, measure with
+   describe_sound. Live's Wavetable needs no reload: set its knobs with
+   set_parameter and route LFOs and envelopes with wavetable_matrix. A plugin
+   gets a preset from instrument_preset (Vital is one adapter); the user loads
+   it, read_als confirms what the plugin holds.
+7. Capture again. Stop when no region exceeds the threshold and the sound
+   difference per section stops falling. Retain the evidence; save or publish only when
+   requested.

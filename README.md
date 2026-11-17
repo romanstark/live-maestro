@@ -74,18 +74,18 @@ Maestro reaches Live through three complementary routes ([docs/architecture.md](
 
 ## MCP Tools & Resources
 
-Maestro exposes **60 tools** and 6 resources over the Model Context Protocol (MCP):
+Maestro exposes **63 tools** and 6 resources over the Model Context Protocol (MCP):
 
 ### Intent Tools (Production Workflows)
 - **Session & Inspection:** `get_session`, `get_track`, `get_clip`, `get_devices`, `describe`
-- **Tracks & Devices:** `create_track`, `delete_track`, `load_device`, `delete_device`, `set_parameter`, `set_parameter_display`
+- **Tracks & Devices:** `create_track`, `delete_track`, `load_device`, `delete_device`, `set_parameter`, `set_parameter_display`, `wavetable_matrix`
 - **Clips & MIDI Notes:** `create_clip`, `delete_clip`, `write_clip_notes`, `read_clip_notes`, `quantize_clip`, `transpose_clip`
 - **Mixing & Automation:** `set_mix`, `write_automation`, `read_automation`, `clear_automation`
 - **Live Audio (Channel C):** `analyze_audio`, `capture_audio`
-- **Recorded Comparisons:** `compare_audio`, `get_audio_report`
+- **Recorded Comparisons:** `compare_audio`, `compare_spectrum`, `get_audio_report`
 - **Arrangement & Transport:** `arrange`, `set_locator`, `set_arrangement_time`, `play`, `stop`, `fire_scene`, `set_tempo`, `set_loop`
 - **Offline Projects (Channel B):** `als_read`, `als_write`
-- **Sound Matching:** `match_sound`, `sound_index_status`
+- **Sound Matching:** `match_sound`, `sound_index_status`, `instrument_preset`
 - **Audio Jobs & Drum Import:** `get_audio_job`, `cancel_audio_job`, `write_drum_clip`, `apply_tempo_map`
 - **Native Arrangement Timing:** `read_tempo_map`, `write_tempo_map`, `verify_tempo_map`, `get_warp_markers`, `set_warp_markers`, `convert_clip_time`
 - **Native Files & Notes:** `get_set_state`, `import_arrangement_audio`, `write_arrangement_notes`, `load_sample`, `load_drum_pad`
@@ -100,7 +100,7 @@ copies, direct file import, chunked notes and checked Simpler/Drum Rack loading.
 See [reference reconstruction](docs/reference-workflows.md) for supplied stems,
 reviewed external analysis, source timing, MIDI placement and recorded comparisons.
 The `live://skill/live-rebuild-reference` resource guides that workflow. UVR is
-optional; files from Suno, other separators or your own exports also work.
+optional; files from music generators, other separators or your own exports also work.
 
 ### Smart Path Discovery: `find_path`
 `find_path` maps production vocabulary to mechanisms and ranked catalog rows, including runtime device parameters and unsupported requests.

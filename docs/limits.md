@@ -36,6 +36,20 @@ Set `device.input_routing_type` and `device.input_routing_channel` with referenc
 from their available collections. Enable the device's S/C parameter separately.
 Use `describe(with_parameters=True)` to find parameter indices.
 
+### Track Delay and unreported plugin latency (LOM)
+A track's Track Delay is not in the Object Model; set it in Live's mixer.
+`device.latency_in_ms` reads only the latency a plugin reports to Live, and some
+plugins report none while their output lags by tens of milliseconds. Measure the
+lag with `compare_spectrum` (its `estimated_offset_ms`), then ask the user to set
+the opposite Track Delay on that track and record again.
+
+### Wavetable's modulation matrix is reached one cell at a time (LOM)
+The matrix has no list or bulk call: each cell is `get_modulation_value` or
+`set_modulation_value` by target row and source column, and a parameter must be
+added as a row before any source reaches it. `wavetable_matrix` batches the
+cells and reads each one back. The calls are allowlisted but not yet measured
+against Live, so their catalog rows follow the first probe run.
+
 ### The Session / Arrangement boundary (LOM)
 `arrange` duplicates Session clips onto the timeline. Direct alternatives are
 `import_arrangement_audio` for an empty Arrangement audio track and
@@ -190,7 +204,9 @@ truncation and unreached roots.
 Typed `set_warp_markers` constructs and verifies new marker lists. Generic
 `lom_call` cannot construct those objects. Live retains a final shadow marker,
 and removing the last real marker can leave it unchanged; inspect marker read-back
-rather than treating an accepted call as proof of removal.
+rather than treating an accepted call as proof of removal. A clip on which Live
+has already placed its own automatic marker can refuse new markers; writing the
+markers into the saved `.als` is then the remaining route.
 
 ### `end_marker` on an Arrangement clip: ineffective, or ineffective only while the clip does not loop?
 A stored marker value does not establish changed Arrangement geometry. Generic

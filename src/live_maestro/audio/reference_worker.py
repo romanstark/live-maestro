@@ -29,6 +29,9 @@ def main() -> None:
         elif kind == "comparison":
             from live_maestro.audio.reference import compare
             report = compare(request)
+        elif kind == "spectrum":
+            from live_maestro.audio.spectrum import compare_spectrum
+            report = compare_spectrum(request)
         else:
             raise ValueError("unsupported Live audio worker kind")
         target = Path(request["output_dir"]) / "report.json"
@@ -37,7 +40,8 @@ def main() -> None:
                           "schema": report["schema"], "review_required":
                           report.get("review_required", report.get("timing", {}).get(
                               "review_required", False)),
-                          "audio_paths": report.get("audio_paths", [])},
+                          "audio_paths": report.get("audio_paths", []),
+                          "image_paths": report.get("image_paths", [])},
                          allow_nan=False), flush=True)
     except Exception as error:  # noqa: BLE001
         import traceback

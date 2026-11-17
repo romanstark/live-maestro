@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "live-maestro"
-version = "0.1.5"
+version = "0.1.6"
 description = "MCP server connecting AI assistants to Ableton Live through the Live Object Model."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -51,7 +51,12 @@ Issues = "https://github.com/romanstark/live-maestro/issues"
 
 [project.optional-dependencies]
 audio = ["numpy>=1.26,<3", "scipy>=1.13,<2", "soundfile>=0.12,<1"]
+# Draws compare_spectrum's three panels; without it the tool returns only lists.
+plot = ["matplotlib>=3.8,<4"]
 dev = [
+    # The test suite measures audio and draws compare_spectrum's image; without
+    # these extras those tests would skip and the suite would prove less than it says.
+    "live-maestro[audio,plot]",
     "pytest>=8",
     # Pinned to a minor range on purpose. An unbounded linter turns every new
     # ruff release into a possible CI failure on code nobody touched: a rule
@@ -64,6 +69,10 @@ dev = [
     # Enforces strict typing rules including unnecessary-type-conversion
     "pyrefly>=1.2,<2",
 ]
+
+[dependency-groups]
+# `uv run pytest` installs this group, so the default run has the audio stack too.
+dev = ["live-maestro[dev]"]
 
 [project.scripts]
 live-maestro = "live_maestro.server:main"

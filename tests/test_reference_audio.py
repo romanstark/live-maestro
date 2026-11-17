@@ -67,6 +67,10 @@ def test_capture_audio_and_clock_share_the_same_frames(tmp_path: Path) -> None:
     assert result["timeline"]["counter_first"] == 63
     assert result["timeline"]["host_update_max_observed_frames"] == 320
     assert result["timeline"]["sample_accurate_song_origin"] is False
+    assert result["timeline"]["beat_witness_lag_ms"] is None
+    assert result["raw_channels"][:2] == ["left", "right"] and len(result["raw_channels"]) == 6
+    stereo, _ = sf.read(result["audio_paths"][0], always_2d=True)
+    assert stereo.shape == (n, 2)
     warmup = raw.copy()
     warmup[:, 2] = np.r_[0, np.arange(n - 1)]
     sf.write(path, warmup, rate, subtype="FLOAT")

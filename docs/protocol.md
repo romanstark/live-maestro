@@ -135,7 +135,7 @@ The ping handler operates independently of Live's main thread and LOM locks, all
     "live_version": "12.4.5",
     "host": "127.0.0.1",
     "port": 9878,
-    "allowlist_size": 144
+    "allowlist_size": 152
   }
   ```
 

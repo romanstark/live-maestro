@@ -29,11 +29,17 @@ __all__ = [
     "BatchOpArg",
     "ConfirmArg",
     "KindArg",
+    "MatrixRouteArg",
+    "MatrixRouteIn",
+    "ModulationRouteArg",
+    "ModulationRouteIn",
     "NoteArg",
     "NoteIn",
     "ParameterPathArg",
     "PlacementArg",
     "PlacementIn",
+    "SectionArg",
+    "SectionIn",
     "SlotArg",
     "TrackArg",
     "batch_ops",
@@ -379,3 +385,60 @@ def placement_dicts(
             raise TypeError(f"expected PlacementIn or dict, got {type(item).__name__}")
     return out
 
+
+
+class ModulationRouteIn(BaseModel):
+    """One modulation route in neutral names, such as lfo1 -> filter2.cutoff."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    source: str = Field(min_length=1, description="Source such as lfo1 or env2.")
+    destination: str = Field(min_length=1, description="Target such as filter1.cutoff.")
+    amount: float = Field(ge=-1, le=1, description="Modulation depth, -1..1.")
+
+
+ModulationRouteArg = Annotated[
+    ModulationRouteIn,
+    WithJsonSchema(inline_schema_refs(ModulationRouteIn.model_json_schema())),
+]
+
+
+class MatrixRouteIn(BaseModel):
+    """One cell of Wavetable's modulation matrix."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    target: str = Field(min_length=1,
+                        description="Row name as visible_modulation_target_names lists it.")
+    source: str = Field(min_length=1,
+                        description="Column name as the read reports it, or its index.")
+    amount: float = Field(ge=-1, le=1, description="Modulation amount, -1..1.")
+    parameter: str | None = Field(
+        default=None,
+        description="Device parameter name or index that adds a missing row first.")
+
+
+MatrixRouteArg = Annotated[
+    MatrixRouteIn, WithJsonSchema(inline_schema_refs(MatrixRouteIn.model_json_schema()))
+]
+
+
+class SectionIn(BaseModel):
+    """One comparison section, in song beats or in reference-file seconds."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    from_beat: float | None = Field(default=None, ge=0, description="Section start beat.")
+    to_beat: float | None = Field(default=None, ge=0, description="Exclusive end beat.")
+    from_seconds: float | None = Field(
+        default=None, ge=0, description="Or: start in reference-file seconds.")
+    to_seconds: float | None = Field(
+        default=None, ge=0, description="Or: exclusive end in reference-file seconds.")
+
+    @model_validator(mode="after")
+    def _one_unit(self) -> SectionIn:
+        beats = self.from_beat is not None and self.to_beat is not None
+        seconds = self.from_seconds is not None and self.to_seconds is not None
+        if beats == seconds:
+            raise ValueError("give from_beat/to_beat or from_seconds/to_seconds")
+        return self
+
+
+SectionArg = Annotated[SectionIn, WithJsonSchema(inline_schema_refs(SectionIn.model_json_schema()))]
