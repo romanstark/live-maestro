@@ -35,6 +35,22 @@ sample-accurate song origin. Use that witness and explicit excerpt offsets for
 comparison. A capture is not an offline export of stems or an automatic inverse
 of the original production chain.
 
+The report's `audio_paths[0]` is the stereo audio. `raw_path` is the six-channel
+recorder file in the order of `raw_channels`; only channels 0 and 1 are audio, and
+averaging all six measures a counter ramp. Anchor frames index both files alike.
+
+## Calibrate the capture chain
+
+The host beat in the timing witness can lead the recorded audio by tens of
+milliseconds. The lag depends on the set: Live's delay compensation, plugins
+that report no latency and Track Delay all move it. The report therefore leaves
+`beat_witness_lag_ms` empty. Measure it once per set: place a known audio file
+in the Arrangement, capture it, then run `compare_audio` with the file as
+reference and the capture as candidate. `candidate_delay_ms` is the chain lag;
+pass it to `compare_spectrum` as `chain_offset_ms`. An instrument whose plugin
+reports no latency adds its own lag on top; `compare_spectrum` estimates the
+remaining offset from high-band envelopes and reports it.
+
 ## Compare and improve
 
 `compare_audio` requires explicit reference and candidate start seconds and equal
@@ -49,6 +65,35 @@ leakage score. Use the reported differences to choose a concrete adjustment, the
 record again. `find_sound`, `match_sound`, reviewed MIDI and Live's actual devices
 help construct candidates; these tools do not automatically recover a full
 orchestration, exact synth patch or original reverb/sidechain settings.
+
+## Beat-aligned difference
+
+`compare_spectrum` places reference and candidate on one beat grid, each through
+its own tempo map: reference anchors from any source (a MIDI tempo map, beat
+tracking or reviewed hand anchors), candidate anchors from a capture job's host
+beats or supplied with a file. Rows are 1/12-octave bands or semitones. Semitone
+rows come from a harmonic sieve, so a missing or extra note appears under its
+own name; an octave doubling folds into the lower note.
+
+Level is not the question: a fader or automation fixes it later, the sound has to
+match. Each section (a bar by default, or chosen beats such as one note, or
+reference-file seconds) is therefore first matched on K-weighted loudness
+(BS.1770 filters), counted only over 100 ms blocks where both files sound, so a
+pause or a half-silent candidate does not skew it. Per section the report gives
+`sound_difference_db`, the mean absolute difference at equal loudness and the
+convergence measure, and `level_difference_db`, the fader or automation move.
+True peak is reported beside them but not matched: distorted basses scatter it.
+
+The report ranks regions of missing (positive dB) and excess (negative dB)
+energy by area, and lists attack positions and half-height widths from the 1.5-8 kHz
+envelope. It also estimates the remaining offset from those attacks. A plugin
+that reports no latency shows up there; Track Delay is not in the Object Model,
+so the correction is a request to the user, or `apply_estimated_offset` for the
+comparison alone. The three-panel image needs the `plot` extra and is meant for
+an agent that reads images; the lists carry the same findings.
+
+Repeat render, capture and compare until no region exceeds the chosen threshold
+and the sound difference per section stops falling.
 
 Read `live://skill/live-rebuild-reference` for the complete working procedure and
 `live://skill/live-rebuild-drums` for known isolated kick/snare parts.

@@ -52,7 +52,7 @@ SCRIPT_NAME = "live-maestro"
 #: Live has not been restarted since the script was copied in.
 #: ``python scripts/install_script.py --diff`` compares the file against the repo and
 #: settles it outright.
-SCRIPT_VERSION = "0.1.5"
+SCRIPT_VERSION = "0.1.6"
 
 #: What protocol 1 means for a caller, the shapes it may rely on:
 #:
@@ -281,6 +281,9 @@ METHOD_ALLOWLIST = frozenset([
 
     # -- Tracks and chains ----------------------------------------------
     "Track.delete_device",
+    # Live 12.3+: inserts a Live device by its name at an index, without the browser.
+    # Listed in the Live 12.4.5 describe of Track; not yet called from here.
+    "Track.insert_device",
     "Track.duplicate_clip_slot",
     "Track.stop_all_clips",
     "Track.jump_in_running_session_clip",
@@ -307,6 +310,7 @@ METHOD_ALLOWLIST = frozenset([
     # it changes nothing that was there before.
     "Track.duplicate_device",
     "Chain.delete_device",
+    "Chain.insert_device",
     # Symmetry with Chain.delete_device. Racks are ordinary production work and
     # a chain is where their devices live. Expected from the LOM, not measured.
     "Chain.duplicate_device",
@@ -501,6 +505,19 @@ METHOD_ALLOWLIST = frozenset([
     "Sample.remove_slice",
     "Sample.clear_slices",
     "Sample.reset_slices",
+    # Read-only: the gain as Live displays it.
+    "Sample.gain_display_string",
+    # -- Wavetable modulation matrix -------------------------------------------
+    # Without these a Wavetable LFO or envelope reaches no filter, level or pitch,
+    # because the matrix is the only routing the device offers. Targets are rows of
+    # visible_modulation_target_names; sources are columns. A parameter must be
+    # added to the matrix (add_parameter_to_modulation_matrix, which takes a
+    # DeviceParameter path reference) before it shows as a row. Not yet measured.
+    "WavetableDevice.get_modulation_value",
+    "WavetableDevice.set_modulation_value",
+    "WavetableDevice.add_parameter_to_modulation_matrix",
+    "WavetableDevice.is_parameter_modulatable",
+    "WavetableDevice.get_modulation_target_parameter_name",
     "Browser.load_item",
     "Browser.preview_item",
     "Browser.stop_preview",

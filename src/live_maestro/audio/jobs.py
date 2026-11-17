@@ -77,7 +77,7 @@ class AudioJobs:
     def submit(self, request: dict[str, Any], output_root: str) -> dict[str, Any]:
         """Validate input existence, then enqueue into a unique run directory."""
         kind = request.get("kind", "comparison")
-        if kind not in {"comparison", "capture"}:
+        if kind not in {"comparison", "capture", "spectrum"}:
             raise ValueError("unsupported audio job kind")
         for key in ("reference_path", "candidate_path", "audio_path"):
             if request.get(key):
@@ -247,7 +247,8 @@ class AudioJobs:
     def _verify_file_result(
         output: Path, result: dict[str, Any], request: dict[str, Any]
     ) -> None:
-        paths = [Path(result["report_path"]), *map(Path, result.get("audio_paths", []))]
+        paths = [Path(result["report_path"]), *map(Path, result.get("audio_paths", [])),
+                 *map(Path, result.get("image_paths", []))]
         fingerprints = {}
         for path in paths:
             if not path.resolve().is_relative_to(output.resolve()) or not path.is_file():

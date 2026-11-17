@@ -61,6 +61,7 @@ from live_maestro.audio import jobs as audio_jobs
 from live_maestro.audio.requests import (
     AudioFileArg,
     AudioOutputArg,
+    BeatAnchorArg,
     SourceEndArg,
     SourceStartArg,
 )
@@ -9322,6 +9323,230 @@ def compare_audio(
 
 
 @mcp.tool(annotations=ADDS)
+def instrument_preset(
+    action: Annotated[Literal["write", "read_file", "read_als"], Field(
+        description="write a preset, read one preset file, or read plugin states in an .als.")],
+    path: Annotated[str, Field(
+        description="write: new preset file; read_file: preset; read_als: saved set.")],
+    adapter: Annotated[Literal["vital"], Field(
+        description="Instrument format. Vital is the first adapter.")] = "vital",
+    base_path: Annotated[str | None, Field(
+        description="write: the user's preset to start from; nothing is shipped.")] = None,
+    parameters: Annotated[dict[str, float | str | bool] | None, Field(
+        description="Physical units: env1.attack_s, env1.sustain, filter1.cutoff_hz, "
+        "filter1.resonance, filter1.type (lowpass/bandpass/highpass), lfo1.rate "
+        "(1/8, 1/8T ...), lfo1.retrigger (note/bar), osc1.level, osc1.destination, "
+        "reverb.decay_s, reverb.mix.")] = None,
+    native: Annotated[dict[str, float | str | bool] | None, Field(
+        description="Adapter-native scalar settings for anything the vocabulary lacks.")] = None,
+    modulations: Annotated[list[toolargs.ModulationRouteArg] | None, Field(
+        description="Routes such as lfo1 -> filter2.cutoff with an amount.")] = None,
+    replace_modulations: Annotated[bool, Field(
+        description="Clear the base preset's routes first.")] = False,
+    name: Annotated[str | None, Field(description="Preset name to store.")] = None,
+    track: Annotated[str | None, Field(
+        description="read_als: track name, or its index as text.")] = None,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Write or read an instrument preset in physical units through a format adapter.
+
+    write starts from the user's own preset, applies the parameters and routes, and
+    saves a new file; an existing file is refused. Live cannot load plugin presets:
+    the user loads the file in the plugin and saves the set. read_als then reads
+    what the plugin holds from the set's saved VST3 state. Rates and codes the
+    adapter has not measured are refused rather than guessed; native covers them.
+    Use with describe_sound (Audio Maestro) and compare_spectrum to refine a sound.
+    """
+    from live_maestro import presets
+
+    try:
+        if action == "read_als":
+            if track is None:
+                raise ValueError("read_als needs track")
+            selector: int | str = int(track) if track.strip().isdigit() else track
+            return {"ok": True, "devices": presets.read_als_states(path, selector)}
+        if action == "read_file":
+            data = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+            settings = data.get("settings") if isinstance(data, dict) else None
+            if not isinstance(settings, dict):
+                raise ValueError("not a Vital preset: no settings")
+            return {"ok": True, "adapter": adapter, "parameters": presets.vital_decode(settings)}
+        if base_path is None:
+            raise ValueError("write needs base_path, the user's preset to start from")
+        target = Path(path).expanduser()
+        if target.exists():
+            raise ValueError(f"{target} exists; choose a new file name")
+        base = json.loads(Path(base_path).expanduser().read_text(encoding="utf-8"))
+        preset, changed, notes = presets.write_vital(
+            base, parameters or {}, native or {},
+            [route.model_dump() for route in modulations or []], replace_modulations, name)
+        result = {"ok": True, "executed": confirm, "path": str(target), "changed": changed,
+                  "clamped": notes}
+        if confirm:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(preset), encoding="utf-8")
+            result["next"] = ("Ask the user to load this file in the plugin; Live cannot. "
+                              "After the set is saved, read_als confirms the loaded values.")
+        return result
+    except (ValueError, OSError, KeyError, json.JSONDecodeError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=ADDS)
+def wavetable_matrix(
+    track: TrackArg,
+    device: Annotated[int, Field(ge=0, description="Wavetable's index in the track chain.")],
+    routes: Annotated[list[toolargs.MatrixRouteArg] | None, Field(
+        description="Cells to write; omit to only read the matrix.")] = None,
+    replace: Annotated[bool, Field(
+        description="Also set every other non-zero cell to 0.")] = False,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Read Wavetable's whole modulation matrix, or write routes and read them back.
+
+    The matrix is how a Wavetable LFO or envelope reaches filter, level or pitch.
+    Without routes this reads every cell. With routes it adds rows a route names
+    through its parameter, writes the cells in one batch and reads each back as
+    applied, clamped or not_observed. Source columns carry Live's names where Live
+    reports them, otherwise their index. Not yet measured against Live: trust the
+    read-back, and audition the result.
+    """
+    from live_maestro import wavetable
+
+    head = f"song.tracks[{track}].devices[{device}]"
+    try:
+        client = _client_instance()
+        if not routes:
+            return {"ok": True, **wavetable.read(client, head)}
+        paths: dict[str, str] = {}
+        for route in routes:
+            if route.parameter is not None and route.target not in paths:
+                resolved, err = _resolve_device_parameter(
+                    f"song.tracks[{track}]", device, route.parameter)
+                if err is not None:
+                    return err
+                assert resolved is not None
+                paths[route.target] = f"{head}.parameters[{resolved['index']}]"
+        plan = [route.model_dump() for route in routes]
+        if not confirm:
+            return {"ok": True, "executed": False, "plan": plan, "add_rows": paths}
+        return {"ok": True, "executed": True,
+                **wavetable.write(client, head, plan, replace, paths)}
+    except LiveError as exc:
+        return _live_error(exc)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _capture_candidate(job_id: str) -> tuple[str, list[dict[str, float]]]:
+    """Return a succeeded capture's stereo file and its playing host-beat anchors."""
+    job = audio_jobs.manager().get(job_id)
+    if job.get("kind") != "capture" or job["state"] != "succeeded":
+        raise ValueError("capture_job_id must name a succeeded capture job")
+    report = json.loads(Path(job["result"]["report_path"]).read_text(encoding="utf-8"))
+    rate = float(report["sample_rate"])
+    anchors: list[dict[str, float]] = []
+    for item in report["timeline"]["anchors"]:
+        if not (item["is_playing"] and item["beats_valid"] and item["transport_valid"]):
+            continue
+        if anchors and item["song_beat"] <= anchors[-1]["beat"]:
+            continue
+        anchors.append({"seconds": item["frame"] / rate, "beat": float(item["song_beat"])})
+    if len(anchors) < 2:
+        raise ValueError("capture has fewer than two playing host-beat anchors")
+    return report["audio_paths"][0], anchors
+
+
+@mcp.tool(annotations=ADDS)
+def compare_spectrum(
+    reference_path: AudioFileArg,
+    reference_anchors: Annotated[list[BeatAnchorArg], Field(min_length=2,
+        description="Reference tempo map: file seconds against song quarter beats.")],
+    output_dir: AudioOutputArg,
+    from_beat: Annotated[float, Field(ge=0, description="First song quarter beat.")],
+    to_beat: Annotated[float, Field(gt=0, description="Exclusive last song quarter beat.")],
+    capture_job_id: Annotated[str | None, Field(
+        description="Succeeded capture_audio job; its host beats become the anchors.")] = None,
+    candidate_path: Annotated[str | None, Field(
+        description="Candidate file when no capture job is given.")] = None,
+    candidate_anchors: Annotated[list[BeatAnchorArg] | None, Field(
+        description="Candidate tempo map, required with candidate_path.")] = None,
+    resolution: Annotated[Literal["bands", "semitones"], Field(
+        description="1/12-octave bands, or semitone rows that name notes.")] = "bands",
+    steps_per_beat: Annotated[int, Field(ge=4, le=96, description="Grid steps per beat.")] = 48,
+    beats_per_bar: Annotated[float, Field(gt=0, le=32,
+        description="Quarter beats per bar, for bar labels only.")] = 4,
+    low_hz: Annotated[float, Field(ge=10, le=2000, description="Lowest band centre.")] = 30,
+    high_hz: Annotated[float, Field(ge=200, le=20000, description="Highest band centre.")] = 8000,
+    low_note: Annotated[int, Field(ge=12, le=120, description="Lowest semitone row.")] = 28,
+    high_note: Annotated[int, Field(ge=12, le=120, description="Highest semitone row.")] = 96,
+    chain_offset_ms: Annotated[float, Field(ge=-500, le=500,
+        description="Measured capture-chain lag; positive means candidate audio is late.")] = 0,
+    apply_estimated_offset: Annotated[bool, Field(
+        description="Also shift by the offset estimated from high-band attacks.")] = False,
+    section_beats: Annotated[float | None, Field(gt=0, le=256,
+        description="Even section length in beats; default one bar.")] = None,
+    sections: Annotated[list[toolargs.SectionArg] | None, Field(
+        description="Explicit sections (a note, a phrase, a time window) instead.")] = None,
+    threshold_db: Annotated[float, Field(ge=1, le=40,
+        description="Smallest difference that forms a region.")] = 6,
+    max_regions: Annotated[int, Field(ge=1, le=500, description="Regions kept.")] = 40,
+    window_ms: Annotated[float | None, Field(ge=10, le=500,
+        description="Analysis window; default 85 ms for bands, 170 ms for semitones.")] = None,
+    write_image: Annotated[bool, Field(
+        description="Also draw the three panels; needs the plot extra.")] = True,
+    confirm: ConfirmArg = False,
+) -> dict[str, Any]:
+    """Compare reference and candidate on one beat grid, by band or semitone, over time.
+
+    Each file is placed through its own tempo map, so the difference shows what is
+    missing (positive dB) or too much (negative dB) at each beat and frequency.
+    Each section (a bar by default, or given beats or seconds) is first matched on
+    K-weighted loudness where both files sound, so sound and level come apart: per
+    section, sound_difference_db is the timbre gap at equal loudness and
+    level_difference_db the fader or automation move; true peak is reported only.
+    Also: regions ranked by area, attack positions and widths, and an offset estimate
+    that reveals plugin latency Live does not report. Track Delay is not in the
+    Object Model, so a needed correction is a request to the user.
+    Poll get_audio_job; read regions, sections and attacks with get_audio_report.
+    """
+    try:
+        if to_beat <= from_beat or not math.isfinite(from_beat) or not math.isfinite(to_beat):
+            raise ValueError("to_beat must be greater than from_beat")
+        if low_note >= high_note or low_hz >= high_hz:
+            raise ValueError("lowest row must be below highest row")
+        if capture_job_id:
+            if candidate_path or candidate_anchors:
+                raise ValueError("give capture_job_id or candidate_path, not both")
+            candidate_path, anchors = _capture_candidate(capture_job_id)
+        elif candidate_path and candidate_anchors:
+            anchors = [item.model_dump() for item in candidate_anchors]
+        else:
+            raise ValueError("candidate needs capture_job_id or candidate_path with anchors")
+        request: dict[str, Any] = {"kind": "spectrum", "reference_path": reference_path,
+                   "reference_anchors": [item.model_dump() for item in reference_anchors],
+                   "candidate_path": candidate_path, "candidate_anchors": anchors,
+                   "from_beat": from_beat, "to_beat": to_beat, "resolution": resolution,
+                   "steps_per_beat": steps_per_beat, "beats_per_bar": beats_per_bar,
+                   "low_hz": low_hz, "high_hz": high_hz, "low_note": low_note,
+                   "high_note": high_note, "chain_offset_ms": chain_offset_ms,
+                   "apply_estimated_offset": apply_estimated_offset,
+                   "section_beats": section_beats,
+                   "sections": [item.model_dump() for item in sections] if sections else None,
+                   "threshold_db": threshold_db, "max_regions": max_regions,
+                   "window_ms": window_ms, "write_image": write_image}
+        validate_map(request["reference_anchors"])
+        validate_map(anchors)
+        if not confirm:
+            return {"ok": True, "executed": False, "plan": {
+                key: value for key, value in request.items()
+                if key not in {"reference_anchors", "candidate_anchors"}}}
+        return audio_jobs.manager().submit(request, output_dir)
+    except (ValueError, OSError, KeyError) as error:
+        return {"ok": False, "error": str(error)}
+
+
+@mcp.tool(annotations=ADDS)
 def capture_audio(
     output_dir: AudioOutputArg,
     track: Annotated[str, Field(description="Name, index as text, or master/Main.")] = "master",
@@ -9337,7 +9562,11 @@ def capture_audio(
     Requires the updated Analyzer loaded in Live. Main is measured before its fader;
     put it at 0 dB when comparing the main output. from_beat temporarily cues/starts
     a stopped Arrangement; transport is restored after capture. Without it, record
-    whatever currently reaches the device. No solo, routing or device parameters change.
+    whatever currently reaches the device. No solo, routing or device parameters change;
+    check every track's solo state first, since any solo changes what is recorded.
+    The report's audio_paths[0] is the stereo audio; raw_path has six channels, only
+    the first two audio. The host beat can lead the audio by a set-dependent lag:
+    calibrate it before beat-aligned comparison.
     Record/cancel status is available through get_audio_job/cancel_audio_job.
     """
     try:
@@ -9361,9 +9590,11 @@ def capture_audio(
 def get_audio_report(
     job_id: Annotated[str, Field(description="Succeeded comparison/capture "
         "job ID from get_audio_job.")],
-    section: Annotated[Literal["overview", "sources", "notes", "timeline", "envelope", "onsets"],
-        Field(description="Summary, source rows, capture anchors, envelope "
-              "or onset candidates; availability depends on job kind.")] = "overview",
+    section: Annotated[Literal["overview", "sources", "notes", "timeline", "envelope", "onsets",
+                               "regions", "sections", "attacks"],
+        Field(description="Summary, source rows, capture anchors, envelope, onset "
+              "candidates, or spectrum regions, section sound and level, attack pairs; "
+              "availability depends on job kind.")] = "overview",
     source_index: Annotated[int, Field(ge=0,
         description="Zero-based source for notes/envelope/onsets; comparison onsets: 0=reference, "
         "1=candidate.")] = 0,
@@ -9381,7 +9612,13 @@ def get_audio_report(
         if section == "overview":
             payload = {key: value for key, value in report.items()
                        if key not in {"sources", "timeline", "features", "onsets_reference",
-                                      "onsets_candidate"}}
+                                      "onsets_candidate", "regions", "sections", "attacks"}}
+            if report.get("schema") == "maestro.spectrum":
+                payload["regions_count"] = len(report["regions"])
+                payload["sections_count"] = len(report["sections"])
+                payload["attacks_summary"] = report["attacks"]["summary"]
+                payload["grid"] = {key: value for key, value in report["grid"].items()
+                                   if key != "rows"}
             payload["sources_count"] = len(report.get("sources", []))
             if "timeline" in report:
                 payload["timeline"] = {key: value for key, value in report["timeline"].items()
@@ -9402,6 +9639,14 @@ def get_audio_report(
                 row["onsets_count"] = len(source["features"]["onsets_seconds"])
                 rows.append(row)
             total = len(report.get("sources", []))
+        elif section in {"regions", "sections", "attacks"}:
+            if report.get("schema") != "maestro.spectrum":
+                raise ValueError("regions, sections and attacks belong to spectrum jobs")
+            items = (report["regions"] if section == "regions" else report["sections"]
+                     if section == "sections" else report["attacks"]["pairs"]
+                     + [{"reference_only": item} for item in report["attacks"]["reference_only"]]
+                     + [{"candidate_only": item} for item in report["attacks"]["candidate_only"]])
+            rows, total = items[offset:offset + limit], len(items)
         elif section == "timeline":
             items = report.get("timeline", {}).get("anchors", [])
             rows, total = items[offset:offset + limit], len(items)

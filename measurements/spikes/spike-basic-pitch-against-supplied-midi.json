@@ -1,8 +1,8 @@
 {
  "record": "experiment",
  "schema_version": 1,
- "id": "basic-pitch-against-suno-midi",
- "title": "basic-pitch agrees with Suno's own MIDI on 93 to 96 percent of the pitch content",
+ "id": "basic-pitch-against-supplied-midi",
+ "title": "basic-pitch agrees with a generator's own MIDI on 93 to 96 percent of the pitch content",
  "measured_on": "2026-09-19",
  "host": "macOS 25.6.0, Apple silicon, CoreML backend",
  "question": "Notes have to come out of audio, because a generator that exports MIDI is the exception rather than the rule and an open tool cannot depend on one. Is an off the shelf transcriber good enough, and how would anyone know?",
