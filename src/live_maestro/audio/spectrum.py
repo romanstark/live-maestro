@@ -445,6 +445,13 @@ def compare_spectrum(request: dict[str, Any]) -> dict[str, Any]:
     margin = window + OFFSET_SEARCH_MS / 1000 + 0.05
     reference, rate, reference_origin, reference_info = _excerpt(
         request["reference_path"], reference_times[0] - margin, reference_times[-1] + margin)
+    for extra in request.get("extra_reference_paths", []):
+        more, more_rate, _, more_info = _excerpt(
+            extra, reference_times[0] - margin, reference_times[-1] + margin)
+        if more_rate != rate:
+            raise ValueError("summed reference stems need one sample rate; convert explicitly")
+        reference = reference + more
+        reference_info.setdefault("summed_from", []).append(more_info)
     candidate, candidate_rate, candidate_origin, candidate_info = _excerpt(
         request["candidate_path"], anchor_times[0] + chain - margin,
         anchor_times[-1] + chain + margin)

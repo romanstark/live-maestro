@@ -6,6 +6,7 @@ import asyncio
 import json
 import socket
 import time
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,9 @@ class CaptureControl:
 #: Channel order of the recorder's raw file. Only the first two carry audio.
 RAW_CHANNELS = ("left", "right", "dsp_counter", "host_beat", "is_playing", "host_flags")
 
+#: Seconds of transport between opening the recording and reaching from_beat after a lead-in.
+PREROLL_SECONDS = 0.5
+
 
 def decode_capture(raw_path: Path, output: Path) -> dict[str, Any]:
     """Validate a sample counter recorded alongside L/R and expose host-clock limitations."""
@@ -117,6 +121,9 @@ def decode_capture(raw_path: Path, output: Path) -> dict[str, Any]:
                 "basis": "host beat/transport/validity recorded alongside the same audio samples",
                 "accuracy": "host fields are scheduler sampled; observed resolution is not a bound",
                 "sample_accurate_song_origin": False,
+                "time_basis": "map song beats to frames with get_audio_report(section="
+                    "'timeline', beats=[...]); a start estimated from the tempo map can be "
+                    "beats off",
                 "beat_witness_lag_ms": None,
                 "beat_witness_lag_basis": "unmeasured; plugin latency makes it set dependent, "
                     "so calibrate per set (docs/reference-workflows.md)"},
@@ -142,8 +149,9 @@ async def _capture(request: dict[str, Any]) -> dict[str, Any]:
     control = CaptureControl(matching[0].track_id, analyzer.port)
     before = {field: client.get(f"song.{field}")["value"]
               for field in ("file_path", "is_playing", "current_song_time", "start_time",
-                            "record_mode", "session_record")}
-    if request.get("from_beat") is not None and (
+                            "record_mode", "session_record", "back_to_arranger", "tempo")}
+    from_beat, play_from = request.get("from_beat"), request.get("play_from_beat")
+    if from_beat is not None and (
         before["is_playing"] or before["record_mode"] or before["session_record"]
     ):
         client.close()
@@ -155,18 +163,33 @@ async def _capture(request: dict[str, Any]) -> dict[str, Any]:
     try:
         if (output / "cancel.request").exists():
             raise ValueError("capture cancelled before recording")
+        if play_from is not None and from_beat is not None:
+            # Play the lead-in unrecorded so instruments that remember what they last
+            # played (keyswitches, CC) reach the window in the state the song gives them.
+            transport_owned = True
+            client.set("song.start_time", play_from)
+            client.set("song.current_song_time", play_from)
+            client.call("song", "start_playing")
+            lead = PREROLL_SECONDS * float(before["tempo"]) / 60.0
+            limit = time.monotonic() + (from_beat - play_from) * 60.0 / float(before["tempo"]) + 30
+            while float(client.get("song.current_song_time")["value"]) < from_beat - lead:
+                if (output / "cancel.request").exists():
+                    raise ValueError("capture cancelled during the lead-in")
+                if time.monotonic() > limit or not client.get("song.is_playing")["value"]:
+                    raise ValueError("the lead-in did not reach from_beat; check loop and tempo")
+                await asyncio.sleep(.02)
         recording = True  # an open may land even if its acknowledgement is lost
         receipts.append(control.command(OPEN_ADDRESS, raw.as_posix()))
         await asyncio.sleep(.1)
         recording = True  # even a lost start acknowledgement requires a stop in finally
         receipts.append(control.command(START_ADDRESS))
         await asyncio.sleep(.2)  # record pre-roll so no transport command truncates the attack
-        if request.get("from_beat") is not None:
+        if from_beat is not None and play_from is None:
             if (output / "cancel.request").exists():
                 raise ValueError("capture cancelled before starting playback")
             transport_owned = True
-            client.set("song.start_time", request["from_beat"])
-            client.set("song.current_song_time", request["from_beat"])
+            client.set("song.start_time", from_beat)
+            client.set("song.current_song_time", from_beat)
             client.call("song", "start_playing")
         started = time.monotonic()
         while time.monotonic() - started < request["duration_seconds"]:
@@ -193,8 +216,67 @@ async def _capture(request: dict[str, Any]) -> dict[str, Any]:
                 }), encoding="utf-8")
     report = decode_capture(raw, output)
     report.update(control_receipts=receipts, transport_before=before,
-                  cancelled=(output / "cancel.request").exists())
+                  cancelled=(output / "cancel.request").exists(),
+                  warnings=capture_warnings(before, from_beat, play_from))
     return report
+
+
+def capture_warnings(
+    before: dict[str, Any], from_beat: float | None, play_from: float | None
+) -> list[str]:
+    """Return what about the set's state can make a capture misleading."""
+    warnings = []
+    if before.get("back_to_arranger"):
+        warnings.append(
+            "Back to Arrangement was lit: at least one track was following the Session, and "
+            "such a track does not play its Arrangement clips, which reads like a silent "
+            "instrument. Press Back to Arrangement and capture again.")
+    if from_beat and play_from is None:
+        warnings.append(
+            "recording started mid-song without a lead-in: instruments that remember what "
+            "they last played (keyswitches, CC) start in whatever state they were left in. "
+            "Pass play_from_beat to play from earlier and record only the window.")
+    return warnings
+
+
+def locate_beats(anchors: list[dict[str, Any]], beats: list[float],
+                 sample_rate: float) -> list[dict[str, Any]]:
+    """Map song beats to frames of a capture through its recorded anchors.
+
+    Interpolates linearly between the two valid playing anchors around each beat and
+    extrapolates from the nearest pair outside them. The result is the host beat
+    witness, which can lead the audio by a set-dependent lag.
+
+    Args:
+        anchors: ``timeline.anchors`` of a capture report.
+        beats: Song positions in quarter beats.
+        sample_rate: The capture's sample rate.
+
+    Returns:
+        One row per beat with ``frame``, ``seconds`` and ``basis``
+        (``interpolated``, ``extrapolated`` or ``no_anchors``).
+    """
+    valid = sorted(
+        ((float(a["song_beat"]), int(a["frame"])) for a in anchors
+         if a.get("is_playing") and a.get("beats_valid") and a.get("transport_valid")),
+        key=lambda pair: pair[1])
+    points = [p for i, p in enumerate(valid) if i == 0 or p[0] > valid[i - 1][0]]
+    rows = []
+    for beat in beats:
+        if len(points) < 2:
+            rows.append({"beat": beat, "frame": None, "seconds": None, "basis": "no_anchors"})
+            continue
+        pair = next(((a, b) for a, b in pairwise(points)
+                     if a[0] <= beat <= b[0]), None)
+        basis = "interpolated"
+        if pair is None:
+            pair = (points[0], points[1]) if beat < points[0][0] else (points[-2], points[-1])
+            basis = "extrapolated"
+        (beat_a, frame_a), (beat_b, frame_b) = pair
+        frame = frame_a + (beat - beat_a) * (frame_b - frame_a) / (beat_b - beat_a)
+        rows.append({"beat": beat, "frame": round(frame), "seconds": frame / sample_rate,
+                     "basis": basis})
+    return rows
 
 
 def capture(request: dict[str, Any]) -> dict[str, Any]:

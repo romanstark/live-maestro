@@ -140,9 +140,9 @@ def test_lom_set_end_marker_on_arrangement_clip_rejected(
 
     assert res["ok"] is False
     assert res["code"] == "arrangement_clip_not_writable"
-    # The sighting was one producer session, not a probe, and the refusal says so.
-    assert "unproven" in res["error"]
-    assert "Observed once" in res["error"]
+    # The refusal carries the measured route: loop_start/loop_end, or duplicate and delete.
+    assert "loop_end" in res["error"]
+    assert "duplicate_clip_to_arrangement" in res["error"]
     assert "message" not in res
 
 
@@ -156,7 +156,7 @@ def test_lom_batch_end_marker_rejected_on_the_direct_call_path(
     assert res["ok"] is False
     assert res["code"] == "arrangement_clip_not_writable"
     assert res["error"].startswith(f"Op 0 ({END_MARKER_PATH}):")
-    assert "unproven" in res["error"]
+    assert "loop_end" in res["error"]
     assert res["rule"] == server.SESSION_ARRANGEMENT_BOUNDARY_RULE
     assert "message" not in res
 
@@ -181,25 +181,18 @@ def test_lom_batch_end_marker_rejected_through_the_mcp_call_path(
     assert res["code"] == "arrangement_clip_not_writable"
     assert server.SESSION_ARRANGEMENT_BOUNDARY_RULE in res["error"]
     assert res["rule"] == server.SESSION_ARRANGEMENT_BOUNDARY_RULE
-    assert "unproven" in res["error"]
+    assert "loop_end" in res["error"]
     assert "message" not in res
 
 
-def test_the_end_marker_sighting_claims_no_read_back_anywhere() -> None:
-    """One sighting, one account of it: accepted, end_time unmoved, read_back unknown.
-
-    docs/protocol.md records that what ``read_back`` answered for that write was never
-    recorded. A docstring that says the write stored a value claims a read-back the
-    session did not take, which is the one thing a result here may never do.
-    """
+def test_the_end_marker_refusal_carries_the_measurement_and_the_route() -> None:
+    """The refusal rests on a probe with read-backs and names what to write instead."""
+    refusal = server.ARRANGEMENT_END_MARKER_REFUSAL
+    assert "Measured 2026-11-17 against Live 12.4.16" in refusal
+    assert "end_time did not move" in refusal
+    assert "loop_start" in refusal and "loop_end" in refusal
     doc = server.lom_batch.__doc__ or ""
-    assert "2026-09-10 against Live 12.4.5" in doc
-    assert "end_time did not move" in doc
-    assert "read back was never" in doc
-    assert "stored a value" not in doc
-    assert "stored a value" not in server.ARRANGEMENT_END_MARKER_REFUSAL
-    assert "read_back" not in server.ARRANGEMENT_END_MARKER_REFUSAL
-    assert "end_time did not move" in server.ARRANGEMENT_END_MARKER_REFUSAL
+    assert "Start and end of an Arrangement clip" in doc
 
 
 def test_lom_batch_hands_validated_models_to_the_client_as_dicts(

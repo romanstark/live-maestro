@@ -21,7 +21,7 @@ import re
 import sys
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING
 from dataclasses import fields as dataclass_fields
 from datetime import UTC, datetime
@@ -248,19 +248,26 @@ SESSION_ARRANGEMENT_BOUNDARY_RULE = (
     "but the sole write target."
 )
 
+ARRANGEMENT_MARKER_ROUTE = (
+    "Measured 2026-11-17 against Live 12.4.16 in an empty set: an unlooped Arrangement clip "
+    "starts and ends where loop_start and loop_end say. Writing loop_start moves start_marker "
+    "with it and shifts the material, envelopes included, while start_time stays; a direct "
+    "start_marker write there is not observed. On a looping clip start_marker and end_marker "
+    "apply and leave start_time and end_time alone. To move a clip, call "
+    "Track.duplicate_clip_to_arrangement with the Arrangement clip as source and a new time: "
+    "the copy keeps notes, markers and envelopes. Then delete the original with Track.delete_clip."
+)
+
 ARRANGEMENT_END_MARKER_REFUSAL = (
-    "Writing end_marker on an Arrangement clip is refused here rather than passed to Live. "
-    "Observed once, 2026-09-10 against Live 12.4.5, in a producer session and not by a probe: "
-    "the write was accepted, end_time did not move, and that same clip was also one Live would "
-    "not let loop. The two were never separated, so whether the write is ineffective in general "
-    "or only while the clip does not loop is still unproven. The refusal stands because a write "
-    "that reports success and changes nothing is worse than an error. "
-) + SESSION_ARRANGEMENT_BOUNDARY_RULE
+    "Writing end_marker on an Arrangement clip is refused here rather than passed to Live: on an "
+    "unlooped clip the write was accepted, end_time did not move, and the clip still ended at "
+    "loop_end. "
+) + ARRANGEMENT_MARKER_ROUTE + " " + SESSION_ARRANGEMENT_BOUNDARY_RULE
 
 ARRANGEMENT_READ_ROUTE = (
     "Read an arrangement clip with lom_get on song.tracks[N].arrangement_clips[i].<property>, "
     "for example .name, .start_time or .end_time, and read several properties or several clips "
-    "in one round trip with lom_batch."
+    "in one round trip with lom_batch. Its notes come from read_clip_notes with the same path."
 )
 
 ARRANGEMENT_WRITE_ROUTE = (
@@ -1012,8 +1019,8 @@ def _resolve_clip_args(
                 "code": "region_not_addressable",
                 "error": (
                     f"{tool} addresses Session clips, by track and slot or by a clip_slots "
-                    f"path. Arrangement clips are not reachable through the clip tools at "
-                    f"all, so {path!r} cannot be answered here. "
+                    f"path. Arrangement clips are not reachable through {tool}, so {path!r} "
+                    f"cannot be answered here. "
                     + SESSION_ARRANGEMENT_BOUNDARY_RULE
                 ),
                 "rule": SESSION_ARRANGEMENT_BOUNDARY_RULE,
@@ -2792,6 +2799,36 @@ def _group_warning(loss: Mapping[str, Any]) -> str:
     )
 
 
+
+#: An Arrangement clip path, which read_clip_notes reads but the Session tools refuse.
+_ARRANGEMENT_CLIP = re.compile(r"^song\.tracks\[(?P<track>\d+)\]\.arrangement_clips\[\d+\]$")
+
+
+def _arrangement_placement(clip_path: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Read where an Arrangement clip sits, so clip-local note times can be placed."""
+    fields = ("start_time", "end_time", "start_marker", "length", "looping", "has_envelopes")
+    ops = [{"op": "get", "path": f"{clip_path}.{name}"} for name in fields]
+    try:
+        rows = _client_instance().batch(ops).get("results") or []
+    except LiveError as exc:
+        return {}, _live_error(exc)
+    values = {name: row.get("value") for name, row in zip(fields, rows, strict=False)
+              if isinstance(row, Mapping) and row.get("status") == "success"}
+    if "start_time" not in values:
+        return {}, {"ok": False, "error": f"no Arrangement clip at {clip_path}"}
+    return {
+        "clip_start_time": values.get("start_time"),
+        "clip_end_time": values.get("end_time"),
+        "clip_start_marker": values.get("start_marker"),
+        "clip_length": values.get("length"),
+        "clip_looping": values.get("looping"),
+        "clip_has_envelopes": values.get("has_envelopes"),
+        "placement_note": (
+            "Song position of a note in an unlooped Arrangement clip is "
+            "clip_start_time + start_time - clip_start_marker, in beats."
+        ),
+    }, None
+
 @mcp.tool(annotations=DESTROYS)
 def delete_track(track: TrackArg, confirm: ConfirmArg = False) -> dict[str, Any]:
     """Delete a track with everything on it. Requires confirm=True.
@@ -3269,9 +3306,19 @@ def read_clip_notes(
             )
         ),
     ] = True,
-    path: ClipPathArg = "",
+    path: Annotated[
+        str,
+        Field(
+            description=(
+                "LOM path to the clip, as an alternative to track and slot: a Session "
+                "clip (song.tracks[N].clip_slots[M]) or an Arrangement clip "
+                "(song.tracks[N].arrangement_clips[i]). For an Arrangement clip the answer "
+                "also says where it sits in the song."
+            )
+        ),
+    ] = "",
 ) -> dict[str, Any]:
-    """Read MIDI notes of a Session clip, query a specific window, or count notes.
+    """Read MIDI notes of a Session or Arrangement clip, a window of them, or their count.
 
     Returns:
         Dictionary containing notes, count, window parameters, and validation report.
@@ -3297,12 +3344,20 @@ def read_clip_notes(
         beats, silently and plausibly. For Live's own order call ``get_notes_extended``
         through ``lom_call``.
     """
-    resolved = _resolve_clip_args(track, slot, path, "read_clip_notes")
-    if isinstance(resolved, dict):
-        return resolved
-    track, slot = resolved
-
-    clip_path = _clip_path(track, slot)
+    arrangement = _ARRANGEMENT_CLIP.match(path.strip()) if path else None
+    placement: dict[str, Any] = {}
+    if arrangement is not None:
+        clip_path = path.strip()
+        track, slot = int(arrangement.group("track")), None
+        placement, err = _arrangement_placement(clip_path)
+        if err is not None:
+            return err
+    else:
+        resolved = _resolve_clip_args(track, slot, path, "read_clip_notes")
+        if isinstance(resolved, dict):
+            return resolved
+        track, slot = resolved
+        clip_path = _clip_path(track, slot)
     params: dict[str, Any] = {"path": clip_path}
     if from_time is not None:
         params["from_time"] = from_time
@@ -3335,6 +3390,7 @@ def read_clip_notes(
             "slot": slot,
             "path": clip_path,
             "count": len(raw) if pitched else got.get("count"),
+            **placement,
             "window": got.get("window"),
             "pitch_range": [pitch_min, pitch_max] if pitched else None,
             "note": (
@@ -3368,6 +3424,7 @@ def read_clip_notes(
         "notes": raw,
         "api": got.get("api"),
         "note": "Times are beats, clip-local: beat 0 is the clip's own start.",
+        **placement,
     }
     if pitched:
         payload["pitch_range"] = [pitch_min, pitch_max]
@@ -3396,8 +3453,11 @@ def read_clip_notes(
             "Live adds these to every note it hands back; they are identity, not content, "
             "and this server does not model or write them."
         )
-    length = _run("clip.length", track=track, slot=slot)
-    clip_length = length.get("value") if length.get("ok") else None
+    if slot is None:
+        clip_length = placement.get("clip_length")
+    else:
+        length = _run("clip.length", track=track, slot=slot)
+        clip_length = length.get("value") if length.get("ok") else None
     report = note_ops.validate(
         parsed, clip_length=clip_length if isinstance(clip_length, (int, float)) else None
     )
@@ -3672,6 +3732,35 @@ def set_mix(
             )
         ),
     ] = None,
+    volume_db: Annotated[
+        float | None,
+        Field(
+            description=(
+                "Fader level in dB as Live displays it, such as -6. Found through the "
+                "fader's own display, so no normalised value is guessed. Not together "
+                "with volume."
+            )
+        ),
+    ] = None,
+    sends_db: Annotated[
+        dict[str, float] | None,
+        Field(
+            description=(
+                "Send levels in dB, keyed like sends ('A' or '0'). Not together with "
+                "sends for the same send."
+            )
+        ),
+    ] = None,
+    chain: Annotated[
+        str,
+        Field(
+            description=(
+                "Path of a rack chain, such as song.tracks[0].devices[0].chains[1] or "
+                "a drum pad chain, to set its mixer instead of a track's. Takes "
+                "volume_db and sends_db only; track and kind are then ignored."
+            )
+        ),
+    ] = "",
     kind: KindArg = "track",
 ) -> dict[str, Any]:
     """Set volume, pan, sends, mute and solo on one track in a single round trip.
@@ -3686,8 +3775,9 @@ def set_mix(
 
     Note:
         Volume and pan are normalised, so 0.85 is 0 dB (measured) rather than 85 per
-        cent of anything. Read ``display`` in the answer for Live's own dB reading
-        instead of converting the normalised number yourself.
+        cent of anything. To set a level in dB give ``volume_db`` or ``sends_db``: they
+        are aimed through the control's own display, the way set_parameter_display aims a
+        device knob, and also reach a rack chain's mixer through ``chain``.
 
         The master track has no mute and no solo. Both are refused there rather than
         silently ignored, and ``track`` is not read at all when kind is master.
@@ -3696,6 +3786,15 @@ def set_mix(
         set_parameter, and for the tempo use set_tempo. To make a mixer control move
         over time rather than jump, write an envelope with write_automation.
     """
+    if volume is not None and volume_db is not None:
+        return {"ok": False, "error": "give volume or volume_db, not both"}
+    if chain:
+        if any(v is not None for v in (volume, pan, sends, mute, solo)):
+            return {
+                "ok": False,
+                "error": "a chain takes volume_db and sends_db only; use lom_set for the rest",
+            }
+        return _mix_db(chain.strip(), volume_db, sends_db, {}, kind="chain", index=None)
     args, err = _kind_args(kind, track)
     if err is not None:
         return err
@@ -3729,19 +3828,83 @@ def set_mix(
             ops.append({"id": send_id, **args, "send": index, "value": amount})
             labels.append(f"send[{index}]")
 
-    if not ops:
-        return {"ok": False, "error": "nothing to set: give volume, pan, sends, mute or solo"}
+    if sends_db and kind == "master":
+        return {"ok": False, "error": "master tracks have no sends"}
+    if not ops and volume_db is None and not sends_db:
+        return {
+            "ok": False,
+            "error": "nothing to set: give volume, volume_db, pan, sends, sends_db, mute or solo",
+        }
 
-    results, err = _run_batch(ops, verify=True)
-    if err is not None:
-        return err
-    assert results is not None
-    changes = {label: row for label, row in zip(labels, results, strict=False)}
+    changes: dict[str, Any] = {}
+    round_trips = 0
+    if ops:
+        results, err = _run_batch(ops, verify=True)
+        if err is not None:
+            return err
+        assert results is not None
+        changes = {label: row for label, row in zip(labels, results, strict=False)}
+        round_trips = 1
+    index = None if profile["param"] is None else track
+    if volume_db is None and not sends_db:
+        return {
+            "ok": all(row.get("ok") for row in changes.values()),
+            "kind": kind,
+            "index": index,
+            "round_trips": round_trips,
+            "changes": changes,
+            "notes": [NORMALISED_NOTE, BATCH_NOT_ATOMIC, STORED_NOT_AUDIBLE],
+        }
+    out = _mix_db(_track_path_for(kind, track), volume_db, sends_db, changes,
+                  kind=kind, index=index)
+    out["round_trips"] = out.get("round_trips", 0) + round_trips
+    return out
+
+
+def _mix_db(
+    owner: str,
+    volume_db: float | None,
+    sends_db: Mapping[str, float] | None,
+    changes: dict[str, Any],
+    *,
+    kind: str,
+    index: int | None,
+) -> dict[str, Any]:
+    """Aim a mixer's fader and sends at dB readings through their own display.
+
+    Args:
+        owner: Path of the track or rack chain that owns ``mixer_device``.
+        volume_db: Fader target in dB, or None.
+        sends_db: Send targets in dB keyed by letter or index, or None.
+        changes: Results already written for this call, extended in place.
+        kind: Reported back as given.
+        index: Reported back as given.
+
+    Returns:
+        The set_mix answer, with one ``changes`` entry per mixer control.
+    """
+    targets: list[tuple[str, str, float]] = []
+    if volume_db is not None:
+        targets.append(("volume", f"{owner}.mixer_device.volume", volume_db))
+    for key, level in (sends_db or {}).items():
+        send = _send_index(key)
+        if send < 0:
+            return {
+                "ok": False,
+                "error": f"send key {key!r} is not a letter (A, B, …) or an index ('0', '1', …)",
+            }
+        targets.append((f"send[{send}]", f"{owner}.mixer_device.sends[{send}]", level))
+    round_trips = 0
+    for label, param_path, level in targets:
+        row = _aim_display_at_path(param_path, level, "dB")
+        changes[label] = row
+        round_trips += int(row.get("round_trips", 1))
     return {
-        "ok": all(row.get("ok") for row in results),
+        "ok": all(isinstance(row, Mapping) and row.get("ok") for row in changes.values()),
         "kind": kind,
-        "index": None if profile["param"] is None else track,
-        "round_trips": 1,
+        "index": index,
+        "path": owner,
+        "round_trips": round_trips,
         "changes": changes,
         "notes": [NORMALISED_NOTE, BATCH_NOT_ATOMIC, STORED_NOT_AUDIBLE],
     }
@@ -3779,10 +3942,22 @@ def _resolve_device_parameter(
             "resolved_by": "introspection",
         }, None
 
-    probed, perr = _device_parameter_names(head, device)
-    if perr is not None:
-        return None, perr
-    view = _view_from_names(head, device, probed.get("values", []))
+    if _TRACK_HEAD.match(head):
+        probed, perr = _device_parameter_names(head, device)
+        if perr is not None:
+            return None, perr
+        view = _view_from_names(head, device, probed.get("values", []))
+    else:
+        # A device inside a rack chain or a drum pad: the catalog's index-probe rows
+        # address track chains only, so the names come from describe instead.
+        try:
+            view = introspect.describe_device(
+                _client_instance(), head, device, with_value_items=False
+            )
+        except LiveError as exc:
+            return None, _live_error(exc)
+        except introspect.IntrospectionError as exc:
+            return None, {"ok": False, "error": str(exc)}
     ranked = introspect.rank_parameters(view, text) if view.parameters else []
     if not ranked:
         names = [p.name for p in view.parameters]
@@ -3950,28 +4125,298 @@ def _sample_displays(
     return out, None
 
 
+#: A device path ends in ``.devices[N]``; anything else given as ``path`` is taken as the
+#: DeviceParameter itself (``...mixer_device.volume``, ``...parameters[3]``).
+_DEVICE_PATH = re.compile(r"^(?P<head>.+)\.devices\[(?P<index>\d+)\]$")
+
+#: A plain track head, the only kind the catalog's index-probe rows can address.
+_TRACK_HEAD = re.compile(r"^song\.(?:tracks|return_tracks)\[\d+\]$|^song\.master_track$")
+
+DisplaySample = tuple[float, str, float | None, str | None]
+DisplaySampler = Callable[
+    [Sequence[float]], tuple[list[DisplaySample] | None, dict[str, Any] | None]
+]
+
+
+def _raw_sample_displays(
+    param_path: str, values: Sequence[float]
+) -> tuple[list[DisplaySample] | None, dict[str, Any] | None]:
+    """Ask a parameter at a raw path what each value would read as, writing nothing."""
+    ops = [
+        {"op": "call", "path": param_path, "method": "str_for_value", "args": [v]}
+        for v in values
+    ]
+    try:
+        reply = _client_instance().batch(ops)
+    except LiveError as exc:
+        return None, _live_error(exc)
+    out: list[DisplaySample] = []
+    for value, row in zip(values, reply.get("results") or [], strict=False):
+        if not isinstance(row, Mapping) or row.get("status") != "success":
+            continue
+        shown = row.get("result")
+        if not isinstance(shown, str):
+            continue
+        number, unit = introspect.parse_display(shown)
+        out.append((value, shown, number, unit))
+    return out, None
+
+
+def _raw_parameter(param_path: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Read name, range and quantisation of the DeviceParameter at ``param_path``."""
+    fields = ("name", "min", "max", "is_quantized")
+    ops = [{"op": "get", "path": f"{param_path}.{name}"} for name in fields]
+    try:
+        reply = _client_instance().batch(ops)
+    except LiveError as exc:
+        return None, _live_error(exc)
+    rows = reply.get("results") or []
+    values: dict[str, Any] = {}
+    for name, row in zip(fields, rows, strict=False):
+        if not isinstance(row, Mapping) or row.get("status") != "success":
+            return None, {
+                "ok": False,
+                "error": f"{param_path} is not a DeviceParameter: {name} did not read",
+                "detail": dict(row) if isinstance(row, Mapping) else row,
+            }
+        values[name] = row.get("value")
+    return values, None
+
+
+def _raw_write_parameter(param_path: str, value: float) -> dict[str, Any]:
+    """Write a DeviceParameter's value at a raw path and report the read-back."""
+    try:
+        written = _client_instance().set(f"{param_path}.value", value)
+    except LiveError as exc:
+        return _live_error(exc)
+    return {"ok": True, "path": param_path, "value": written.get("after"), **written}
+
+
+def _aim_display(
+    name: str,
+    low: float | None,
+    high: float | None,
+    quantized: bool,
+    sample: DisplaySampler,
+    write: Callable[[float], dict[str, Any]],
+    target: float,
+    unit: str | None,
+) -> dict[str, Any]:
+    """Search a parameter's taper for ``target`` and write the closest value found.
+
+    Args:
+        name: Parameter name, for messages.
+        low: Lower end of the raw range, or None when the parameter reports none.
+        high: Upper end of the raw range, or None.
+        quantized: Whether the parameter takes named steps.
+        sample: Asks what each raw value would display, writing nothing.
+        write: Writes one raw value and reports the read-back.
+        target: The reading wanted, in the base unit.
+        unit: The unit the target is in, or None to take the parameter's own.
+
+    Returns:
+        The write's result with target, reading, residual error, probes and round trips,
+        or a refusal saying why nothing was written.
+    """
+    if low is None or high is None:
+        return {
+            "ok": False,
+            "error": f"{name!r} does not report a range, so there is nothing to search",
+            "advice": "set_parameter writes a raw value without needing the range.",
+        }
+    if high <= low:
+        return {"ok": False, "error": f"{name!r} reports an empty range {low}..{high}"}
+    if quantized:
+        return {
+            "ok": False,
+            "error": (
+                f"{name!r} is quantized: it takes named steps, not a continuous "
+                "reading, so aiming at a display value is the wrong operation"
+            ),
+            "advice": (
+                "describe with with_parameters=True lists the steps in 'value_items'. "
+                "Write the index of the step you want with set_parameter."
+            ),
+        }
+
+    wanted_unit = unit.strip() if unit else None
+    if wanted_unit is not None and wanted_unit not in introspect.DISPLAY_BASE_UNITS:
+        return {
+            "ok": False,
+            "error": f"unit {wanted_unit!r} is not one this server reads",
+            "available": list(introspect.DISPLAY_BASE_UNITS),
+        }
+
+    coarse, err = sample(_probe_grid(low, high, _DISPLAY_COARSE_SAMPLES))
+    if err is not None:
+        return err
+    assert coarse is not None
+    usable = [(v, shown, num, u) for v, shown, num, u in coarse if num is not None]
+    if not usable:
+        seen = [shown for _, shown, _, _ in coarse[:4]]
+        return {
+            "ok": False,
+            "error": f"{name!r} reports no unit, so a target reading cannot be aimed at",
+            "sample_displays": seen,
+            "advice": (
+                "A bare number with no unit is what every VST2 answers (0 of 36 "
+                "measured): it is parseable and physically meaningless. Use "
+                "set_parameter with a normalised value between "
+                f"{low} and {high} and calibrate once by ear."
+            ),
+            "notes": [NORMALISED_NOTE],
+        }
+
+    units = {u for _, _, _, u in usable if u}
+    device_unit = min(units) if len(units) == 1 else None
+    if wanted_unit is None:
+        if device_unit is None:
+            return {
+                "ok": False,
+                "error": (
+                    f"{name!r} reports more than one unit across its range "
+                    f"({', '.join(sorted(u for u in units if u))}), so name the one you mean"
+                ),
+                "advice": "Pass unit= to say which reading the target is in.",
+            }
+        wanted_unit = device_unit
+    elif device_unit is not None and device_unit != wanted_unit:
+        return {
+            "ok": False,
+            "error": (
+                f"{name!r} reads in {device_unit}, and the target was given in {wanted_unit}"
+            ),
+            "advice": (
+                "kHz goes in as Hz and seconds as ms. Otherwise this is the wrong "
+                "parameter for that target."
+            ),
+        }
+
+    matching = [(v, shown, num) for v, shown, num, u in usable if u == wanted_unit]
+    if not matching:
+        return {"ok": False, "error": f"no probe of {name!r} read in {wanted_unit}"}
+
+    def _closest(rows: Sequence[tuple[float, str, float]]) -> tuple[float, str, float]:
+        return min(rows, key=lambda row_: abs(row_[2] - target))
+
+    best = _closest(matching)
+    round_trips = 1
+    probes = len(coarse)
+
+    # The coarse pass locates the target between two probes; the taper inside that
+    # bracket is short enough that a second, denser pass gets closer than any
+    # interpolation over an unknown curve would.
+    ordered = sorted(matching, key=lambda row_: row_[0])
+    readings = [num for _, _, num in ordered]
+    span_low = span_high = best[0]
+    for (v_a, _, n_a), (v_b, _, n_b) in itertools.pairwise(ordered):
+        if (n_a - target) * (n_b - target) <= 0:
+            span_low, span_high = v_a, v_b
+            break
+
+    if span_high > span_low:
+        refined, err = sample(_probe_grid(span_low, span_high, _DISPLAY_REFINE_SAMPLES))
+        if err is not None:
+            return err
+        assert refined is not None
+        closer = [(v, shown, num) for v, shown, num, u in refined if num is not None
+                  and u == wanted_unit]
+        round_trips += 1
+        probes += len(refined)
+        if closer:
+            best = min([best, _closest(closer)], key=lambda row_: abs(row_[2] - target))
+
+    chosen_value, chosen_display, chosen_number = best
+    written = write(chosen_value)
+    round_trips += 1
+    written["parameter"] = name
+    written["target"] = target
+    written["unit"] = wanted_unit
+    written["display_expected"] = chosen_display
+    written["reading"] = chosen_number
+    written["error"] = round(chosen_number - target, 6)
+    written["value_range"] = [low, high]
+    written["display_range"] = [min(readings), max(readings)]
+    written["probes"] = probes
+    written["round_trips"] = round_trips
+    written["notes"] = [STORED_NOT_AUDIBLE]
+    # Two different failures look alike from here, and saying the wrong one is worse
+    # than saying neither: the target can lie beyond everything the device displays,
+    # or the probes can simply have been too sparse to bracket it.
+    if target < min(readings) or target > max(readings):
+        written["out_of_range"] = True
+        written["out_of_range_note"] = (
+            f"the device never displayed {target} {wanted_unit} anywhere in its range: "
+            f"it reads {min(readings)} to {max(readings)} {wanted_unit}. This is the "
+            f"closest it gets: {chosen_display}."
+        )
+    elif len(matching) < 3:
+        # A device can report units across part of its range only. Two readable
+        # probes are not a sampled taper, and the result should not read like one.
+        written["thinly_sampled"] = True
+        written["thinly_sampled_note"] = (
+            f"only {len(matching)} of {len(coarse)} probes read in {wanted_unit}, so the "
+            "taper was barely sampled and this value is a nearest guess rather than a "
+            "bracketed result. Check 'error' before relying on it."
+        )
+    return written
+
+
+def _aim_display_at_path(param_path: str, target: float, unit: str | None) -> dict[str, Any]:
+    """Aim the DeviceParameter at a raw LOM path at ``target`` through its display."""
+    try:
+        paths.validate(param_path)
+    except paths.PathSyntaxError as exc:
+        return {"ok": False, "error": str(exc)}
+    meta, err = _raw_parameter(param_path)
+    if err is not None:
+        return err
+    assert meta is not None
+    low, high = meta.get("min"), meta.get("max")
+    return _aim_display(
+        str(meta.get("name")),
+        float(low) if isinstance(low, (int, float)) else None,
+        float(high) if isinstance(high, (int, float)) else None,
+        bool(meta.get("is_quantized")),
+        lambda values: _raw_sample_displays(param_path, values),
+        lambda value: _raw_write_parameter(param_path, value),
+        target,
+        unit,
+    )
+
+
 @mcp.tool(annotations=SETS)
 def set_parameter_display(
-    track: TrackArg,
+    track: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Track index in the collection ``kind`` names, counted from 0. Give "
+                "track and device, or give path instead."
+            )
+        ),
+    ] = None,
     device: Annotated[
-        int,
+        int | None,
         Field(
             description=(
                 "Device index in that track chain, counted from 0. get_devices "
                 "lists the chain with its indices."
             )
         ),
-    ],
+    ] = None,
     parameter: Annotated[
         str,
         Field(
             description=(
                 "Which parameter, either its index as a string ('1') or its name, "
                 "which may be a glob ('Attack*'). A name that matches more than one "
-                "parameter is refused rather than guessed at."
+                "parameter is refused rather than guessed at. Not needed when path "
+                "names the parameter itself."
             )
         ),
-    ],
+    ] = "",
+    *,
     target: Annotated[
         float,
         Field(
@@ -3993,6 +4438,19 @@ def set_parameter_display(
             )
         ),
     ] = None,
+    path: Annotated[
+        str,
+        Field(
+            description=(
+                "LOM path instead of track and device, for what they cannot reach. "
+                "Either a device, such as "
+                "song.tracks[0].devices[0].drum_pads[36].chains[0].devices[0] inside a "
+                "Drum Rack pad, with parameter naming the knob; or a DeviceParameter "
+                "itself, such as song.tracks[0].devices[0].chains[1].mixer_device.volume "
+                "for a rack chain's fader."
+            )
+        ),
+    ] = "",
     kind: KindArg = "track",
 ) -> dict[str, Any]:
     """Set a device parameter by the reading it should show, not by its raw value.
@@ -4005,28 +4463,25 @@ def set_parameter_display(
     Note:
         The inverse of ``set_parameter``, and there is no formula to invert: the curve from
         the raw range onto the displayed unit differs per parameter and is rarely linear. On
-        one measured third-party compressor Attack is ``v^4 * 1000 ms``, Ratio is ``20^v``
-        and Threshold about ``40 * log10(v)``, so writing 10 at a parameter that displays
-        milliseconds lands at 316 ms, a factor of 30, and reports success.
+        one measured third-party compressor Attack is ``v^4 * 1000 ms``, so writing 10 at a
+        parameter that displays milliseconds lands at 316 ms and reports success.
 
-        The taper is sampled, not computed: one batch of probes asks what each raw value
-        would read as, the answers are bracketed around the target, a second batch refines
-        inside that bracket, and only then is a single value written and read back. Two
-        round trips, and nothing in the set moves until that last step. Probing with real
-        writes has been measured leaving Delay Feedback at 100 % (self-oscillation) and
-        Saturator Drive at 100 % across 20 parameters (catalog row
-        return_device.str_for_value); the probes here write nothing. They also stay strictly
-        inside the range and never ask at ``min`` or ``max``, where a plug-in's own
-        formatting code has crashed Live in native code no try/except reaches
-        (docs/limits.md, 'Asking for a display string at an endpoint (Live)').
+        One batch of probes asks what each raw value would read as, a second refines inside
+        the bracket around the target, and only then is a single value written and read
+        back. The probes write nothing: probing with real writes has left Delay Feedback
+        and Saturator Drive at 100 % (catalog row return_device.str_for_value). They stay
+        strictly inside the range, because asking at ``min`` or ``max`` has crashed Live in
+        a plug-in's own formatting code (docs/limits.md, 'Asking for a display string at an
+        endpoint (Live)').
 
         Where the device reports no unit this refuses instead of aiming: every VST2 reports
-        a bare number (0 of 36 measured), so a display-driven search there would walk the
-        control to its end stop and call it a result. Use ``set_parameter`` with a
-        normalised value for those and calibrate by ear once. The result is the stored value
-        and its display, which is not audibility: a parameter on a device that is switched
-        off reads back exactly the same.
+        a bare number (0 of 36 measured). Use ``set_parameter`` with a normalised value for
+        those. The result is the stored value and its display, which is not audibility.
     """
+    if path:
+        return _set_parameter_display_at(path.strip(), parameter, target, unit)
+    if track is None or device is None:
+        return {"ok": False, "error": "give track and device, or give path"}
     _, err = _kind_args(kind, track)
     if err is not None:
         return err
@@ -4060,174 +4515,49 @@ def set_parameter_display(
             "note": COLLECTION_NOTE,
         }
     param = found[0]
-    if param.minimum is None or param.maximum is None:
-        return {
-            "ok": False,
-            "error": (
-                f"{param.name!r} does not report a range, so there is nothing to search"
-            ),
-            "advice": "set_parameter writes a raw value without needing the range.",
-        }
-    low, high = param.minimum, param.maximum
-    if high <= low:
-        return {
-            "ok": False,
-            "error": f"{param.name!r} reports an empty range {low}..{high}",
-        }
-    if param.is_quantized:
-        return {
-            "ok": False,
-            "error": (
-                f"{param.name!r} is quantized: it takes named steps, not a continuous "
-                "reading, so aiming at a display value is the wrong operation"
-            ),
-            "advice": (
-                "describe with with_parameters=True lists the steps in 'value_items'. "
-                "Write the index of the step you want with set_parameter."
-            ),
-        }
-
-    wanted_unit = unit.strip() if unit else None
-    if wanted_unit is not None and wanted_unit not in introspect.DISPLAY_BASE_UNITS:
-        return {
-            "ok": False,
-            "error": f"unit {wanted_unit!r} is not one this server reads",
-            "available": list(introspect.DISPLAY_BASE_UNITS),
-        }
-
-    coarse, err = _sample_displays(
-        row, base, device, index, _probe_grid(low, high, _DISPLAY_COARSE_SAMPLES)
+    written = _aim_display(
+        param.name,
+        param.minimum,
+        param.maximum,
+        param.is_quantized,
+        lambda values: _sample_displays(row, base, device, index, values),
+        lambda value: _run(
+            profile["parameter"], **base, device=device, param=index, value=value
+        ),
+        target,
+        unit,
     )
+    if "target" in written:
+        written["parameter_index"] = index
+        written["resolved_by"] = resolved["resolved_by"]
+        written["matches"] = resolved["matches"]
+    return written
+
+
+def _set_parameter_display_at(
+    path: str, parameter: str, target: float, unit: str | None
+) -> dict[str, Any]:
+    """Aim a parameter addressed by a device path plus name, or by its own path."""
+    match = _DEVICE_PATH.match(path)
+    if match is None:
+        return _aim_display_at_path(path, target, unit)
+    if not parameter:
+        return {
+            "ok": False,
+            "error": f"{path} is a device: name the parameter, or give the parameter's path",
+        }
+    head, device = match.group("head"), int(match.group("index"))
+    resolved, err = _resolve_device_parameter(head, device, parameter)
     if err is not None:
         return err
-    assert coarse is not None
-    usable = [(v, shown, num, u) for v, shown, num, u in coarse if num is not None]
-    if not usable:
-        seen = [shown for _, shown, _, _ in coarse[:4]]
-        return {
-            "ok": False,
-            "error": (
-                f"{param.name!r} reports no unit, so a target reading cannot be aimed at"
-            ),
-            "sample_displays": seen,
-            "advice": (
-                "A bare number with no unit is what every VST2 answers (0 of 36 "
-                "measured): it is parseable and physically meaningless. Use "
-                "set_parameter with a normalised value between "
-                f"{low} and {high} and calibrate once by ear."
-            ),
-            "notes": [NORMALISED_NOTE],
-        }
-
-    units = {u for _, _, _, u in usable if u}
-    device_unit = min(units) if len(units) == 1 else None
-    if wanted_unit is None:
-        if device_unit is None:
-            return {
-                "ok": False,
-                "error": (
-                    f"{param.name!r} reports more than one unit across its range "
-                    f"({', '.join(sorted(u for u in units if u))}), so name the one you mean"
-                ),
-                "advice": "Pass unit= to say which reading the target is in.",
-            }
-        wanted_unit = device_unit
-    elif device_unit is not None and device_unit != wanted_unit:
-        return {
-            "ok": False,
-            "error": (
-                f"{param.name!r} reads in {device_unit}, and the target was given in "
-                f"{wanted_unit}"
-            ),
-            "advice": (
-                "kHz goes in as Hz and seconds as ms. Otherwise this is the wrong "
-                "parameter for that target."
-            ),
-        }
-
-    matching = [(v, shown, num) for v, shown, num, u in usable if u == wanted_unit]
-    if not matching:
-        return {
-            "ok": False,
-            "error": f"no probe of {param.name!r} read in {wanted_unit}",
-        }
-
-    def _closest(
-        rows: Sequence[tuple[float, str, float]],
-    ) -> tuple[float, str, float]:
-        return min(rows, key=lambda row_: abs(row_[2] - target))
-
-    best = _closest(matching)
-    round_trips = 1
-    probes = len(coarse)
-
-    # The coarse pass locates the target between two probes; the taper inside that
-    # bracket is short enough that a second, denser pass gets closer than any
-    # interpolation over an unknown curve would.
-    ordered = sorted(matching, key=lambda row_: row_[0])
-    readings = [num for _, _, num in ordered]
-    span_low = span_high = best[0]
-    for (v_a, _, n_a), (v_b, _, n_b) in itertools.pairwise(ordered):
-        if (n_a - target) * (n_b - target) <= 0:
-            span_low, span_high = v_a, v_b
-            break
-
-    if span_high > span_low:
-        refined, err = _sample_displays(
-            row,
-            base,
-            device,
-            index,
-            _probe_grid(span_low, span_high, _DISPLAY_REFINE_SAMPLES),
-        )
-        if err is not None:
-            return err
-        assert refined is not None
-        closer = [(v, shown, num) for v, shown, num, u in refined if num is not None
-                  and u == wanted_unit]
-        round_trips += 1
-        probes += len(refined)
-        if closer:
-            best = min([best, _closest(closer)], key=lambda row_: abs(row_[2] - target))
-
-    chosen_value, chosen_display, chosen_number = best
-    written = _run(
-        profile["parameter"], **base, device=device, param=index, value=chosen_value
+    assert resolved is not None
+    written = _aim_display_at_path(
+        f"{path}.parameters[{int(resolved['index'])}]", target, unit
     )
-    round_trips += 1
-    written["parameter"] = param.name
-    written["parameter_index"] = index
-    written["resolved_by"] = resolved["resolved_by"]
-    written["matches"] = resolved["matches"]
-    written["target"] = target
-    written["unit"] = wanted_unit
-    written["display_expected"] = chosen_display
-    written["reading"] = chosen_number
-    written["error"] = round(chosen_number - target, 6)
-    written["value_range"] = [low, high]
-    written["display_range"] = [min(readings), max(readings)]
-    written["probes"] = probes
-    written["round_trips"] = round_trips
-    written["notes"] = [STORED_NOT_AUDIBLE]
-    # Two different failures look alike from here, and saying the wrong one is worse
-    # than saying neither: the target can lie beyond everything the device displays,
-    # or the probes can simply have been too sparse to bracket it.
-    if target < min(readings) or target > max(readings):
-        written["out_of_range"] = True
-        written["out_of_range_note"] = (
-            f"the device never displayed {target} {wanted_unit} anywhere in its range: "
-            f"it reads {min(readings)} to {max(readings)} {wanted_unit}. This is the "
-            f"closest it gets: {chosen_display}."
-        )
-    elif len(matching) < 3:
-        # A device can report units across part of its range only. Two readable
-        # probes are not a sampled taper, and the result should not read like one.
-        written["thinly_sampled"] = True
-        written["thinly_sampled_note"] = (
-            f"only {len(matching)} of {len(coarse)} probes read in {wanted_unit}, so the "
-            "taper was barely sampled and this value is a nearest guess rather than a "
-            "bracketed result. Check 'error' before relying on it."
-        )
+    if "target" in written:
+        written["parameter_index"] = int(resolved["index"])
+        written["resolved_by"] = resolved["resolved_by"]
+        written["matches"] = resolved["matches"]
     return written
 
 
@@ -6690,6 +7020,8 @@ def lom_set(
     result: dict[str, Any] = {"ok": True, **written, "proves": STORED_NOT_AUDIBLE}
     if hint is not None:
         result["catalog"] = hint
+    if re.search(r"\barrangement_clips\[\d+\]\.(start_marker|loop_start|loop_end)\b", path):
+        result["arrangement_note"] = ARRANGEMENT_MARKER_ROUTE
     meaning = _means_for_path(path, result.get("after"))
     if meaning is not None:
         result["after_means"] = meaning
@@ -6763,7 +7095,37 @@ def lom_call(
         if instead is not None:
             failed["use_instead"] = instead
         return failed
-    return {"ok": True, **called, "proves": RAN_NOT_EFFECTIVE}
+    answer: dict[str, Any] = {"ok": True, **called, "proves": RAN_NOT_EFFECTIVE}
+    if method in NOTES_ONLY_METHODS:
+        warning = _envelope_warning([path])
+        if warning:
+            answer["warning"] = warning
+    return answer
+
+
+#: Clip methods that change notes and leave the clip's envelopes where they are.
+NOTES_ONLY_METHODS = frozenset({
+    "duplicate_region", "remove_notes_extended", "remove_notes_by_id",
+    "duplicate_notes_by_id",
+})
+
+
+def _envelope_warning(clip_paths: Sequence[str]) -> str | None:
+    """Return a warning when a clip whose notes were changed also carries envelopes."""
+    ops = [{"op": "get", "path": f"{p}.has_envelopes"} for p in dict.fromkeys(clip_paths)]
+    try:
+        rows = _client_instance().batch(ops).get("results") or []
+    except LiveError:
+        return None
+    held = [p for p, row in zip(dict.fromkeys(clip_paths), rows, strict=False)
+            if isinstance(row, Mapping) and row.get("value") is True]
+    if not held:
+        return None
+    return (
+        f"{', '.join(held)} has clip envelopes (CC, volume or device automation in the "
+        "clip). This method moves or removes notes only; the envelopes stay where they "
+        "were, so dynamics drawn for the notes no longer line up with them."
+    )
 
 
 # Measured 2026-09-01 against Live 12.4.5: four transport jumps interleaved with
@@ -6813,11 +7175,11 @@ def lom_batch(
         never changes, and the conclusion drawn from them is wrong. Sample a moving
         transport with one call per position, never inside a batch.
 
-        An end_marker write on an Arrangement clip is refused here rather than sent.
-        Observed once, 2026-09-10 against Live 12.4.5: the write was accepted without an
-        error and end_time did not move; what it read back was never recorded, and
-        docs/limits.md section 5 carries the probe that would settle it. ``atomic`` stops at
-        the first error but undoes nothing, so read the state back after a partial failure.
+        An end_marker write on an Arrangement clip is refused here rather than sent: on an
+        unlooped clip it reads back and the clip still ends at loop_end (docs/limits.md,
+        'Start and end of an Arrangement clip'). One ``song.undo`` takes back the whole
+        batch. ``atomic`` stops at the first error but undoes nothing, so read the state
+        back after a partial failure.
         Prefer a dedicated tool where one exists: get_session, get_track, get_devices and
         set_mix batch their own reads and verify, which this does not.
     """
@@ -6860,12 +7222,21 @@ def lom_batch(
             meaning = _means_for_path(str(row.get("path") or ""), row.get("value"))
             if meaning is not None:
                 row["means"] = meaning
-    return {
+    answer: dict[str, Any] = {
         "ok": int(result.get("error_count", 0)) == 0,
         **result,
         "round_trips": 1,
         "note": BATCH_NOT_ATOMIC,
     }
+    touched = [str(op.get("path")) for op in normalised
+               if isinstance(op, Mapping) and op.get("op") == "call"
+               and op.get("method") in NOTES_ONLY_METHODS]
+    if touched:
+        warning = _envelope_warning(touched)
+        if warning:
+            answer["warning"] = warning
+            answer["round_trips"] = 2
+    return answer
 
 
 @mcp.tool(annotations=READS)
@@ -9281,6 +9652,12 @@ def _reference_range(start: float, end: float) -> None:
 
 
 
+#: Further reference stems summed with reference_path, for a group rebuilt from parts.
+ExtraReferencesArg = Annotated[list[str] | None, Field(max_length=32,
+    description="Further reference stems added to reference_path sample by sample, to "
+    "compare a group with the sum of the stems it rebuilds rather than one of them.")]
+
+
 @mcp.tool(annotations=ADDS)
 def compare_audio(
     reference_path: AudioFileArg,
@@ -9294,6 +9671,7 @@ def compare_audio(
         description="Delay search radius in milliseconds; zero disables alignment.")] = 100,
     write_residual: Annotated[bool, Field(
         description="Write the gain-aligned, phase-sensitive difference as a FLOAT WAV.")] = False,
+    extra_reference_paths: ExtraReferencesArg = None,
     confirm: ConfirmArg = False,
 ) -> dict[str, Any]:
     """Compare reference and rendered audio by timing, level, bands, chroma and envelope.
@@ -9312,7 +9690,8 @@ def compare_audio(
         request = {"kind": "comparison", "reference_path": reference_path,
                    "candidate_path": candidate_path, "start_seconds": start_seconds,
                    "end_seconds": end_seconds, "candidate_start_seconds": candidate_start_seconds,
-                   "max_alignment_ms": max_alignment_ms, "write_residual": write_residual}
+                   "max_alignment_ms": max_alignment_ms, "write_residual": write_residual,
+                   "extra_reference_paths": list(extra_reference_paths or [])}
         if not confirm:
             return {"ok": True, "executed": False, "plan": request}
         return audio_jobs.manager().submit(request, output_dir)
@@ -9495,6 +9874,7 @@ def compare_spectrum(
         description="Analysis window; default 85 ms for bands, 170 ms for semitones.")] = None,
     write_image: Annotated[bool, Field(
         description="Also draw the three panels; needs the plot extra.")] = True,
+    extra_reference_paths: ExtraReferencesArg = None,
     confirm: ConfirmArg = False,
 ) -> dict[str, Any]:
     """Compare reference and candidate on one beat grid, by band or semitone, over time.
@@ -9524,6 +9904,7 @@ def compare_spectrum(
         else:
             raise ValueError("candidate needs capture_job_id or candidate_path with anchors")
         request: dict[str, Any] = {"kind": "spectrum", "reference_path": reference_path,
+                   "extra_reference_paths": list(extra_reference_paths or []),
                    "reference_anchors": [item.model_dump() for item in reference_anchors],
                    "candidate_path": candidate_path, "candidate_anchors": anchors,
                    "from_beat": from_beat, "to_beat": to_beat, "resolution": resolution,
@@ -9555,6 +9936,10 @@ def capture_audio(
     from_beat: Annotated[float | None, Field(ge=0,
         description="Temporarily start a stopped Arrangement at this quarter beat; None records "
         "the current signal without changing transport.")] = None,
+    play_from_beat: Annotated[float | None, Field(ge=0,
+        description="Start playback earlier, at this quarter beat, and record only from "
+        "from_beat on. For instruments whose state depends on what played before, such as "
+        "keyswitches; 0 plays from the song start.")] = None,
     confirm: ConfirmArg = False,
 ) -> dict[str, Any]:
     """Record actual audio at the Analyzer's position, with a recorded timing witness.
@@ -9566,7 +9951,13 @@ def capture_audio(
     check every track's solo state first, since any solo changes what is recorded.
     The report's audio_paths[0] is the stereo audio; raw_path has six channels, only
     the first two audio. The host beat can lead the audio by a set-dependent lag:
-    calibrate it before beat-aligned comparison.
+    calibrate it before beat-aligned comparison. Map beats to capture time with
+    get_audio_report(section='timeline', beats=[...]), never from the tempo map.
+
+    The Analyzer is a device in the chain, so it measures before the track fader and
+    sees no fader move; it is loaded by hand, one per track, and one track (a group
+    works) is recorded per capture. ``warnings`` names a lit Back to Arrangement and a
+    mid-song start without ``play_from_beat``.
     Record/cancel status is available through get_audio_job/cancel_audio_job.
     """
     try:
@@ -9575,8 +9966,13 @@ def capture_audio(
             raise ValueError("track is required; duration must be finite and in (0, 120] seconds")
         if from_beat is not None and (not math.isfinite(from_beat) or from_beat < 0):
             raise ValueError("from_beat must be finite and nonnegative")
+        if play_from_beat is not None and (
+                from_beat is None or not math.isfinite(play_from_beat)
+                or not 0 <= play_from_beat <= from_beat):
+            raise ValueError("play_from_beat needs from_beat and must lie between 0 and it")
         request = {"kind": "capture", "track": track, "duration_seconds": duration_seconds,
-                   "from_beat": from_beat, "host": _host(), "port": _port()}
+                   "from_beat": from_beat, "play_from_beat": play_from_beat,
+                   "host": _host(), "port": _port()}
         if not confirm:
             return {"ok": True, "executed": False, "plan": request}
         from live_maestro.audio.paths import require_shared_filesystem
@@ -9601,6 +9997,9 @@ def get_audio_report(
     offset: Annotated[int, Field(ge=0, description="Zero-based first row in this page.")] = 0,
     limit: Annotated[int, Field(ge=1, le=200,
         description="Maximum rows to return, from 1 to 200.")] = 50,
+    beats: Annotated[list[float] | None, Field(max_length=200,
+        description="With section='timeline' on a capture: song beats to map to capture "
+        "frames and seconds through the recorded anchors, instead of the anchor rows.")] = None,
 ) -> dict[str, Any]:
     """Read a verified audio report in bounded pages, including notes and timing witnesses."""
     try:
@@ -9647,6 +10046,13 @@ def get_audio_report(
                      + [{"reference_only": item} for item in report["attacks"]["reference_only"]]
                      + [{"candidate_only": item} for item in report["attacks"]["candidate_only"]])
             rows, total = items[offset:offset + limit], len(items)
+        elif section == "timeline" and beats:
+            from live_maestro.audio.capture import locate_beats
+            anchors = report.get("timeline", {}).get("anchors", [])
+            located = locate_beats(anchors, list(beats), float(report["sample_rate"]))
+            return {"ok": True, "section": section, "located": located,
+                    "note": "host beat witness; the audio can lag it by a set-dependent "
+                            "amount (timeline.beat_witness_lag_ms)"}
         elif section == "timeline":
             items = report.get("timeline", {}).get("anchors", [])
             rows, total = items[offset:offset + limit], len(items)

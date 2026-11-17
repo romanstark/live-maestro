@@ -19,10 +19,9 @@ import pytest
 
 from live_maestro import server
 
-#: The nine Session clip tools A2 covers.
+#: The Session clip tools that refuse an Arrangement address. read_clip_notes reads one.
 CLIP_TOOLS = (
     "get_clip",
-    "read_clip_notes",
     "write_clip_notes",
     "read_automation",
     "write_automation",
@@ -36,13 +35,12 @@ CLIP_TOOLS = (
 #: required argument. It is never read, because the address refusal comes first.
 MIXER_VOLUME = "song.tracks[2].mixer_device.volume"
 
-#: An Arrangement clip address, which none of the nine may answer.
+#: An Arrangement clip address, which none of these may answer.
 ARRANGEMENT_PATH = "song.tracks[2].arrangement_clips[0]"
 
 #: Each clip tool with the arguments it needs beyond the address itself.
 ARRANGEMENT_CALLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_clip", {}),
-    ("read_clip_notes", {}),
     ("write_clip_notes", {"notes": []}),
     ("read_automation", {"parameter": MIXER_VOLUME}),
     ("write_automation", {"parameter": MIXER_VOLUME, "points": [[0.0, 0.0]]}),
@@ -112,7 +110,7 @@ def test_get_clip_with_no_arguments_refuses_instead_of_answering_about_track_zer
 
 
 def test_every_clip_tool_refuses_an_arrangement_path() -> None:
-    """All nine answer an Arrangement address with region_not_addressable and a route.
+    """All eight answer an Arrangement address with region_not_addressable and a route.
 
     An arrangement path never resolves to a
     Session clip, and the refusal says where to read and where to write instead.

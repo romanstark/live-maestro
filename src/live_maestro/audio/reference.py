@@ -38,6 +38,36 @@ def read(path: str, start: float, end: float | None) -> tuple[Any, int, dict[str
     return samples, rate, info
 
 
+def read_sum(paths: list[str], start: float, end: float | None) -> tuple[Any, int, dict[str, Any]]:
+    """Read the same excerpt of several stems and add them sample by sample.
+
+    A group rebuilt from several parts is compared with the sum of their stems: the
+    mean of the stems would sit about 20*log10(n) dB too low. Mono stems are spread to
+    stereo when the others are stereo; the sample rates must agree.
+    """
+    import numpy as np
+
+    samples, rate, info = read(paths[0], start, end)
+    if len(paths) == 1:
+        return samples, rate, info
+    parts = [info]
+    for path in paths[1:]:
+        more, more_rate, more_info = read(path, start, end)
+        if more_rate != rate:
+            raise ValueError("summed reference stems need one sample rate; convert explicitly")
+        if more.shape[1] != samples.shape[1]:
+            if more.shape[1] == 1:
+                more = np.repeat(more, samples.shape[1], axis=1)
+            else:
+                samples = np.repeat(samples, more.shape[1], axis=1)
+        frames = max(len(samples), len(more))
+        samples = np.pad(samples, ((0, frames - len(samples)), (0, 0)))
+        samples = samples + np.pad(more, ((0, frames - len(more)), (0, 0)))
+        parts.append(more_info)
+    return samples, rate, {**info, "frames": len(samples), "channels": samples.shape[1],
+                           "summed_from": parts}
+
+
 def _db(value: float) -> float:
     return round(20 * math.log10(max(1e-12, value)), 3)
 
@@ -106,7 +136,8 @@ def compare(request: dict[str, Any]) -> dict[str, Any]:
     from scipy.signal import correlate, resample_poly
 
     start, end = request["start_seconds"], request["end_seconds"]
-    reference, rate, reference_info = read(request["reference_path"], start, end)
+    reference, rate, reference_info = read_sum(
+        [request["reference_path"], *request.get("extra_reference_paths", [])], start, end)
     candidate_start = request["candidate_start_seconds"]
     candidate, candidate_rate, candidate_info = read(
         request["candidate_path"], candidate_start, candidate_start + end - start

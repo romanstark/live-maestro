@@ -16,6 +16,10 @@ from typing import Any
 from live_maestro.als.tempo import beat_at, read, seconds_at
 from live_maestro.client import LiveClient
 
+#: How long to wait for Live to index a sample copied into the project, in seconds.
+#: A newly copied file has taken about 8 s to appear in Live 12.4.
+BROWSER_INDEX_WAIT_S = 12.0
+
 
 def fingerprint(path: Path) -> str:
     result = hashlib.sha256()
@@ -174,17 +178,27 @@ def load_pad(
         client.set("app.browser.hotswap_target", {"__path__": pad})
         try:
             # Targeting a pad changes browser filters and invalidates old item indexes.
+            # Only the read is repeated: Live indexes a newly copied file in the
+            # background, and loading is attempted once.
             matches = []
-            for _ in range(6):
+            waited, pause = 0.0, 0.25
+            while True:
                 reply = client.send(
                     "browser_walk", {"root": "current_project", "query": indexed.name, "limit": 100}
                 )
                 matches = [
                     item for item in reply.get("matches", []) if item["name"] == indexed.name
                 ]
-                if matches:
+                if matches or waited >= BROWSER_INDEX_WAIT_S:
                     break
-                time.sleep(0.25)
+                time.sleep(pause)
+                waited += pause
+                pause = min(pause * 2, 2.0)
+            if not matches:
+                raise ValueError(
+                    f"sample did not appear in the current project's browser within "
+                    f"{BROWSER_INDEX_WAIT_S:.0f} s; Live may still be indexing it, so try again"
+                )
             if len(matches) != 1:
                 raise ValueError("sample is not uniquely indexed in the current project")
             client.call("app.browser", "load_item", [{"__path__": matches[0]["path"]}])

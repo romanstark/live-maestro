@@ -50,7 +50,8 @@ def test_capture_failure_stops_recorder_and_restores_transport(
     calls: list[Any] = []
     before = {"file_path": "test.als", "is_playing": False,
               "current_song_time": 23.5, "start_time": 8.0,
-              "record_mode": False, "session_record": False}
+              "record_mode": False, "session_record": False,
+              "back_to_arranger": False, "tempo": 120.0}
     state = dict(before)
 
     class Client:
