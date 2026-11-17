@@ -26,7 +26,13 @@ capture_audio records the real signal at the Analyzer, including MIDI instrument
 and effects. Put the Analyzer at the intended point; Main is before its fader.
 from_beat requires a stopped transport and temporarily changes its start marker
 and playhead. Capture includes pre-roll. Read the recorded timing witness rather
-than treating the first file sample as the requested song beat. Host timing is
+than treating the first file sample as the requested song beat: map beats with
+get_audio_report(section='timeline', beats=[...]), never from the tempo map.
+The Analyzer sits before the track fader, one per track, one track (or group)
+per capture. Use play_from_beat for instruments that remember keyswitches or
+CC, and read the report's warnings (a lit Back to Arrangement mutes Arrangement
+clips). Compare a rebuilt group against the sum of its stems
+(extra_reference_paths), not their mean. Host timing is
 scheduler sampled, not a sample-accurate song-origin guarantee. Wait for
 cleanup_pending=false after cancelling a capture before starting another.
 

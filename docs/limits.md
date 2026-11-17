@@ -69,6 +69,33 @@ not provided. Saved-set tempo automation has a dedicated copy workflow:
 Clip envelopes can affect the value played over track automation. Removing an
 envelope can expose the underlying track curve rather than restore a static value.
 
+### Start and end of an Arrangement clip (LOM)
+Measured 2026-11-17 against Live 12.4.16 in an empty set, on a MIDI clip with notes
+and a volume envelope copied into the Arrangement:
+
+| Clip state | Write | Effect |
+|---|---|---|
+| unlooped | `loop_start` | applied; `start_marker` follows, the material (envelopes included) shifts, `start_time` stays, the clip gets shorter |
+| unlooped | `loop_end` | applied; `end_time` follows |
+| unlooped | `start_marker` | `not_observed`, value unchanged after 1 s |
+| unlooped | `end_marker` | reads back, `end_time` does not move |
+| looping | `start_marker`, `end_marker` | applied; `start_time` and `end_time` stay |
+
+So the start of an unlooped clip, the field Live's clip view calls Start, is
+`loop_start`. `lom_set` and `lom_batch` still refuse `end_marker` on an Arrangement
+clip. To move a clip, call `Track.duplicate_clip_to_arrangement` with the
+Arrangement clip as source and the new time: the copy keeps notes, markers and
+envelopes. Then delete the original with `Track.delete_clip`.
+
+### Envelopes of an Arrangement clip (LOM)
+Measured 2026-11-17 against Live 12.4.16: `has_envelopes` reads true on an
+Arrangement clip that carries envelopes, and `automation_envelope(parameter)`
+returns `None` on it. Its envelopes can therefore be neither read nor written, only
+carried: they travel with `duplicate_clip_to_arrangement` and with a `loop_start`
+shift. `duplicate_region`, `remove_notes_extended` and the note-id methods move
+notes only and leave the envelopes where they were; `lom_call` and `lom_batch` add
+a `warning` when the clip has envelopes.
+
 ### A clip envelope leaves its last value behind (LOM)
 Stopping an automated clip does not restore the parameter's earlier static value.
 Capture mixer values before playback if they must be restored afterward.
@@ -135,6 +162,19 @@ Use a populated rack preset or Live's GUI for general nested-device loading.
 `load_drum_pad` provides a specialized route for an empty pad or an existing
 single-Simpler pad. It does not provide arbitrary rack-chain editing.
 
+### Inserting Live's own devices (LOM)
+`Track.insert_device(name, index)` and `Chain.insert_device(name, index)` add a
+native device by its name (Reverb, Auto Filter, Drum Rack) without the browser.
+Observed 2026-11-17 against Live 12.4.16: it worked where `load_device` was
+unreliable on a track inside a collapsed group. It takes Live's own devices only,
+no plug-ins and no presets. Call it through `lom_call` on the track or chain path.
+
+### Simpler in One-Shot mode ignores S Length and Fade Out (Live)
+Observed 2026-11-17 against Live 12.4.16: with Trigger Mode set to Trigger, a
+shorter S Length or Fade Out made no audible difference to a one-shot. Only
+Trigger Mode Gate shortened the sound, ending it with the note. The parameters
+read back as written in both modes, so a read-back proves nothing here.
+
 ### Encrypted factory samples and `abli` multi-sample containers (Live)
 Ableton Factory Pack samples with `COMM` compression `able` (`Ableton Content`)
 stay closed: Live Maestro reads their header but never their audio, and
@@ -174,6 +214,10 @@ than treating every stored number as a physical value.
 ### Non-transactional batch operations (Protocol)
 `lom_batch` executes sequentially. `atomic: true` stops at the first error;
 earlier successful operations remain in effect. It provides no rollback.
+Live's own undo does: observed 2026-11-17 against Live 12.4.16, one `song.undo`
+took back a whole batch of 24 calls at once, because the batch runs inside one
+main-thread callback and Live records it as one step. Undo after a batch reverts
+all of it, not its last operation.
 
 ### Batch size limit (Protocol)
 A call accepts at most 1,000 operations (`max_ops=1000`). Larger requests return
@@ -207,12 +251,6 @@ and removing the last real marker can leave it unchanged; inspect marker read-ba
 rather than treating an accepted call as proof of removal. A clip on which Live
 has already placed its own automatic marker can refuse new markers; writing the
 markers into the saved `.als` is then the remaining route.
-
-### `end_marker` on an Arrangement clip: ineffective, or ineffective only while the clip does not loop?
-A stored marker value does not establish changed Arrangement geometry. Generic
-writes remain refused. The specialized unwarped import resets seconds-valued
-markers and checks duration. Arbitrary marker editing across loop states remains
-unverified.
 
 ### Concurrent Control Surfaces
 Use different ports for different socket-based scripts. Compatibility and load

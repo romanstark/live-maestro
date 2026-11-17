@@ -85,6 +85,14 @@ class AudioJobs:
                 if not path.is_file():
                     raise ValueError(f"input does not exist: {path}")
                 request[key] = str(path)
+        extras = []
+        for value in request.get("extra_reference_paths", []):
+            path = Path(value).expanduser().resolve()
+            if not path.is_file():
+                raise ValueError(f"input does not exist: {path}")
+            extras.append(str(path))
+        if extras:
+            request["extra_reference_paths"] = extras
         for item in request.get("stems", []):
             for key in ("path", "reference_path"):
                 if item.get(key):

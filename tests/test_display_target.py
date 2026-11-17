@@ -312,3 +312,85 @@ def test_nothing_is_written_while_the_probes_run(
     assert payload["ok"] is True, payload
     assert seen, "the probes did not run"
     assert set(seen) == {"param.str_for_value"}, seen
+
+
+# ------------------------------------------------------------ raw paths and dB
+
+
+class _RawClient:
+    """A Live stand-in that answers raw path batches for one dB fader taper."""
+
+    def __init__(self, taper: Any) -> None:
+        self.taper = taper
+        self.sets: list[tuple[str, float]] = []
+
+    def batch(self, ops: Any, **_: Any) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        for op in ops:
+            if op["op"] == "call":
+                rows.append({"status": "success", "result": self.taper(op["args"][0])})
+                continue
+            field = op["path"].rsplit(".", 1)[1]
+            value = {"name": "Volume", "min": 0.0, "max": 1.0, "is_quantized": False}[field]
+            rows.append({"status": "success", "value": value})
+        return {"results": rows}
+
+    def set(self, path: str, value: float) -> dict[str, Any]:
+        self.sets.append((path, value))
+        return {"path": path, "before": 0.85, "after": value, "clamped": False}
+
+
+def _fader(v: float) -> str:
+    """Synthetic fader taper: -70 dB at the bottom, +6 dB at the top."""
+    return f"{-70 + 76 * v:.1f} dB"
+
+
+def test_a_rack_chain_fader_is_reached_by_its_own_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _RawClient(_fader)
+    monkeypatch.setattr(server, "_client_instance", lambda: client)
+    chain = "song.tracks[0].devices[0].chains[1].mixer_device.volume"
+
+    payload = json.loads(_text_payload(asyncio.run(server.mcp.call_tool(
+        "set_parameter_display", {"path": chain, "target": -10, "unit": "dB"}
+    ))))
+
+    assert payload["ok"] is True, payload
+    assert abs(payload["reading"] + 10) < 0.5, payload
+    assert client.sets and client.sets[0][0] == chain + ".value"
+
+
+def test_a_device_path_without_a_parameter_name_is_refused() -> None:
+    payload = json.loads(_text_payload(asyncio.run(server.mcp.call_tool(
+        "set_parameter_display",
+        {"path": "song.tracks[0].devices[0].drum_pads[36].chains[0].devices[0]",
+         "target": 100},
+    ))))
+    assert payload["ok"] is False
+    assert "name the parameter" in payload["error"]
+
+
+def test_set_mix_aims_fader_and_send_at_decibels(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _RawClient(_fader)
+    monkeypatch.setattr(server, "_client_instance", lambda: client)
+
+    payload = json.loads(_text_payload(asyncio.run(server.mcp.call_tool(
+        "set_mix", {"track": 2, "volume_db": -2, "sends_db": {"B": -12}}
+    ))))
+
+    assert payload["ok"] is True, payload
+    written = dict(client.sets)
+    assert set(written) == {
+        "song.tracks[2].mixer_device.volume.value",
+        "song.tracks[2].mixer_device.sends[1].value",
+    }
+    assert abs(payload["changes"]["volume"]["reading"] + 2) < 0.5
+    assert abs(payload["changes"]["send[1]"]["reading"] + 12) < 0.5
+
+
+def test_set_mix_refuses_volume_given_twice() -> None:
+    payload = json.loads(_text_payload(asyncio.run(server.mcp.call_tool(
+        "set_mix", {"track": 0, "volume": 0.8, "volume_db": -2}
+    ))))
+    assert payload["ok"] is False

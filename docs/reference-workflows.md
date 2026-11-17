@@ -15,6 +15,18 @@ Install/reload the updated LiveMaestro Analyzer at the desired signal point.
 fader when treating the recording as the main output. No track is soloed and no
 routing, instrument or effect is changed by capture.
 
+The Analyzer is a device in the track's chain, so it measures before that track's
+fader: a fader move does not show in the capture. Load it by hand on every track
+you want to record; each capture records one track. A group track with the
+Analyzer records the whole group.
+
+Before capturing, check that Back to Arrangement is not lit. A track that follows
+the Session does not play its Arrangement clips, and the capture then looks like a
+silent instrument; the report's `warnings` names it. Instruments that remember what
+they last played (keyswitches, CC, round robins) reach a mid-song window in
+whatever state they were left in. Pass `play_from_beat` (0 for the song start) to
+play the lead-in unrecorded and record only from `from_beat`.
+
 Without `from_beat`, capture records the current signal. With it, the transport
 must be stopped with recording disabled. Capture temporarily sets the start marker and playhead, starts
 the Arrangement, then restores both and stops playback. It includes pre-roll,
@@ -28,6 +40,11 @@ before exporting stereo `capture.wav`. Initial counter warmup of at most 64 fram
 is disclosed; internal discontinuities fail verification. The float32 counter
 must remain below 2^24 for single-sample precision. High-rate long captures can
 therefore fail verification; choose shorter sections.
+
+Take capture time from the anchors, never from the tempo map:
+`get_audio_report(job_id, section="timeline", beats=[...])` returns the frame and
+seconds of each song beat. A start estimated from the tempo map has been three
+beats off, and every finding built on it was wrong.
 
 Timeline anchors share the audio's frame positions, but host fields are scheduler
 sampled. Observed update spacing is not an accuracy bound and does not prove a
@@ -49,7 +66,9 @@ in the Arrangement, capture it, then run `compare_audio` with the file as
 reference and the capture as candidate. `candidate_delay_ms` is the chain lag;
 pass it to `compare_spectrum` as `chain_offset_ms`. An instrument whose plugin
 reports no latency adds its own lag on top; `compare_spectrum` estimates the
-remaining offset from high-band envelopes and reports it.
+remaining offset from high-band envelopes and reports it. Measured 2026-11-17
+against Live 12.4.16 in one set with several sample-library instruments: +64.6 ms
+at Main and -7 ms on a single track, so calibrate at the point you record.
 
 ## Compare and improve
 
@@ -59,6 +78,12 @@ level, band-power differences, chroma, envelope and stereo correlation. It does
 not time-warp a candidate to hide tempo errors. Silent/constant audio cannot supply
 a delay estimate. Gain compensation affects comparison only; an optional residual
 WAV preserves the actual difference.
+
+A group rebuilt from several parts is compared with the sum of the stems it
+replaces: pass the first stem as `reference_path` and the others as
+`extra_reference_paths`. The mean of n stems sits about 20*log10(n) dB below their
+sum, and a level comparison against one stem or the mean misreads the group.
+`compare_spectrum` takes the same argument.
 
 Gain-aligned waveform error is phase sensitive, not a perceptual quality or
 leakage score. Use the reported differences to choose a concrete adjustment, then
